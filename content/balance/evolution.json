@@ -1,0 +1,19 @@
+{
+  "source": "docs/features/pokewalker-bot/README.md D40/D55; docs/features/pokewalker-v1.1-v2/PLAN.md Q1/Q2/Q3 (owner decision 2026-11-05)",
+  "checked": "2026-11-05",
+  "version": 1,
+  "candy": {
+    "single_step": 50,
+    "two_step": [
+      25,
+      100
+    ]
+  },
+  "item_price_stardust": 500,
+  "star_piece": {
+    "multiplier_numerator": 3,
+    "multiplier_denominator": 2,
+    "rewards": 10,
+    "rounding": "floor"
+  }
+}

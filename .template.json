@@ -1,0 +1,7 @@
+{
+  "canonical_repository": "Farkoal2128/template-repo",
+  "mode": "project",
+  "stage": "scaffold",
+  "policy": "copy-only",
+  "repository": "Farkoal2128/Pokewalker-Discord-Bot"
+}

@@ -1,0 +1,11 @@
+{
+  "routes": [
+    {
+      "id": "all",
+      "weights": {
+        "normal": 1,
+        "grass": 3
+      }
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+"""Pokewalker application package."""

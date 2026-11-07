@@ -1,0 +1,15 @@
+{
+  "stage": "active",
+  "checks": {
+    "unit": "python -m unittest discover -s tests -p \"test_*.py\"",
+    "contract": "python -m unittest discover -s tests -p \"test_content_integrity.py\"",
+    "integration": null,
+    "e2e": null,
+    "typecheck": null,
+    "lint": null,
+    "format": null,
+    "build": null,
+    "security": null
+  },
+  "note": "Unit and committed-artifact contract checks are configured; lint: none, PIPELINE.md:12."
+}

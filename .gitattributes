@@ -1,0 +1,6 @@
+content/balance/*.json text eol=lf
+content/artifact/*.json text eol=lf
+content/manifest.json text eol=lf
+content/help.md text eol=lf
+tests/fixtures/content_mini/** text eol=lf
+deploy/*.sh text eol=lf

@@ -1,0 +1,25 @@
+#:schema https://developers.openai.com/codex/config-schema.json
+
+# Root/current agent is the Lead Developer.
+# Four subagent threads + root = the default five-agent team.
+[agents]
+enabled = true
+default_subagent_model = "gpt-6-luna"
+default_subagent_reasoning_effort = "high"
+max_concurrent_threads_per_session = 4
+
+[agents.developer_a]
+description = "Bounded implementation writer A. Use for one independent TDD slice with explicit exclusive file ownership."
+config_file = "agents/developer-a.toml"
+
+[agents.developer_b]
+description = "Bounded implementation writer B. Use in parallel with Developer A only when intentional write scopes are disjoint."
+config_file = "agents/developer-b.toml"
+
+[agents.tester]
+description = "Integrated verification and regression specialist. Reports defects; does not intentionally edit source unless reassigned."
+config_file = "agents/tester.toml"
+
+[agents.documentation]
+description = "Requirements, plan, ADR, progress, and evidence reconciliation after technical facts are established."
+config_file = "agents/documentation.toml"

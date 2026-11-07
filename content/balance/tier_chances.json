@@ -1,0 +1,12 @@
+{
+  "source": "docs/features/pokewalker-bot/README.md D38/D50",
+  "checked": "2026-11-04",
+  "version": 1,
+  "chances": {
+    "common": 60,
+    "uncommon": 30,
+    "rare": 3,
+    "evolved": 6,
+    "legendary": 1
+  }
+}

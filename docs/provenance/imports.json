@@ -1,0 +1,29 @@
+{
+  "sources": [
+    {
+      "repository": "Farkoal2128/QuzMaz",
+      "paths": [
+        ".codex/skills/implement-feature/SKILL.md",
+        ".codex/skills/drive-feature/SKILL.md",
+        ".codex/skills/reconcile-feature-plan/SKILL.md"
+      ],
+      "adaptation": "stack-neutralized and strengthened with contract-first TDD requirements"
+    },
+    {
+      "repository": "Farkoal2128/myAutoclip",
+      "paths": [
+        "AGENTS.md",
+        "skills/tdd/SKILL.md",
+        "skills/contract-change/SKILL.md",
+        "skills/scoped-review-handoff/SKILL.md",
+        "skills/multi-agent-orchestration/SKILL.md",
+        "docs/templates/agent-work-order.md",
+        ".codex/config.toml",
+        ".codex/agents/implementer.toml",
+        ".codex/agents/verifier.toml",
+        ".codex/agents/documentation.toml"
+      ],
+      "adaptation": "generalized into a root Lead plus Developer A, Developer B, Testing Agent, and Documentation Agent with exclusive write ownership and contract-first TDD"
+    }
+  ]
+}

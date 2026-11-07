@@ -1,0 +1,20 @@
+{
+  "source": "docs/features/pokewalker-bot/README.md D20-D21, D25, D33; docs/features/pokewalker-bot/PLAN.md P6/P9",
+  "checked": "2026-11-04",
+  "version": 1,
+  "rules": {
+    "full_words_per_rolling_hour": 300,
+    "full_step_hundredths": 100,
+    "later_step_hundredths": 25,
+    "min_message_words": 4,
+    "max_message_words": 20,
+    "repeat_word_cap": 3,
+    "cooldown_seconds": 15,
+    "accepted_words_per_rolling_minute": 30,
+    "duplicate_window_seconds": 1800,
+    "encounter_step_hundredths": 10000,
+    "find_step_hundredths": 10000,
+    "finds_per_rolling_hour": 3,
+    "companion_candy_step_hundredths": 15000
+  }
+}

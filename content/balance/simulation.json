@@ -1,0 +1,15 @@
+{
+  "source": "README D12/D22/D29; docs/research/go-systems/items-and-catching.md rare duplicates; M0.6 throw policy; docs/research/pokewalker/adaptation.md B1 daily profiles (5 characters per word estimate, D33). Hourly measurement percentiles sampled equally; routes cycle each active hour: explicit offline exploration assumptions.",
+  "checked": "2026-11-04",
+  "version": 1,
+  "checkin_seconds": 3600,
+  "checkin_guaranteed": {"poke_ball": 1},
+  "overflow_stardust": 10,
+  "rare_duplicate_stardust": 500,
+  "poke_ball_reserve": 5,
+  "fallback_profiles": {
+    "casual": {"messages_per_day": 10, "words_per_message": 10},
+    "regular": {"messages_per_day": 25, "words_per_message": 12},
+    "active": {"messages_per_day": 60, "words_per_message": 15}
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "source": "docs/features/pokewalker-bot/README.md D38/D42/D47; docs/features/pokewalker-bot/PLAN.md P4/P5; docs/research/go-systems/items-and-catching.md, shinies-and-lures.md",
+  "checked": "2026-11-04",
+  "version": 1,
+  "rules": {
+    "base_catch_rates": {
+      "common": 0.5,
+      "uncommon": 0.3,
+      "rare": 0.15,
+      "evolved": 0.15,
+      "legendary": 0.05
+    },
+    "ball_multipliers": {
+      "poke_ball": 1,
+      "great_ball": 1.5,
+      "ultra_ball": 2
+    },
+    "berry_multipliers": {
+      "razz_berry": 1.5,
+      "golden_razz_berry": 2.5,
+      "silver_pinap_berry": 1.8,
+      "pinap_berry": 1
+    },
+    "pinap_candy_multiplier": 2,
+    "silver_pinap_candy": {
+      "numerator": 7,
+      "denominator": 3,
+      "rounding": "floor"
+    },
+    "flee_probability": 0.1,
+    "shiny_flee_probability": 0,
+    "legendary_flee_probability": 0,
+    "shiny_probability": 0.00390625,
+    "lure_probability_multiplier": 4,
+    "lure_encounters": 10,
+    "wild_level_range": [
+      1,
+      20
+    ],
+    "wild_iv_range": [
+      0,
+      15
+    ],
+    "starter_level": 10,
+    "starter_iv_range": [
+      10,
+      15
+    ]
+  }
+}

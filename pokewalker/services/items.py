@@ -1,0 +1,293 @@
+"""Item grants, conversion and durable count-model effects."""
+
+from uuid import uuid4
+
+from content.balance import limits, load_table
+from pokewalker.db import with_receipt
+from pokewalker.services.profiles import get_profile, restrictions, session_owner
+
+
+RARE = tuple(limits()['rare_pockets'])
+
+
+async def bag_units(conn, profile_id):
+    placeholders = ','.join('?' for _ in RARE)
+    async with conn.execute("SELECT COALESCE(sum(quantity),0) FROM inventory WHERE profile_id=? "
+                            f"AND item_id NOT IN ({placeholders})", (profile_id, *RARE)) as cursor:
+        return (await cursor.fetchone())[0]
+
+
+async def grant(conn, profile_id, item_id, quantity):
+    if not conn.in_transaction:
+        raise RuntimeError('Item grants require an active writer transaction')
+    if type(quantity) is not int or quantity <= 0 or (item_id in RARE and quantity != 1):
+        raise ValueError('Item packs require a positive integer quantity; rare packs contain one')
+    async with conn.execute('SELECT bag_limit FROM profiles WHERE profile_id=?', (profile_id,)) as cursor:
+        bag_limit = (await cursor.fetchone())['bag_limit']
+    outcome, dust = 'granted', 0
+    if item_id == 'stardust':
+        outcome, dust = 'stardust', quantity
+    elif item_id in RARE:
+        async with conn.execute('SELECT quantity FROM inventory WHERE profile_id=? AND item_id=?',
+                                (profile_id, item_id)) as cursor:
+            held = await cursor.fetchone()
+        if held is not None and held[0] > 0:
+            outcome, dust = 'duplicate_rare', 500
+    elif await bag_units(conn, profile_id) + quantity > bag_limit:
+        outcome, dust = 'overflow', 10
+    if dust:
+        await conn.execute('UPDATE profiles SET stardust=stardust+? WHERE profile_id=?', (dust, profile_id))
+    else:
+        await conn.execute('INSERT INTO inventory VALUES (?,?,?) ON CONFLICT(profile_id,item_id) '
+                           'DO UPDATE SET quantity=quantity+excluded.quantity', (profile_id, item_id, quantity))
+    return outcome, dust
+
+
+def resolve_item(rng, item_id, quantity, content):
+    if item_id == 'evolution_item':
+        kinds = content['evolution_items']
+        return (rng.choice(kinds)['id'], quantity) if kinds else ('stardust', 100)
+    return item_id, quantity
+
+
+def roll_find(rng):
+    rows = load_table('find_table')['rows']
+    return rng.choices(rows, weights=[row['weight'] for row in rows], k=1)[0]
+
+
+async def apply_finds(conn, profile, awarded_c, at, message_id, rng, content):
+    from pokewalker.services.stepping import advance_meter
+
+    if not conn.in_transaction:
+        raise RuntimeError('Finds require an active writer transaction')
+    pid, mid = profile['profile_id'], str(message_id)
+    key = f'find:{mid}'
+    rules = load_table('step_rules')['rules']
+    async with conn.execute('SELECT count(*) FROM finds WHERE profile_id=? AND created_at>? AND created_at<=?',
+                            (pid, at - 3600, at)) as cursor:
+        count = (await cursor.fetchone())[0]
+    meter, triggers = advance_meter(profile['find_meter_c'], awarded_c, rules['find_step_hundredths'],
+                                    frozen=count >= rules['finds_per_rolling_hour'])
+    async with conn.execute('SELECT 1 FROM action_receipts WHERE key=?', (key,)) as cursor:
+        replay = await cursor.fetchone()
+    if not triggers and replay is None:
+        return meter
+    if count + 1 >= rules['finds_per_rolling_hour']:
+        meter = 0
+
+    async def compute(conn):
+        selected = roll_find(rng)
+        item, quantity = resolve_item(rng, selected['item'], selected['quantity'], content)
+        if item == 'stardust':
+            quantity = await boost(conn, pid, quantity)
+        outcome, dust = await grant(conn, pid, item, quantity)
+        await conn.execute('INSERT INTO finds(profile_id,message_id,item_id,quantity,outcome,created_at) '
+                           'VALUES (?,?,?,?,?,?)', (pid, mid, item, quantity, outcome, at))
+        reason = {'overflow': 'find_overflow', 'duplicate_rare': 'find_duplicate_rare'}.get(outcome, 'find')
+        return {'meter_c': meter, 'item': item, 'quantity': quantity, 'outcome': outcome}, [
+            {'profile_id': pid, 'resource': 'stardust' if dust else 'item',
+             'resource_id': None if dust else item, 'delta': dust or quantity, 'reason': reason}]
+
+    result = await with_receipt(conn, key, 'find', compute, profile_id=pid)
+    return result['meter_c']
+
+
+async def recent_finds(conn, profile_id):
+    async with conn.execute('SELECT * FROM finds WHERE profile_id=? ORDER BY created_at DESC,find_id DESC LIMIT 3',
+                            (profile_id,)) as cursor:
+        return [dict(row) for row in await cursor.fetchall()]
+
+
+def roll_checkin(rng):
+    rows = load_table('checkin_table')['rows']
+    return rng.choices(rows, weights=[row['weight'] for row in rows], k=1)[0]
+
+
+async def checkin(conn, guild_id, user_id, now, rng):
+    if not conn.in_transaction:
+        raise RuntimeError('Check-in requires an active writer transaction')
+    profile = await get_profile(conn, guild_id, user_id)
+    if profile is None:
+        return {'status': 'unenrolled'}
+    flags = await restrictions(conn, guild_id, user_id)
+    if flags.excluded:
+        return {'status': 'excluded'}
+    if flags.paused:
+        return {'status': 'paused', 'until': flags.paused_until.isoformat() if flags.paused_until else None}
+    last = profile['last_checkin_at']
+    if last is not None and last > now - 3600:
+        return {'status': 'too_early', 'seconds_left': last + 3600 - now}
+    pid = profile['profile_id']
+
+    async def compute(conn):
+        outcomes, lines = [], []
+        outcome, dust = await grant(conn, pid, 'poke_ball', 1)
+        outcomes.append({'item': 'poke_ball', 'quantity': 1, 'outcome': outcome, 'dust': dust})
+        selected = roll_checkin(rng)
+        item, quantity = selected['item'], selected['quantity']
+        outcome, dust = await grant(conn, pid, item, quantity)
+        outcomes.append({'item': item, 'quantity': quantity, 'outcome': outcome, 'dust': dust})
+        for entry in outcomes:
+            lines.append({'profile_id': pid, 'resource': 'stardust' if entry['dust'] else 'item',
+                          'resource_id': None if entry['dust'] else entry['item'],
+                          'delta': entry['dust'] or entry['quantity'], 'reason': 'checkin'})
+        await conn.execute('UPDATE profiles SET last_checkin_at=? WHERE profile_id=?', (now, pid))
+        return {'status': 'granted', 'outcomes': outcomes}, lines
+
+    return await with_receipt(conn, f'checkin:{pid}:{now}', 'checkin', compute, profile_id=pid)
+
+
+def rate_for(item_id, content):
+    rates = load_table('conversion_rates')['stardust_per_unit']
+    if item_id in rates:
+        return rates[item_id]
+    if content is not None and any(kind['id'] == item_id for kind in content['evolution_items']):
+        return rates['evolution_item']
+    return None
+
+
+async def convert(conn, session, item_id, quantity, content=None):
+    if not conn.in_transaction:
+        raise RuntimeError('Conversion requires an active writer transaction')
+    _, refusal = await session_owner(conn, session)
+    if refusal is not None:
+        return refusal
+    rate = rate_for(item_id, content)
+    if rate is None or type(quantity) is not int or quantity < 1 or (item_id in RARE and quantity != 1):
+        return {'status': 'refused'}
+    pid, key = session['profile_id'], f"convert:{session['session_id']}:{session['revision']}"
+    async with conn.execute('SELECT 1 FROM action_receipts WHERE key=?', (key,)) as cursor:
+        replay = await cursor.fetchone()
+    if replay is None:
+        async with conn.execute('SELECT quantity FROM inventory WHERE profile_id=? AND item_id=?',
+                                (pid, item_id)) as cursor:
+            held = await cursor.fetchone()
+        if held is None or quantity > held['quantity']:
+            return {'status': 'changed'}
+
+    async def compute(conn):
+        dust = rate * quantity
+        await conn.execute('UPDATE inventory SET quantity=quantity-? WHERE profile_id=? AND item_id=?',
+                           (quantity, pid, item_id))
+        await conn.execute('UPDATE profiles SET stardust=stardust+? WHERE profile_id=?', (dust, pid))
+        lines = [{'profile_id': pid, 'resource': resource, 'resource_id': resource_id,
+                  'delta': delta, 'reason': 'convert'} for resource, resource_id, delta in
+                 (('item', item_id, -quantity), ('stardust', None, dust))]
+        return {'item': item_id, 'quantity': quantity, 'stardust': dust}, lines
+
+    return await with_receipt(conn, key, 'convert', compute, profile_id=pid)
+
+
+async def buy_evolution_item(conn, session, kind, now, content):
+    if not conn.in_transaction:
+        raise RuntimeError('Purchases require an active writer transaction')
+    profile, refusal = await session_owner(conn, session)
+    if refusal is not None:
+        return refusal
+    pid, key = session['profile_id'], f"buy:{session['session_id']}:{session['revision']}"
+    price = load_table('evolution')['item_price_stardust']
+    async with conn.execute('SELECT 1 FROM action_receipts WHERE key=?', (key,)) as cursor:
+        replay = await cursor.fetchone()
+    if replay is None:
+        if not any(item['id'] == kind for item in content['evolution_items']):
+            return {'status': 'refused'}
+        if profile['stardust'] < price:
+            return {'status': 'insufficient'}
+        if await bag_units(conn, pid) + 1 > profile['bag_limit']:
+            return {'status': 'bag_full'}
+
+    async def compute(conn):
+        await conn.execute('UPDATE profiles SET stardust=stardust-? WHERE profile_id=?', (price, pid))
+        await conn.execute('INSERT INTO inventory VALUES (?,?,1) ON CONFLICT(profile_id,item_id) '
+                           'DO UPDATE SET quantity=quantity+1', (pid, kind))
+        lines = [{'profile_id': pid, 'resource': resource, 'resource_id': resource_id,
+                  'delta': delta, 'reason': 'buy'} for resource, resource_id, delta in
+                 (('stardust', None, -price), ('item', kind, 1))]
+        return {'item': kind, 'quantity': 1, 'stardust': price}, lines
+
+    return await with_receipt(conn, key, 'buy', compute, profile_id=pid)
+
+
+async def active_lure(conn, profile_id):
+    async with conn.execute("SELECT effect_id FROM active_effects WHERE profile_id=? AND kind='shiny_lure' "
+                            'AND remaining_encounters>0', (profile_id,)) as cursor:
+        row = await cursor.fetchone()
+    return row['effect_id'] if row is not None else None
+
+
+async def activate_lure(conn, session, now):
+    if not conn.in_transaction:
+        raise RuntimeError('Lure activation requires an active writer transaction')
+    _, refusal = await session_owner(conn, session)
+    if refusal is not None:
+        return refusal
+    pid, key = session['profile_id'], f"lure:{session['session_id']}:{session['revision']}"
+
+    async def compute(conn):
+        async with conn.execute('SELECT 1 FROM active_effects WHERE profile_id=? AND remaining_encounters>0',
+                                (pid,)) as cursor:
+            if await cursor.fetchone() is not None:
+                return {'status': 'already_active'}, []
+        async with conn.execute("SELECT quantity FROM inventory WHERE profile_id=? AND item_id='shiny_lure'",
+                                (pid,)) as cursor:
+            held = await cursor.fetchone()
+        if held is None or held['quantity'] < 1:
+            return {'status': 'missing'}, []
+        effect = {'effect_id': str(uuid4()), 'profile_id': pid, 'kind': 'shiny_lure',
+                  'starts_at': now, 'expires_at': None, 'receipt_key': key,
+                  'remaining_encounters': load_table('catch')['rules']['lure_encounters'], 'remaining_rewards': 0}
+        await conn.execute("UPDATE inventory SET quantity=quantity-1 WHERE profile_id=? AND item_id='shiny_lure'",
+                           (pid,))
+        await conn.execute('INSERT INTO active_effects(effect_id,profile_id,kind,starts_at,expires_at,receipt_key,'
+                           'remaining_encounters,remaining_rewards) VALUES (?,?,?,?,?,?,?,?)', tuple(effect.values()))
+        return effect, [{'profile_id': pid, 'resource': 'item', 'resource_id': 'shiny_lure',
+                         'delta': -1, 'reason': 'lure_activate'}]
+
+    return await with_receipt(conn, key, 'lure', compute, profile_id=pid)
+
+
+async def active_star_piece(conn, profile_id):
+    async with conn.execute("SELECT effect_id FROM active_effects WHERE profile_id=? AND kind='star_piece' "
+                            'AND remaining_rewards>0', (profile_id,)) as cursor:
+        row = await cursor.fetchone()
+    return row['effect_id'] if row is not None else None
+
+
+async def activate_star_piece(conn, session, now):
+    if not conn.in_transaction:
+        raise RuntimeError('Star Piece activation requires an active writer transaction')
+    _, refusal = await session_owner(conn, session)
+    if refusal is not None:
+        return refusal
+    pid, key = session['profile_id'], f"star_piece:{session['session_id']}:{session['revision']}"
+
+    async def compute(conn):
+        if await active_star_piece(conn, pid) is not None:
+            return {'status': 'already_active'}, []
+        async with conn.execute("SELECT quantity FROM inventory WHERE profile_id=? AND item_id='star_piece'",
+                                (pid,)) as cursor:
+            held = await cursor.fetchone()
+        if held is None or held['quantity'] < 1:
+            return {'status': 'missing'}, []
+        effect = {'effect_id': str(uuid4()), 'profile_id': pid, 'kind': 'star_piece',
+                  'starts_at': now, 'expires_at': None, 'receipt_key': key,
+                  'remaining_encounters': 0, 'remaining_rewards': load_table('evolution')['star_piece']['rewards']}
+        await conn.execute("UPDATE inventory SET quantity=quantity-1 WHERE profile_id=? AND item_id='star_piece'",
+                           (pid,))
+        await conn.execute('INSERT INTO active_effects(effect_id,profile_id,kind,starts_at,expires_at,receipt_key,'
+                           'remaining_encounters,remaining_rewards) VALUES (?,?,?,?,?,?,?,?)', tuple(effect.values()))
+        return effect, [{'profile_id': pid, 'resource': 'item', 'resource_id': 'star_piece',
+                         'delta': -1, 'reason': 'star_piece_activate'}]
+
+    return await with_receipt(conn, key, 'star_piece', compute, profile_id=pid)
+
+
+async def boost(conn, profile_id, amount):
+    if not conn.in_transaction:
+        raise RuntimeError('Stardust boosts require an active writer transaction')
+    effect_id = await active_star_piece(conn, profile_id)
+    if effect_id is None:
+        return amount
+    await conn.execute('UPDATE active_effects SET remaining_rewards=remaining_rewards-1 WHERE effect_id=?',
+                       (effect_id,))
+    return amount * 3 // 2

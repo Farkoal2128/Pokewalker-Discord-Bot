@@ -1,0 +1,32 @@
+{
+  "source": "docs/features/pokewalker-bot/PLAN.md P3; docs/research/go-systems/cp-ivs-leveling.md:155-160",
+  "checked": "2026-11-04",
+  "version": 1,
+  "cap_level_x2": 80,
+  "bands": [
+    {
+      "min_level_x2": 2,
+      "max_level_x2_exclusive": 20,
+      "candy": 1,
+      "stardust": 100
+    },
+    {
+      "min_level_x2": 20,
+      "max_level_x2_exclusive": 40,
+      "candy": 2,
+      "stardust": 250
+    },
+    {
+      "min_level_x2": 40,
+      "max_level_x2_exclusive": 60,
+      "candy": 3,
+      "stardust": 500
+    },
+    {
+      "min_level_x2": 60,
+      "max_level_x2_exclusive": 80,
+      "candy": 4,
+      "stardust": 1000
+    }
+  ]
+}

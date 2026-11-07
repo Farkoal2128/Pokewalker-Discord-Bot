@@ -1,0 +1,9 @@
+[Unit]
+Description=Report Pokewalker backup failure
+
+[Service]
+Type=oneshot
+UMask=0077
+EnvironmentFile=/etc/pokewalker/backup.env
+StateDirectory=pokewalker-backup
+ExecStart=/opt/pokewalker/current/deploy/backup_alert.sh --fallback

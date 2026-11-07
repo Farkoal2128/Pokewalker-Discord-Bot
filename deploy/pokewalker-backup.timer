@@ -1,0 +1,11 @@
+[Unit]
+Description=Hourly Pokewalker backup
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=5m
+Unit=pokewalker-backup.service
+
+[Install]
+WantedBy=timers.target

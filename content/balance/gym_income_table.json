@@ -1,0 +1,73 @@
+{
+  "source": "docs/features/pokewalker-bot/README.md D23/D24; docs/research/go-systems/items-and-catching.md:81-95",
+  "checked": "2026-11-04",
+  "version": 1,
+  "rows": [
+    {
+      "item": "poke_ball",
+      "quantity": 5,
+      "weight": 4940
+    },
+    {
+      "item": "great_ball",
+      "quantity": 3,
+      "weight": 1800
+    },
+    {
+      "item": "ultra_ball",
+      "quantity": 1,
+      "weight": 600
+    },
+    {
+      "item": "razz_berry",
+      "quantity": 1,
+      "weight": 800
+    },
+    {
+      "item": "pinap_berry",
+      "quantity": 1,
+      "weight": 800
+    },
+    {
+      "item": "golden_razz_berry",
+      "quantity": 1,
+      "weight": 150
+    },
+    {
+      "item": "silver_pinap_berry",
+      "quantity": 1,
+      "weight": 100
+    },
+    {
+      "item": "rare_candy",
+      "quantity": 1,
+      "weight": 200
+    },
+    {
+      "item": "stardust",
+      "quantity": 100,
+      "weight": 240
+    },
+    {
+      "item": "shiny_lure",
+      "quantity": 1,
+      "weight": 100
+    },
+    {
+      "item": "master_ball",
+      "quantity": 1,
+      "weight": 20
+    },
+    {
+      "item": "star_piece",
+      "quantity": 1,
+      "weight": 50
+    },
+    {
+      "item": "evolution_item",
+      "quantity": 1,
+      "weight": 200
+    }
+  ],
+  "tenure_seconds": 28800
+}

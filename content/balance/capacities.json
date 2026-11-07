@@ -1,0 +1,35 @@
+{
+  "source": "docs/features/pokewalker-bot/README.md D5/D26/D44/D60; docs/research/go-systems/items-and-catching.md rare pockets; docs/research/gyms/discord-gym-design.md section 2; docs/features/pokewalker-v1.1-v2/PLAN.md Q4/Q7/Q9 (owner decision 2026-11-05)",
+  "checked": "2026-11-05",
+  "version": 3,
+  "limits": {
+    "storage": 250,
+    "bag_units": 250,
+    "rare_pockets": {
+      "master_ball": 1,
+      "shiny_lure": 1,
+      "world_legendary_ticket": 1
+    },
+    "encounter_queue": 3,
+    "starter_kit": {
+      "poke_ball": 30,
+      "razz_berry": 5
+    }
+  },
+  "gyms": {
+    "per_guild": 10,
+    "name_max": 32
+  },
+  "expansion": {
+    "storage": {
+      "step": 50,
+      "max": 1000,
+      "stardust": 5000
+    },
+    "bag": {
+      "step": 50,
+      "max": 1000,
+      "stardust": 2500
+    }
+  }
+}

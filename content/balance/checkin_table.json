@@ -1,0 +1,27 @@
+{
+  "source": "docs/features/pokewalker-bot/README.md D29",
+  "checked": "2026-11-04",
+  "version": 1,
+  "rows": [
+    {
+      "item": "great_ball",
+      "quantity": 1,
+      "weight": 35
+    },
+    {
+      "item": "razz_berry",
+      "quantity": 1,
+      "weight": 30
+    },
+    {
+      "item": "poke_ball",
+      "quantity": 2,
+      "weight": 20
+    },
+    {
+      "item": "pinap_berry",
+      "quantity": 1,
+      "weight": 15
+    }
+  ]
+}

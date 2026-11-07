@@ -1,0 +1,570 @@
+{
+  "source": "docs/features/pokewalker-bot/README.md D59",
+  "checked": "2026-11-04",
+  "version": 1,
+  "bundles": {
+    "bronze": {
+      "great_ball": 10,
+      "razz_berry": 5,
+      "stardust": 500
+    },
+    "silver": {
+      "ultra_ball": 10,
+      "golden_razz_berry": 3,
+      "rare_candy": 2,
+      "stardust": 2000
+    },
+    "gold": {
+      "ultra_ball": 20,
+      "golden_razz_berry": 5,
+      "silver_pinap_berry": 5,
+      "rare_candy": 5,
+      "stardust": 5000,
+      "shiny_lure": 1
+    },
+    "platinum": {
+      "ultra_ball": 30,
+      "golden_razz_berry": 10,
+      "rare_candy": 10,
+      "stardust": 15000,
+      "master_ball": 1
+    },
+    "diamond": {
+      "ultra_ball": 50,
+      "golden_razz_berry": 20,
+      "rare_candy": 25,
+      "stardust": 50000,
+      "master_ball": 1,
+      "shiny_lure": 1
+    }
+  },
+  "pokedex": [
+    {
+      "percent": 5,
+      "species_count": 52,
+      "bundle": "bronze"
+    },
+    {
+      "percent": 10,
+      "species_count": 103,
+      "bundle": "bronze"
+    },
+    {
+      "percent": 25,
+      "species_count": 257,
+      "bundle": "silver"
+    },
+    {
+      "percent": 50,
+      "species_count": 513,
+      "bundle": "gold"
+    },
+    {
+      "percent": 75,
+      "species_count": 769,
+      "bundle": "platinum"
+    },
+    {
+      "percent": 90,
+      "species_count": 923,
+      "bundle": "platinum"
+    },
+    {
+      "percent": 100,
+      "species_count": 1025,
+      "bundle": "diamond"
+    }
+  ],
+  "starter_trios": [
+    {
+      "generation": 1,
+      "species_ids": [
+        1,
+        4,
+        7
+      ],
+      "bundle": "bronze"
+    },
+    {
+      "generation": 2,
+      "species_ids": [
+        152,
+        155,
+        158
+      ],
+      "bundle": "bronze"
+    },
+    {
+      "generation": 3,
+      "species_ids": [
+        252,
+        255,
+        258
+      ],
+      "bundle": "bronze"
+    },
+    {
+      "generation": 4,
+      "species_ids": [
+        387,
+        390,
+        393
+      ],
+      "bundle": "bronze"
+    },
+    {
+      "generation": 5,
+      "species_ids": [
+        495,
+        498,
+        501
+      ],
+      "bundle": "bronze"
+    },
+    {
+      "generation": 6,
+      "species_ids": [
+        650,
+        653,
+        656
+      ],
+      "bundle": "bronze"
+    },
+    {
+      "generation": 7,
+      "species_ids": [
+        722,
+        725,
+        728
+      ],
+      "bundle": "bronze"
+    },
+    {
+      "generation": 8,
+      "species_ids": [
+        810,
+        813,
+        816
+      ],
+      "bundle": "bronze"
+    },
+    {
+      "generation": 9,
+      "species_ids": [
+        906,
+        909,
+        912
+      ],
+      "bundle": "bronze"
+    }
+  ],
+  "all_starters": {
+    "species_ids": [
+      1,
+      4,
+      7,
+      152,
+      155,
+      158,
+      252,
+      255,
+      258,
+      387,
+      390,
+      393,
+      495,
+      498,
+      501,
+      650,
+      653,
+      656,
+      722,
+      725,
+      728,
+      810,
+      813,
+      816,
+      906,
+      909,
+      912
+    ],
+    "bundle": "gold"
+  },
+  "regions": [
+    {
+      "generation": 1,
+      "bundle": "platinum"
+    },
+    {
+      "generation": 2,
+      "bundle": "platinum"
+    },
+    {
+      "generation": 3,
+      "bundle": "platinum"
+    },
+    {
+      "generation": 4,
+      "bundle": "platinum"
+    },
+    {
+      "generation": 5,
+      "bundle": "platinum"
+    },
+    {
+      "generation": 6,
+      "bundle": "platinum"
+    },
+    {
+      "generation": 7,
+      "bundle": "platinum"
+    },
+    {
+      "generation": 8,
+      "bundle": "platinum"
+    },
+    {
+      "generation": 9,
+      "bundle": "platinum"
+    }
+  ],
+  "first_legendary": {
+    "bundle": "silver"
+  },
+  "first_mythical": {
+    "bundle": "silver"
+  },
+  "legendary_groups": [
+    {
+      "id": "birds",
+      "species_ids": [
+        144,
+        145,
+        146
+      ],
+      "bundle": "platinum"
+    },
+    {
+      "id": "beasts",
+      "species_ids": [
+        243,
+        244,
+        245
+      ],
+      "bundle": "platinum"
+    },
+    {
+      "id": "tower_duo",
+      "species_ids": [
+        249,
+        250
+      ],
+      "bundle": "platinum"
+    },
+    {
+      "id": "regis",
+      "species_ids": [
+        377,
+        378,
+        379,
+        486,
+        894,
+        895
+      ],
+      "bundle": "platinum"
+    },
+    {
+      "id": "eon_duo",
+      "species_ids": [
+        380,
+        381
+      ],
+      "bundle": "platinum"
+    },
+    {
+      "id": "weather_trio",
+      "species_ids": [
+        382,
+        383,
+        384
+      ],
+      "bundle": "platinum"
+    },
+    {
+      "id": "lake_trio",
+      "species_ids": [
+        480,
+        481,
+        482
+      ],
+      "bundle": "platinum"
+    },
+    {
+      "id": "creation_trio",
+      "species_ids": [
+        483,
+        484,
+        487
+      ],
+      "bundle": "platinum"
+    },
+    {
+      "id": "swords_of_justice",
+      "species_ids": [
+        638,
+        639,
+        640
+      ],
+      "bundle": "platinum"
+    },
+    {
+      "id": "forces_of_nature",
+      "species_ids": [
+        641,
+        642,
+        645,
+        905
+      ],
+      "bundle": "platinum"
+    },
+    {
+      "id": "tao_trio",
+      "species_ids": [
+        643,
+        644,
+        646
+      ],
+      "bundle": "platinum"
+    },
+    {
+      "id": "aura_trio",
+      "species_ids": [
+        716,
+        717,
+        718
+      ],
+      "bundle": "platinum"
+    },
+    {
+      "id": "guardian_deities",
+      "species_ids": [
+        785,
+        786,
+        787,
+        788
+      ],
+      "bundle": "platinum"
+    },
+    {
+      "id": "light_trio",
+      "species_ids": [
+        791,
+        792,
+        800
+      ],
+      "bundle": "platinum"
+    },
+    {
+      "id": "hero_duo",
+      "species_ids": [
+        888,
+        889
+      ],
+      "bundle": "platinum"
+    },
+    {
+      "id": "calyrex_and_steeds",
+      "species_ids": [
+        896,
+        897,
+        898
+      ],
+      "bundle": "platinum"
+    },
+    {
+      "id": "treasures_of_ruin",
+      "species_ids": [
+        1001,
+        1002,
+        1003,
+        1004
+      ],
+      "bundle": "platinum"
+    },
+    {
+      "id": "paradox_duo",
+      "species_ids": [
+        1007,
+        1008
+      ],
+      "bundle": "platinum"
+    },
+    {
+      "id": "loyal_three",
+      "species_ids": [
+        1014,
+        1015,
+        1016
+      ],
+      "bundle": "platinum"
+    }
+  ],
+  "mythical_sets": [
+    {
+      "generation": 3,
+      "species_ids": [
+        385,
+        386
+      ],
+      "bundle": "platinum"
+    },
+    {
+      "generation": 4,
+      "species_ids": [
+        489,
+        490,
+        491,
+        492,
+        493
+      ],
+      "bundle": "platinum"
+    },
+    {
+      "generation": 5,
+      "species_ids": [
+        494,
+        647,
+        648,
+        649
+      ],
+      "bundle": "platinum"
+    },
+    {
+      "generation": 6,
+      "species_ids": [
+        719,
+        720,
+        721
+      ],
+      "bundle": "platinum"
+    },
+    {
+      "generation": 7,
+      "species_ids": [
+        801,
+        802,
+        807,
+        808,
+        809
+      ],
+      "bundle": "platinum"
+    }
+  ],
+  "all_legendaries": {
+    "species_count": 71,
+    "bundle": "diamond"
+  },
+  "all_mythicals": {
+    "species_count": 23,
+    "bundle": "diamond"
+  },
+  "ultra_beast_first_catches": [
+    {
+      "species_id": 793,
+      "bundle": "silver"
+    },
+    {
+      "species_id": 794,
+      "bundle": "silver"
+    },
+    {
+      "species_id": 795,
+      "bundle": "silver"
+    },
+    {
+      "species_id": 796,
+      "bundle": "silver"
+    },
+    {
+      "species_id": 797,
+      "bundle": "silver"
+    },
+    {
+      "species_id": 798,
+      "bundle": "silver"
+    },
+    {
+      "species_id": 799,
+      "bundle": "silver"
+    },
+    {
+      "species_id": 803,
+      "bundle": "silver"
+    },
+    {
+      "species_id": 804,
+      "bundle": "silver"
+    },
+    {
+      "species_id": 805,
+      "bundle": "silver"
+    },
+    {
+      "species_id": 806,
+      "bundle": "silver"
+    }
+  ],
+  "evolution_lines": {
+    "minimum_species": 2,
+    "requires_real_evolution": true,
+    "family_candy": 25,
+    "ultra_ball": 1,
+    "stardust_per_species": 250,
+    "expected_family_count": 340,
+    "expected_species_count": 824
+  },
+  "extra_bundle_lines": [
+    {
+      "id": "type_null",
+      "species_ids": [
+        772,
+        773
+      ],
+      "bundle": "gold"
+    },
+    {
+      "id": "kubfu",
+      "species_ids": [
+        891,
+        892
+      ],
+      "bundle": "gold"
+    },
+    {
+      "id": "meltan",
+      "species_ids": [
+        808,
+        809
+      ],
+      "bundle": "gold"
+    },
+    {
+      "id": "cosmog",
+      "species_ids": [
+        789,
+        790,
+        791,
+        792
+      ],
+      "bundle": "platinum"
+    },
+    {
+      "id": "poipole",
+      "species_ids": [
+        803,
+        804
+      ],
+      "bundle": "silver"
+    }
+  ]
+}

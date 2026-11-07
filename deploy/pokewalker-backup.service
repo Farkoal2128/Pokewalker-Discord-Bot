@@ -1,0 +1,11 @@
+[Unit]
+Description=Pokewalker verified backup and retention
+OnFailure=pokewalker-backup-failed.service
+
+[Service]
+Type=oneshot
+UMask=0077
+EnvironmentFile=/etc/pokewalker/backup.env
+StateDirectory=pokewalker-backup
+Environment=PATH=/opt/pokewalker/current/deploy:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/opt/pokewalker/current/deploy/backup.sh

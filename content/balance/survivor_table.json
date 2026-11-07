@@ -1,0 +1,48 @@
+{
+  "source": "docs/features/pokewalker-bot/README.md D60; docs/features/pokewalker-v1.1-v2/PLAN.md Q9 (owner decision 2026-11-05)",
+  "checked": "2026-11-05",
+  "version": 1,
+  "rows": [
+    {
+      "item": "ultra_ball",
+      "quantity": 5,
+      "weight": 2500
+    },
+    {
+      "item": "golden_razz_berry",
+      "quantity": 3,
+      "weight": 2000
+    },
+    {
+      "item": "silver_pinap_berry",
+      "quantity": 3,
+      "weight": 1500
+    },
+    {
+      "item": "rare_candy",
+      "quantity": 5,
+      "weight": 1500
+    },
+    {
+      "item": "star_piece",
+      "quantity": 2,
+      "weight": 1000
+    },
+    {
+      "item": "shiny_lure",
+      "quantity": 1,
+      "weight": 800
+    },
+    {
+      "item": "master_ball",
+      "quantity": 1,
+      "weight": 600
+    },
+    {
+      "item": "world_legendary_ticket",
+      "quantity": 1,
+      "weight": 100
+    }
+  ],
+  "stardust_flat": 500
+}

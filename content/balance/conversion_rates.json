@@ -1,0 +1,19 @@
+{
+  "source": "docs/features/pokewalker-bot/README.md D61; docs/features/pokewalker-v1.1-v2/PLAN.md Q2 (v1.1 item scope)",
+  "checked": "2026-11-05",
+  "version": 2,
+  "stardust_per_unit": {
+    "poke_ball": 2,
+    "great_ball": 5,
+    "ultra_ball": 10,
+    "razz_berry": 5,
+    "pinap_berry": 5,
+    "golden_razz_berry": 25,
+    "silver_pinap_berry": 25,
+    "rare_candy": 20,
+    "master_ball": 500,
+    "shiny_lure": 500,
+    "star_piece": 50,
+    "evolution_item": 100
+  }
+}
