@@ -17,6 +17,12 @@ The bot runs as a systemd service on a Linux host, with hourly encrypted backups
 Google Drive. The host steps below have been tested only against stand-in commands, not
 on a real server yet; the full checklist is [deploy/restore-rehearsal.md](deploy/restore-rehearsal.md).
 
+**Ubuntu shortcut:** after step 1, install [uv](https://docs.astral.sh/uv/) as your user and run
+`sudo deploy/install_ubuntu.sh` from your clone. It does steps 2–4 and 6 for that clone's `HEAD`
+(prompting for your IDs and the bot token), registers the slash commands and enables the bot on
+boot. Backups (step 5) stay manual. Re-run it after pulling to deploy an update; upgrades take a
+pre-deploy backup, so set up step 5 first.
+
 ### 1. Create the Discord application
 
 1. In the [Discord Developer Portal](https://discord.com/developers/applications), create an
@@ -48,6 +54,18 @@ python3 -c "import sqlite3,sys;print(sys.version, sqlite3.sqlite_version)"
 
 If the system SQLite is too old, use a Python build that bundles a newer one (for example a
 [uv](https://docs.astral.sh/uv/)-managed CPython) and make it the `python3` on the deploy `PATH`.
+Ubuntu 24.04 ships SQLite 3.45.1, which the bot refuses. Install the interpreter outside
+`/home` (the bot unit sets `ProtectHome=yes`, and release venvs link to it), readable by both
+service users:
+
+```bash
+sudo env UV_PYTHON_INSTALL_DIR=/opt/pokewalker/python ~/.local/bin/uv python install 3.12
+sudo install -d -m 0755 /opt/pokewalker/bin
+sudo ln -sf "$(sudo env UV_PYTHON_INSTALL_DIR=/opt/pokewalker/python ~/.local/bin/uv python find 3.12 --managed-python)" /opt/pokewalker/bin/python3
+/opt/pokewalker/bin/python3 -c "import sqlite3;print(sqlite3.sqlite_version)"
+```
+
+Then put `/opt/pokewalker/bin` first on the deploy `PATH` in step 6.
 
 Install the tools the scripts call (on Debian/Ubuntu; get `rclone` and `restic` from their
 own sites if the packaged versions are old):
@@ -176,7 +194,7 @@ cd /srv/pokewalker/src
 sudo -u pokewalker-deploy git fetch origin
 SHA=$(sudo -u pokewalker-deploy git rev-parse origin/main)
 sudo sed -i "s/^POKEWALKER_RELEASE=.*/POKEWALKER_RELEASE=$SHA/" /etc/pokewalker/runtime.env
-sudo env PATH="$PWD/deploy:$PATH" deploy/deploy.sh "$SHA"
+sudo env PATH="$PWD/deploy:/opt/pokewalker/bin:$PATH" deploy/deploy.sh "$SHA"
 sudo systemctl enable --now pokewalker-bot.service pokewalker-backup.timer
 ```
 

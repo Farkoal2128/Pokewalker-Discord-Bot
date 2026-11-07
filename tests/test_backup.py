@@ -119,6 +119,8 @@ raise SystemExit(result.returncode)
 
     def environment(self):
         environment = os.environ.copy()
+        # A test run under systemd inherits a real INVOCATION_ID; the cases set their own.
+        environment.pop("INVOCATION_ID", None)
         environment.update(PATH=f"{shell_path(self.bin)}:/usr/bin:/bin",
                            STATE_DIRECTORY=shell_path(self.state), DEPLOY_ROOT=shell_path(self.root),
                            POKEWALKER_MARKER_LOG=shell_path(self.marker),
@@ -426,6 +428,7 @@ class BackupDeployIntegrationTests(unittest.TestCase):
             else:
                 body = f'exec bash {shlex.quote(shell_path(backup.bin / name))} "$@"\n'
             target.write_text("#!/bin/bash\n" + body, encoding="utf-8", newline="\n")
+            target.chmod(0o755)  # Linux PATH lookup skips non-executable shims.
         (host.bin / "backup.sh").write_text(
             f'#!/bin/bash\nexec bash {shlex.quote(shell_path(REPO / "deploy/backup.sh"))}\n',
             encoding="utf-8", newline="\n")

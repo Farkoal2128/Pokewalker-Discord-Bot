@@ -23,8 +23,9 @@ NEW = "b" * 40
 TOKEN = "synthetic-secret-do-not-print"
 
 
-def shell_path(path):
-    path = Path(path).resolve().as_posix()
+def shell_path(path, resolve=True):
+    # A Linux venv's python is a symlink; resolving it would escape the venv's packages.
+    path = (Path(path).resolve() if resolve else Path(os.path.abspath(path))).as_posix()
     return f"/{path[0].lower()}{path[2:]}" if len(path) > 1 and path[1] == ":" else path
 
 
@@ -194,7 +195,7 @@ esac
     def real_check_config(self, valid=(OLD, NEW)):
         """Run the real check-config loader against candidate releases holding these files."""
         self.setting("real-check", "1")
-        self.setting("python", shell_path(sys.executable))
+        self.setting("python", shell_path(sys.executable, resolve=False))
         self.setting("repo", shell_path(REPO))
         (self.fixture / "credentials").mkdir()
         (self.fixture / "credentials/discord_token").write_text(TOKEN, encoding="utf-8")

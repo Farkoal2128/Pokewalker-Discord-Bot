@@ -33,6 +33,9 @@ for name, command in commands["checks"].items():
         continue
     configured += 1
     print(f"RUN: {name}: {command}")
+    # Ubuntu has no `python` command; run checks with this interpreter (and its venv).
+    if command.startswith("python "):
+        command = f'"{sys.executable}"{command[len("python"):]}'
     result = subprocess.run(command, cwd=ROOT, shell=True)
     if result.returncode:
         raise SystemExit(result.returncode)
