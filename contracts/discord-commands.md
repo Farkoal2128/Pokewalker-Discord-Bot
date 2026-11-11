@@ -572,6 +572,21 @@ and service without changing schema, existing grants, IDs or persisted formats.
 `tests/test_checkin.py` uses real SQLite writer transactions and fake Discord I/O.
 Live Discord acceptance remains G-3.
 
+### Check-in encounter (additive)
+
+`items.checkin(..., content=None)` takes the loaded content artifact as an optional
+keyword. With content, a granted check-in also queues one wild encounter after
+both item packs, generated exactly like a step encounter on the profile's current
+route (same tier chances, catch rules, and active Shiny Lure use), with NULL source
+channel/message IDs, no ❗ reaction, and no change to the encounter meter. The result
+then carries `encounter`: `queued` (with `encounter_id`) or `queue_full` when the
+non-raid queue already holds 3; a full queue grants the items and timer as before
+and creates no encounter. Without content the result and writes are unchanged.
+The encounter commits in the same transaction and receipt as the grants; refusals
+still create nothing. The command passes the bot's content and adds one line under
+the item lines: "+1 wild encounter queued — open /walker." or "Queue is full — no
+encounter added." No schema or persisted-format change; `tests/test_checkin.py`.
+
 ## M3.3 private bag conversion (additive)
 Home enables Bag through handler registration. The bag shows ordinary units out
 of 250, separate Master Ball/Shiny Lure pockets and Stardust. Convert selects only

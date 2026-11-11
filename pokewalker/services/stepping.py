@@ -62,6 +62,26 @@ def advance_meter(current_c, awarded_c, threshold_c, frozen):
     return remainder, triggers
 
 
+async def spawn_encounter(conn, profile, content, rng, at, channel_id=None, message_id=None):
+    """Queue one wild encounter on the profile's route; callers check the queue has room."""
+    pid = profile["profile_id"]
+    version, pools = content_facts(content)
+    lure_id = await active_lure(conn, pid)
+    spec = encounters.generate(pools, content["routes"][profile["route_id"]], lure_id is not None, rng,
+        chances=load_table("tier_chances")["chances"], rules=load_table("catch")["rules"])
+    eid = str(uuid4())
+    await conn.execute(
+        "INSERT INTO encounters(encounter_id,profile_id,source_channel_id,source_message_id,"
+        "pokemon_id,level_x2,iv_attack,iv_defense,iv_stamina,gender,shiny,tier,route_id,lure_id,"
+        "content_version,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (eid, pid, channel_id, message_id, spec.pokemon_id, spec.level_x2, *spec.ivs,
+         spec.gender or "genderless", spec.shiny, spec.tier, profile["route_id"], lure_id, version, at))
+    if lure_id is not None:
+        await conn.execute('UPDATE active_effects SET remaining_encounters=remaining_encounters-1 '
+                           'WHERE effect_id=?', (lure_id,))
+    return eid
+
+
 async def credit_message(conn, profile, words, created_at, message_id, channel_id, *,
                          content, rng=_RNG, cache=None):
     if not conn.in_transaction:
@@ -101,21 +121,8 @@ async def credit_message(conn, profile, words, created_at, message_id, channel_i
     if size < 3:
         meter += decision.awarded_c
         if meter >= rules["encounter_step_hundredths"]:
-            version, pools = content_facts(content)
             while meter >= rules["encounter_step_hundredths"] and size < 3:
-                lure_id = await active_lure(conn, pid)
-                spec = encounters.generate(pools, content["routes"][current["route_id"]], lure_id is not None, rng,
-                    chances=load_table("tier_chances")["chances"], rules=load_table("catch")["rules"])
-                eid = str(uuid4())
-                await conn.execute(
-                    "INSERT INTO encounters(encounter_id,profile_id,source_channel_id,source_message_id,"
-                    "pokemon_id,level_x2,iv_attack,iv_defense,iv_stamina,gender,shiny,tier,route_id,lure_id,"
-                    "content_version,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (eid, pid, cid, mid, spec.pokemon_id, spec.level_x2, *spec.ivs,
-                     spec.gender or "genderless", spec.shiny, spec.tier, current["route_id"], lure_id, version, at))
-                if lure_id is not None:
-                    await conn.execute('UPDATE active_effects SET remaining_encounters=remaining_encounters-1 '
-                                       'WHERE effect_id=?', (lure_id,))
+                eid = await spawn_encounter(conn, current, content, rng, at, cid, mid)
                 first = eid if first is None else first
                 meter -= rules["encounter_step_hundredths"]
                 size += 1

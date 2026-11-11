@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from content.balance import limits, load_table
 from pokewalker.db import with_receipt
-from pokewalker.services.profiles import get_profile, restrictions, session_owner
+from pokewalker.services.profiles import get_profile, queue_size, restrictions, session_owner
 
 
 RARE = tuple(limits()['rare_pockets'])
@@ -103,7 +103,7 @@ def roll_checkin(rng):
     return rng.choices(rows, weights=[row['weight'] for row in rows], k=1)[0]
 
 
-async def checkin(conn, guild_id, user_id, now, rng):
+async def checkin(conn, guild_id, user_id, now, rng, content=None):
     if not conn.in_transaction:
         raise RuntimeError('Check-in requires an active writer transaction')
     profile = await get_profile(conn, guild_id, user_id)
@@ -132,7 +132,16 @@ async def checkin(conn, guild_id, user_id, now, rng):
                           'resource_id': None if entry['dust'] else entry['item'],
                           'delta': entry['dust'] or entry['quantity'], 'reason': 'checkin'})
         await conn.execute('UPDATE profiles SET last_checkin_at=? WHERE profile_id=?', (now, pid))
-        return {'status': 'granted', 'outcomes': outcomes}, lines
+        result = {'status': 'granted', 'outcomes': outcomes}
+        if content is not None:
+            # Deferred: stepping imports this module.
+            from pokewalker.services.stepping import spawn_encounter
+            if await queue_size(conn, pid) < limits()['encounter_queue']:
+                result.update(encounter='queued',
+                              encounter_id=await spawn_encounter(conn, profile, content, rng, now))
+            else:
+                result['encounter'] = 'queue_full'
+        return result, lines
 
     return await with_receipt(conn, f'checkin:{pid}:{now}', 'checkin', compute, profile_id=pid)
 

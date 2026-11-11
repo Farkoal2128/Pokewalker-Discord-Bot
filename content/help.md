@@ -21,7 +21,7 @@ Open a Pokémon's details to Evolve; use Expand storage in Storage for 50 more s
 
 **Routes.** Pick a route from `/walker`; each favors different Pokémon types. Refreshing Field and Noisy Forest are free; unlock more with lifetime steps in this server.
 
-**Finds and check-ins.** Walking also finds items now and then. Use `/checkin` once an hour for a Poké Ball and a bonus item.
+**Finds and check-ins.** Walking also finds items now and then. Use `/checkin` once an hour for a Poké Ball, a bonus item and a wild encounter (if your queue has room).
 
 **Milestones.** Filling your Pokédex and catching special Pokémon earns reward bundles. Claim them from your inbox; see every milestone in the Pokédex.
 

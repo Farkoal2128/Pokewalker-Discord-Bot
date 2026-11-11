@@ -32,7 +32,7 @@ These settle the conflicts in [the research synthesis](../../research/synthesis.
 | D9 | **No daily limits anywhere. Only hourly limits.** Every cap, budget and diminishing-returns curve uses a rolling hour or a per-minute window. No UTC-day budgets or daily resets. |
 | D10 | **Everything is isolated per server.** A player is `(guild_id, user_id)`. Steps, encounter queue, collection, storage, inventory, rare-item caps, currencies, Candy, active effects, companion, Pokédex, gyms and all limits belong to one server. Nothing carries over or is shared between servers. |
 | D11 | **Passive item finds** are the walking item source. Dowsing is not a separate supply budget. |
-| D12 | **`/checkin`**: once per hour (see D22), grants 1 Poké Ball plus one random common item. |
+| D12 | **`/checkin`**: once per hour (see D22), grants 1 Poké Ball plus one random common item, and queues one wild encounter unless the encounter queue is full. |
 | D13 | **Gym control income**: while a player controls a gym, it grants one random item per hour held. The chance of a rare item (Master Ball, Shiny Lure) is double the passive-find chance of the full v1.1 table (exact values in D23). |
 | D14 | **Walking companion**: the player picks one Pokémon from their collection. It earns Candy for its own Candy family as the player earns steps. |
 | D15 | **Pokédex tracker**: species seen and caught, per player per server. Tracking is per species: regional and other forms count toward their species. A species becomes **seen** when an encounter is revealed (not when it is queued, so hidden encounters leak nothing). It becomes **seen and caught** on a successful catch, the starter grant, or evolving into it. Running, fleeing, or sending a Pokémon for research never removes an entry. |

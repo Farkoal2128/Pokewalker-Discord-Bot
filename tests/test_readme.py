@@ -17,7 +17,7 @@ class ReadmeTests(IsolatedAsyncioTestCase):
     def test_approved_text_verbatim(self):
         content = Path('content/help.md').read_bytes()
         self.assertEqual(hashlib.sha256(content).hexdigest(),
-                         '77c88ffa20337daa508e62b3de16bb3f6e2b5ebee14f3855cc1c7494f7797536')
+                         '7ceb3f822172536053eb15924f33cf3f681e7d1d04e22bcc07aa772ab3cbe15c')
 
     async def test_invalid_help_refuses_startup_before_database(self):
         with tempfile.TemporaryDirectory() as directory:

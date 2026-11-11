@@ -4,6 +4,7 @@ import asyncio
 from collections import Counter
 import importlib
 import json
+from pathlib import Path
 import random
 from types import SimpleNamespace
 import unittest
@@ -33,16 +34,16 @@ class CheckinTests(unittest.IsolatedAsyncioTestCase):
         return {name: await self.rows(name) for name in
                 ('profiles', 'inventory', 'action_receipts', 'resource_ledger', 'restrictions')}
 
-    async def checkin(self, now=10000, seed=1, guild=123, user=456):
+    async def checkin(self, now=10000, seed=1, guild=123, user=456, **kwargs):
         self.assertTrue(hasattr(items, 'checkin'), 'M3.2 check-in service is absent')
-        return await self.writer.run(lambda conn: items.checkin(conn, guild, user, now, random.Random(seed)))
+        return await self.writer.run(lambda conn: items.checkin(conn, guild, user, now, random.Random(seed), **kwargs))
 
-    async def command(self):
+    async def command(self, content=None):
         try:
             module = importlib.import_module('pokewalker.bot.checkin')
         except ModuleNotFoundError:
             self.fail('M3.2 private /checkin command is absent')
-        return module.command(SimpleNamespace(writer=self.writer))
+        return module.command(SimpleNamespace(writer=self.writer, content=content))
 
     def interaction(self, guild=123):
         return SimpleNamespace(guild_id=guild, user=SimpleNamespace(id=456),
@@ -255,3 +256,86 @@ class CheckinTests(unittest.IsolatedAsyncioTestCase):
         await self.conn.execute('UPDATE restrictions SET excluded=1')
         await command.callback(interaction)
         self.assertIn('Excluded', interaction.edit_original_response.await_args.kwargs['content'])
+
+
+class CheckinEncounterTests(unittest.IsolatedAsyncioTestCase):
+    """Check-in queues one wild encounter when the queue has room (additive contract)."""
+
+    CONTENT = None
+    rows, checkin, command, interaction = (CheckinTests.rows, CheckinTests.checkin,
+                                           CheckinTests.command, CheckinTests.interaction)
+
+    async def asyncSetUp(self):
+        await CheckinTests.asyncSetUp(self)
+        if CheckinEncounterTests.CONTENT is None:
+            CheckinEncounterTests.CONTENT = json.loads(
+                (Path(__file__).resolve().parents[1] / 'content/artifact/content.json').read_text(encoding='utf-8'))
+        self.content = CheckinEncounterTests.CONTENT
+
+    async def queued(self):
+        async with self.conn.execute("SELECT * FROM encounters WHERE state IN ('queued','revealed')") as cursor:
+            return [dict(row) for row in await cursor.fetchall()]
+
+    async def fill_queue(self, count=3):
+        for index in range(count):
+            await self.conn.execute(
+                "INSERT INTO encounters(encounter_id,profile_id,pokemon_id,level_x2,iv_attack,iv_defense,"
+                "iv_stamina,gender,shiny,tier,route_id,content_version,created_at) "
+                "VALUES (?,?,1,10,1,1,1,'male',0,'common','refreshing_field','v',0)", (f'old-{index}', self.pid))
+
+    async def test_granted_checkin_queues_one_route_encounter_after_same_items(self):
+        result = await self.checkin(content=self.content)
+        plain = await self.checkin(now=20000)  # no content: result unchanged
+        self.assertEqual(result['outcomes'][1]['item'], 'great_ball')
+        self.assertEqual(result['encounter'], 'queued')
+        self.assertNotIn('encounter', plain)
+        rows = await self.queued()
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(result['encounter_id'], row['encounter_id'])
+        self.assertEqual((row['profile_id'], row['route_id'], row['state'], row['created_at']),
+                         (self.pid, 'refreshing_field', 'queued', 10000))
+        self.assertIsNone(row['source_channel_id'])
+        self.assertIsNone(row['source_message_id'])
+        profile = (await self.rows('profiles'))[0]
+        self.assertEqual(profile['encounter_meter_c'], 0)
+        self.assertEqual(await self.rows('reactions'), [])
+
+    async def test_full_queue_grants_items_and_timer_but_no_encounter(self):
+        await self.fill_queue()
+        result = await self.checkin(content=self.content)
+        self.assertEqual(result['status'], 'granted')
+        self.assertEqual(result['encounter'], 'queue_full')
+        self.assertNotIn('encounter_id', result)
+        self.assertEqual(len(await self.queued()), 3)
+        self.assertEqual({r['item_id']: r['quantity'] for r in await self.rows('inventory')},
+                         {'poke_ball': 1, 'great_ball': 1})
+        self.assertEqual((await self.rows('profiles'))[0]['last_checkin_at'], 10000)
+
+    async def test_refusal_creates_no_encounter(self):
+        await self.checkin(content=self.content)
+        result = await self.checkin(now=10001, content=self.content)
+        self.assertEqual(result['status'], 'too_early')
+        self.assertEqual(len(await self.queued()), 1)
+
+    async def test_active_shiny_lure_is_used_by_checkin_encounter(self):
+        await self.conn.execute("INSERT INTO active_effects(effect_id,profile_id,kind,starts_at,expires_at,"
+                                "receipt_key,remaining_encounters) VALUES ('lure',?,'shiny_lure',0,NULL,'r',10)", (self.pid,))
+        await self.checkin(content=self.content)
+        self.assertEqual((await self.queued())[0]['lure_id'], 'lure')
+        self.assertEqual((await self.rows('active_effects'))[0]['remaining_encounters'], 9)
+
+    async def test_command_shows_queued_or_full_line_below_items(self):
+        command = await self.command(self.content)
+        interaction = self.interaction()
+        with patch('pokewalker.bot.checkin.time.time', return_value=10000):
+            await command.callback(interaction)
+        lines = interaction.edit_original_response.await_args.kwargs['content'].split('\n')
+        self.assertEqual(lines[-1], '+1 wild encounter queued — open /walker.')
+        self.assertEqual(len(lines), 3)
+        await self.fill_queue(2)
+        with patch('pokewalker.bot.checkin.time.time', return_value=13600):
+            await command.callback(interaction)
+        lines = interaction.edit_original_response.await_args.kwargs['content'].split('\n')
+        self.assertEqual(lines[-1], 'Queue is full — no encounter added.')
+        self.assertEqual(len(lines), 3)
