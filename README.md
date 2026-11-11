@@ -20,8 +20,8 @@ on a real server yet; the full checklist is [deploy/restore-rehearsal.md](deploy
 **Ubuntu shortcut:** after step 1, install [uv](https://docs.astral.sh/uv/) as your user and run
 `sudo deploy/install_ubuntu.sh` from your clone. It does steps 2–4 and 6 for that clone's `HEAD`
 (prompting for your IDs and the bot token), registers the slash commands and enables the bot on
-boot. Backups (step 5) stay manual. Re-run it after pulling to deploy an update; upgrades take a
-pre-deploy backup, so set up step 5 first.
+boot. Backups (step 5) stay manual. Re-run it after pulling to deploy an update; each update saves a
+copy of the database first.
 
 ### 1. Create the Discord application
 
@@ -119,7 +119,10 @@ The second file must exist even if empty. To get an alert when the bot stops, pu
 heartbeat-monitor URL in it (for example a [Healthchecks.io](https://healthchecks.io) check with
 a 60-second period and 120-second grace).
 
-### 5. Set up Google Drive backups
+### 5. Set up Google Drive backups (optional)
+
+Skip this if you don't want off-machine backups. Without it, each update still saves a plain
+copy of the database to `/var/lib/pokewalker-backup/pre-deploy-<sha>.sqlite3` before switching.
 
 Backups run hourly as root. Each is an integrity-checked SQLite snapshot plus the deletion log,
 encrypted by **restic** and stored in Google Drive through **rclone**. Snapshots older than

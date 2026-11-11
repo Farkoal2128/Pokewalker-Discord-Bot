@@ -73,8 +73,7 @@ status=0
 env PATH="$src/deploy:/opt/pokewalker/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
     deploy/deploy.sh "$sha" 2>&1 | tee "$log" || status=${PIPESTATUS[0]}
 if (( status )); then
-    echo "install_ubuntu: deploy exited $status (see README step 6 exit codes;" \
-         "40 on an upgrade means backups in README step 5 are not set up yet)" >&2
+    echo "install_ubuntu: deploy exited $status (see README step 6 exit codes)" >&2
     exit "$status"
 fi
 systemctl enable pokewalker-bot.service >/dev/null 2>&1

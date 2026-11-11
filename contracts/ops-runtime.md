@@ -101,7 +101,10 @@ log, replaying exact deleted profile IDs (D28), never a re-enrolled profile's ID
 | Prune | 0 complete; 1 any local/remote selection or deletion failed |
 
 Deploy continues only on backup 0/2/3, warning on 2/3; all other statuses abort
-before release switch. Readiness rollback checks schema compatibility before
+before release switch. Backups are optional: when `/etc/pokewalker/backup.env` is
+absent, an upgrade skips `backup.sh` and instead copies the stopped database with
+SQLite `.backup` to `/var/lib/pokewalker-backup/pre-deploy-<sha>.sqlite3` (the
+recovery snapshot), printing that path; a failed copy restarts the previous release (40). Readiness rollback checks schema compatibility before
 starting old code. SQLite restore occurs only with explicit `--restore-db`.
 
 ## Verification

@@ -339,6 +339,23 @@ esac
                 self.assertEqual(self.run_deploy(), 0, self.output)
                 self.assertIn("warning", self.output.lower())
 
+    def test_backups_not_configured_takes_local_copy_and_continues(self):
+        (self.root / "etc/pokewalker/backup.env").unlink()
+        self.assertEqual(self.run_deploy(), 0, self.output)
+        self.assertFalse(self.named("backup.sh"))
+        copy = shell_path(self.root / f"var/lib/pokewalker-backup/pre-deploy-{NEW}.sqlite3")
+        self.assertIn(f'sqlite3|-readonly|{shell_path(self.db)}|.backup "{copy}"', self.calls)
+        self.assertIn(f"backups not configured; local copy: {copy}", self.output)
+        self.assertEqual(self.current.resolve().name, NEW)
+
+    def test_backups_not_configured_copy_failure_restarts_previous_exit_40(self):
+        (self.root / "etc/pokewalker/backup.env").unlink()
+        (self.root / "var/lib/pokewalker-backup").rmdir()
+        (self.root / "var/lib/pokewalker-backup").write_text("not a directory")
+        self.assertEqual(self.run_deploy(), 40, self.output)
+        self.assertEqual(self.current.resolve().name, OLD)
+        self.assertTrue(self.ready.exists())
+
     def test_compatible_rollback_exit_20(self):
         self.setting("ready", "0 1")
         self.ready.touch()  # a stale marker cannot make the new start healthy

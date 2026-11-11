@@ -125,7 +125,15 @@ rollback() {
     exit 20
 }
 
-if [[ -n $previous ]]; then
+if [[ -n $previous && ! -f $config/backup.env ]]; then
+    # Backups are optional; keep one plain local copy for --restore-db recovery.
+    systemctl stop pokewalker-bot.service || exit 30
+    snapshot=$root/var/lib/pokewalker-backup/pre-deploy-$sha.sqlite3
+    { mkdir -p -- "${snapshot%/*}" && rm -f -- "$snapshot" &&
+        sqlite3 -readonly "$database" ".backup \"$snapshot\""; } >/dev/null 2>&1 ||
+        { start || true; exit 40; }
+    printf 'deploy: backups not configured; local copy: %s\n' "$snapshot" >&2
+elif [[ -n $previous ]]; then
     systemctl stop pokewalker-bot.service || exit 30
     status=0
     # backup.env is root-managed plain KEY=value, also consumed by the backup unit.
