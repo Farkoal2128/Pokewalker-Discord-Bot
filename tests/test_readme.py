@@ -19,7 +19,8 @@ PAGE_ONE_SHA256 = 'a3c02f50422b436c961342e5937e3d0c3ca16bd6426000dc9e807bfc4f18e
 CHECKIN_SENTENCE = (
     "**Finds and check-ins.** Walking also finds items now and then. Use `/checkin` once an hour, "
     "60 minutes after your last one. It always gives a Poké Ball plus one bonus item: a Great Ball, "
-    "a Razz Berry, 2 Poké Balls or a Pinap Berry; an item that doesn't fit in your bag becomes 10 Stardust. "
+    "a Razz Berry, 2 Poké Balls, a Pinap Berry or, rarely, a Vitamin; an item that doesn't fit in your bag "
+    "becomes 10 Stardust. "
     "It also queues one wild encounter if your queue has room; otherwise the reply says your queue is full. "
     "You can't check in while you're paused.")
 
@@ -40,7 +41,7 @@ class ReadmeTests(IsolatedAsyncioTestCase):
     def test_approved_text_verbatim(self):
         content = Path('content/help.md').read_bytes()
         self.assertEqual(hashlib.sha256(content).hexdigest(),
-                         'a825da7a3c0d15fe3ca09b9d66418f58bd9d3e5678da0f8284ae8fffc6488585')
+                         'c3454d4058d7d84c3acb769a9c730cbbfbbc51f068b570aff5d838fc88229be5')
 
     def test_page_one_is_current_opening_verbatim(self):
         page = self.pages()[0]
@@ -131,11 +132,34 @@ class ReadmeTests(IsolatedAsyncioTestCase):
         self.assertNotIn('for a Poké Ball, a bonus item and a wild encounter', ''.join(pages))
         table = json.loads(Path('content/balance/checkin_table.json').read_text(encoding='utf-8'))['rows']
         phrases = {('great_ball', 1): 'a Great Ball', ('razz_berry', 1): 'a Razz Berry',
-                   ('poke_ball', 2): '2 Poké Balls', ('pinap_berry', 1): 'a Pinap Berry'}
+                   ('poke_ball', 2): '2 Poké Balls', ('pinap_berry', 1): 'a Pinap Berry',
+                   ('vitamin', 1): 'rarely, a Vitamin'}
         self.assertEqual({(row['item'], row['quantity']) for row in table}, set(phrases))
         for phrase in phrases.values():
             self.assertIn(phrase, CHECKIN_SENTENCE)
         self.assertEqual(items.limits()['encounter_queue'], 3)
+
+    def test_iv_items_and_trade_up_on_player_page(self):
+        # Owner amendments 2026-11-12: Bottlecap and Vitamin; ball trade-up.
+        from content.balance import load_table
+        pages = self.pages()
+        rates = load_table('conversion_rates')
+        for heading, facts in (
+                ('**Vitamins and Bottlecaps.**',
+                 ("Use one from a Pokémon's details on its lowest IV", 'a Vitamin raises it by 1',
+                  'a Bottlecap raises it to the max', 'CP and Appraisal stars',
+                  'Neither works once all its IVs are perfect',
+                  f"Buy Vitamins in Bag for {rates['purchase_stardust']['vitamin']:,} Stardust each",
+                  'Bottlecaps come from gym survivor rewards')),
+                ('**Trade up.**',
+                 ('In Bag, trade 2 Poké Balls for 1 Great Ball, or 2 Great Balls for 1 Ultra Ball.',))):
+            player = [page for page in pages[:-1] if heading in page]
+            self.assertEqual(len(player), 1, heading)
+            self.assertNotIn(heading, pages[-1])
+            for fact in facts:
+                self.assertIn(fact, player[0])
+        self.assertEqual([(rule['from'], rule['to'], rule['input_per_output']) for rule in rates['trade_up']],
+                         [('poke_ball', 'great_ball', 2), ('great_ball', 'ultra_ball', 2)])
 
     def test_trading_section_on_player_page(self):
         pages = self.pages()

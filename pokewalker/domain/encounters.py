@@ -80,8 +80,9 @@ def roll_shiny(rng: random.Random, lure_active: bool, *, rules: Mapping) -> bool
     return rng.random() < probability
 
 
-def roll_level_ivs(rng: random.Random, *, rules: Mapping) -> tuple[int, tuple[int, int, int]]:
-    return (2 * rng.randint(*rules["wild_level_range"]),
+def roll_level_ivs(rng: random.Random, *, rules: Mapping,
+                   level_range: str = "wild_level_range") -> tuple[int, tuple[int, int, int]]:
+    return (2 * rng.randint(*rules[level_range]),
             tuple(rng.randint(*rules["wild_iv_range"]) for _ in range(3)))
 
 

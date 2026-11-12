@@ -1,7 +1,7 @@
 {
-  "source": "docs/features/pokewalker-bot/README.md D38/D42/D47; docs/features/pokewalker-bot/PLAN.md P4/P5; docs/research/go-systems/items-and-catching.md, shinies-and-lures.md; owner amendment Companion Mirror (owner decision 2026-11-12)",
+  "source": "docs/features/pokewalker-bot/README.md D38/D42/D47; docs/features/pokewalker-bot/PLAN.md P4/P5; docs/research/go-systems/items-and-catching.md, shinies-and-lures.md; owner amendment Companion Mirror (owner decision 2026-11-12); owner amendment raid boss minimum level (owner decision 2026-11-12)",
   "checked": "2026-11-12",
-  "version": 2,
+  "version": 3,
   "rules": {
     "base_catch_rates": {
       "common": 0.5,
@@ -38,6 +38,10 @@
     "wild_level_range": [
       1,
       20
+    ],
+    "raid_level_range": [
+      20,
+      25
     ],
     "wild_iv_range": [
       0,

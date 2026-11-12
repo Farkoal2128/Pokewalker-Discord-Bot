@@ -34,6 +34,16 @@ def available(state):
     return [item for item in state['rates'] if state['inventory'].get(item, 0) > 0]
 
 
+def tradeable(state):
+    """Trade-up rules whose input is held at least input_per_output times."""
+    return [rule for rule in state.get('trade_up', [])
+            if state['inventory'].get(rule['from'], 0) >= rule['input_per_output']]
+
+
+def trade_up_rule(state):
+    return next(rule for rule in state.get('trade_up', []) if rule['from'] == state['selection'].get('item'))
+
+
 def mirror_text(encounters=10, percent=20, eligible=True):
     text = (f"For your next {encounters} generated encounters, each has a {percent}% chance to be a Pokémon "
             "from your companion's family line, on any route. ⚠ The mirror never attracts Legendary, "
@@ -68,7 +78,8 @@ def render(state):
         text += f"\nStar Piece: {star_piece['remaining_rewards']} boosted Stardust rewards left"
     label = 'Stored — available after the current effect ends' if active and held else 'Shiny Lure'
     booster = bool(active) or bool(mirror)
-    buttons = [('Convert', 'convert_pick', not held_items), (label, 'shiny_lure', booster or not held),
+    buttons = [('Convert', 'convert_pick', not held_items), ('Buy Vitamin', 'vitamin_buy_preview', False),
+               ('Trade up', 'tradeup_pick', not tradeable(state)), (label, 'shiny_lure', booster or not held),
                ('Back', 'home', False)]
     if kinds:
         buttons.insert(1, ('Buy evolution item', 'buy_pick', False))
@@ -106,6 +117,29 @@ def render(state):
             text += f'\nConvert your rare {name(item, content)}?'
         buttons = [('Confirm', 'convert_confirm_rare' if mode == 'rare' else 'convert_confirm', False),
                    ('Back', selection.get('back', 'bag'), False)]
+    elif mode in ('tradeup_pick', 'tradeup_qty'):
+        if mode == 'tradeup_pick':
+            options = [discord.SelectOption(label=f"{name(rule['from'])} → {name(rule['to'])} "
+                                                  f"({rule['input_per_output']}:1)", value=rule['from'])
+                       for rule in tradeable(state)]
+        else:
+            rule = trade_up_rule(state)
+            most = inventory.get(rule['from'], 0) // rule['input_per_output']
+            options = [discord.SelectOption(label=f'All ({q})' if q == most else str(q), value=str(q))
+                       for q in quantities(rule['from'], most)]
+        view.add_item(discord.ui.Select(placeholder='Choose trade-up' if mode == 'tradeup_pick' else 'Choose quantity',
+                                       custom_id=custom_id(state, 'tradeup_qty' if mode == 'tradeup_pick'
+                                                           else 'tradeup_preview'), options=options, row=1))
+        buttons = [('Back', 'bag', False)]
+    elif mode == 'tradeup_preview':
+        rule, outputs = trade_up_rule(state), selection['quantity']
+        text = (f"{outputs * rule['input_per_output']} × {name(rule['from'])} → {outputs} × {name(rule['to'])}"
+                '\nThis cannot be undone.')
+        buttons = [('Confirm', 'tradeup_confirm', False), ('Back', 'bag', False)]
+    elif mode == 'vitamin_buy':
+        price = state['vitamin_price']
+        text = f"{price:,} Stardust → 1 × Vitamin · have {state['stardust']:,} Stardust"
+        buttons = [('Confirm', 'vitamin_buy_confirm', state['stardust'] < price), ('Back', 'bag', False)]
     elif mode == 'buy_preview':
         item, price = selection['item'], state.get('buy_price', 500)
         text = f"{price} Stardust → 1 × {name(item, content)} · have {state['stardust']} Stardust"
@@ -160,7 +194,8 @@ def handlers(walker):
         async with conn.execute('SELECT remaining_rewards FROM active_effects WHERE effect_id=?', (star_piece,)) as cursor:
             star_active = await cursor.fetchone()
         content = getattr(walker.bot, 'content', None)
-        rates = dict(load_table('conversion_rates')['stardust_per_unit'])
+        conversion = load_table('conversion_rates')
+        rates = dict(conversion['stardust_per_unit'])
         rules = load_table('catch')['rules']
         for kind in (content or {}).get('evolution_items', []):
             rates[kind['id']] = items.rate_for(kind['id'], content)
@@ -174,7 +209,8 @@ def handlers(walker):
                 'mirror_encounters': rules['mirror_encounters'],
                 'mirror_percent': round(rules['mirror_probability'] * 100),
                 'stardust': profile['stardust'], 'rates': rates, 'notice': notice,
-                'content': content or {}, 'buy_price': load_table('evolution')['item_price_stardust']}
+                'content': content or {}, 'buy_price': load_table('evolution')['item_price_stardust'],
+                'trade_up': conversion['trade_up'], 'vitamin_price': conversion['purchase_stardust']['vitamin']}
 
     async def bag(conn, session, interaction):
         session['selection'] = '{}'
@@ -286,6 +322,59 @@ def handlers(walker):
     async def confirm_rare(conn, session, interaction):
         return await confirm(conn, session, interaction, rare=True)
 
+    async def vitamin_buy_preview(conn, session, interaction):
+        session['selection'] = json.dumps({'phase': 'vitamin_buy'})
+        return render(await state(conn, session, 'vitamin_buy'))
+
+    async def vitamin_buy_confirm(conn, session, interaction):
+        if json.loads(session['selection']).get('phase') != 'vitamin_buy':
+            raise _Refused('Preview the purchase before confirming.')
+        result = await items.buy_vitamin(conn, session, walker.clock())
+        if 'status' in result:
+            raise _Refused({'bag_full': 'Bag is full. Nothing was spent.',
+                            'insufficient': 'Not enough Stardust. Nothing was spent.'}.get(result['status'], REOPEN))
+        session['selection'] = '{}'
+        return render(await state(conn, session, notice=f"{result['stardust']:,} Stardust → 1 × Vitamin"))
+
+    async def tradeup_pick(conn, session, interaction):
+        if not tradeable(await state(conn, session)):
+            raise _Refused('You need at least 2 Poké Balls or 2 Great Balls to trade up.')
+        session['selection'] = json.dumps({'phase': 'tradeup_pick'})
+        return render(await state(conn, session, 'tradeup_pick'))
+
+    async def tradeup_qty(conn, session, interaction):
+        current = await state(conn, session)
+        values = interaction.data.get('values', [])
+        if (current['selection'].get('phase') != 'tradeup_pick' or len(values) != 1
+                or values[0] not in {rule['from'] for rule in tradeable(current)}):
+            raise _Refused('Choose one of the displayed trade-ups.')
+        session['selection'] = json.dumps({'phase': 'tradeup_qty', 'item': values[0]})
+        return render(await state(conn, session, 'tradeup_qty'))
+
+    async def tradeup_preview(conn, session, interaction):
+        current = await state(conn, session)
+        selection, values = current['selection'], interaction.data.get('values', [])
+        rule = (next((rule for rule in tradeable(current) if rule['from'] == selection.get('item')), None)
+                if selection.get('phase') == 'tradeup_qty' else None)
+        most = current['inventory'].get(rule['from'], 0) // rule['input_per_output'] if rule else 0
+        if rule is None or len(values) != 1 or values[0] not in {str(q) for q in quantities(rule['from'], most)}:
+            raise _Refused('Choose one of the displayed quantities.')
+        selection.update(phase='tradeup_preview', quantity=int(values[0]))
+        session['selection'] = json.dumps(selection)
+        return render(await state(conn, session, 'tradeup_preview'))
+
+    async def tradeup_confirm(conn, session, interaction):
+        selection = json.loads(session['selection'])
+        if selection.get('phase') != 'tradeup_preview':
+            raise _Refused('Preview the trade-up before confirming.')
+        result = await items.trade_up(conn, session, selection.get('item'), selection.get('quantity'))
+        if 'status' in result:
+            raise _Refused('Not enough balls held. Nothing was traded.' if result['status'] == 'insufficient'
+                           else REOPEN)
+        session['selection'] = '{}'
+        notice = f"{result['consumed']} × {name(result['from'])} → {result['produced']} × {name(result['to'])}"
+        return render(await state(conn, session, notice=notice))
+
     async def lure_confirm(conn, session, interaction):
         current = await state(conn, session)
         if current['lure'] or current['mirror'] or current['inventory'].get('shiny_lure', 0) < 1:
@@ -380,4 +469,7 @@ def handlers(walker):
             'mirror_confirm': mirror_confirm, 'mirror_activate': mirror_activate,
             'wlt_confirm': wlt_confirm, 'wlt_use': wlt_use,
             'star_piece_confirm': star_piece_confirm, 'star_piece_activate': star_piece_activate,
-            'convert_confirm': confirm, 'convert_confirm_rare': confirm_rare}
+            'convert_confirm': confirm, 'convert_confirm_rare': confirm_rare,
+            'vitamin_buy_preview': vitamin_buy_preview, 'vitamin_buy_confirm': vitamin_buy_confirm,
+            'tradeup_pick': tradeup_pick, 'tradeup_qty': tradeup_qty, 'tradeup_preview': tradeup_preview,
+            'tradeup_confirm': tradeup_confirm}

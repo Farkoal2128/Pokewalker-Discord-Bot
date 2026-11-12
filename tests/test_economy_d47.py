@@ -123,9 +123,10 @@ class EconomyD47Tests(unittest.TestCase):
         total = sum(r["weight"] for r in table["rows"])
         expected = {r["item"]: 8 * r["weight"] * r["quantity"] / total for r in table["rows"]}
         self.assertEqual(gym["items_per_deployment"], expected)
-        self.assertAlmostEqual(gym["balls_per_deployment"], 24.576)
-        self.assertAlmostEqual(gym["balls_one_deployment_daily"], 49.152)
-        self.assertAlmostEqual(gym["balls_all_day"], 147.456)
+        # Owner amendment 2026-11-12: Poke Ball weight 4940 -> 4840 for the Vitamin row.
+        self.assertAlmostEqual(gym["balls_per_deployment"], 24.176)
+        self.assertAlmostEqual(gym["balls_one_deployment_daily"], 48.352)
+        self.assertAlmostEqual(gym["balls_all_day"], 145.056)
 
     def test_d47_comparison_reports_both_holding_assumptions(self):
         report, results = self.report()

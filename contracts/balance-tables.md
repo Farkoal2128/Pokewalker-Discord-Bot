@@ -55,14 +55,14 @@ are integer counts unless another unit is explicitly named.
 | `tier_chances.json` | `chances`: tier ID to integer weight | `common` 60, `uncommon` 30, `rare` 3, `evolved` 6, `legendary` 1; total 100. `legendary` includes Mythical identities. |
 | `catch.json` | `rules`: probabilities, multipliers, inclusive roll ranges | BCRs: Common .50, Uncommon .30, Rare/Evolved .15, Legendary/Mythical .05. Ball multipliers 1/1.5/2; Razz 1.5, Golden Razz 2.5, Silver Pinap 1.8, Pinap 1. Pinap Candy multiplier 2; Silver Pinap Candy uses numerator 7, denominator 3, rounding `floor`. Flee .10 after ordinary failed throws, zero for shiny and Legendary/Mythical. Shiny probability 1/256; lure probability multiplier 4 for the next `lure_encounters: 10` generated encounters (no duration key). Wild whole-level range 1-20 and each IV 0-15; starter level 10 and each IV 10-15. |
 | `find_table.json` | `rows`: weighted item packs | v1 table below totals 9,750, with Star Piece and Evolution item excluded. |
-| `checkin_table.json` | `rows`: weighted item packs | Great Ball quantity 1/weight 35; Razz quantity 1/weight 30; Poke Ball quantity 2/weight 20; Pinap quantity 1/weight 15. Total 100. |
+| `checkin_table.json` | `rows`: weighted item packs | Great Ball quantity 1/weight 35; Razz quantity 1/weight 30; Poke Ball quantity 2/weight 20; Pinap quantity 1/weight 15. Total 100. The Bottlecap and Vitamin owner amendment (2026-11-12, below) lowers Great Ball to weight 34 and adds Vitamin quantity 1/weight 1. |
 | `powerup_prices.json` | `bands`, `cap_level_x2` | Hidden level uses integer twice-level. Each band is lower-inclusive and upper-exclusive, charging for one half-level step from the current level. Bands cover every integer 2-79 exactly once; cap is 80. Costs are listed below. |
 | `cpm.json` | `multipliers`: string `level_x2` to numeric multiplier | Exactly 79 entries with keys `"2"` through `"80"`, strictly increasing, for levels 1.0-40.0 in half-level increments. Values are transcribed from the published reference selected by P8; no runtime interpolation. |
 | `conversion_rates.json` | `stardust_per_unit`: item ID to integer Stardust | v1 only: Poke Ball 2, Great Ball 5, Ultra Ball 10, Razz/Pinap 5, Golden Razz/Silver Pinap 25, Rare Candy 20, Master Ball/Shiny Lure 500. No v1.1 or v2 items. |
 | `capacities.json` | `limits`: counts and `starter_kit` item quantities | Storage 250; bag 250 ordinary item units; separate Master Ball/Shiny Lure pockets 1 each; encounter queue 3; starter kit 30 Poke Balls and 5 Razz. |
 | `milestones.json` | Named categories and reward bundles below | All D59 categories, pinned thresholds, explicit species groups, and evolution-line rule are present. |
 | `routes.json` | `routes`: unique `id`, `name`, `weights` map | Eight P1 routes. Type weights are integers 1-3; an omitted type has weight zero. Every one of the 18 types has positive weight on at least two routes. Encounter weight is the higher weight of its identity's types; Legendary/Mythical selection ignores route weights (D38). |
-| `gym_income_table.json` | `rows`, `tenure_seconds` | D23 full 13-row table below totals 10,000; tenure is 28,800 seconds. `gym_income_table` is gameplay data for v2 and also supports the offline D47 comparison. |
+| `gym_income_table.json` | `rows`, `tenure_seconds` | D23 full 13-row table below totals 10,000; tenure is 28,800 seconds. The Bottlecap and Vitamin owner amendment (2026-11-12, below) makes it 14 rows, still totalling 10,000. `gym_income_table` is gameplay data for v2 and also supports the offline D47 comparison. |
 | `simulation.json` | Offline assumptions and previously implicit D12/D22/D29 item rules | Check-in every 3,600 active seconds: guaranteed Poke Ball first, then common pack; ordinary overflow 10 Stardust, duplicate rare find 500. M0.8 supersedes M0.6's five-Poke-Ball reserve with the ordered throw policy below; the legacy table field is retained but unused. Fallback profiles preserve adaptation B1's daily counts (10/25/60 messages) and estimate words as counted characters divided by 5 (10/12/15); distribute each day's messages across its active hours. Research daily award caps are superseded by D20. Measured hourly accepted-word percentiles are sampled equally, reconstructed as spaced messages subject to C2. These are declared simulation assumptions, not measured conversation or new gameplay rules. |
 
 ### Offline model boundary (M0.6)
@@ -301,12 +301,14 @@ increases to `version: 3`. Each has nonempty `source` and `checked: "2026-11-05"
   Silver Pinap `(3, 1500)`, Rare Candy `(5, 1500)`, Star Piece `(2, 1000)`,
   Shiny Lure `(1, 800)`, Master Ball `(1, 600)`, World Legendary Ticket `(1, 100)`.
   Total weight is 10,000; flat Stardust is paid with every item outcome. The
-  Companion Mirror owner amendment (2026-11-12, below) makes this nine rows. D60
+  Companion Mirror owner amendment (2026-11-12, below) makes this nine rows, and the
+  Bottlecap and Vitamin owner amendment (2026-11-12, below) makes it ten. D60
   rewards enter the inbox on undefeated tenure expiry, with no overflow conversion.
 - `capacities.json` adds `limits.rare_pockets.world_legendary_ticket: 1` and
   top-level `gyms: {per_guild: 10, name_max: 32}`. Gym counts and ticket pockets
   are per server; gym names have 1-32 characters.
-- `gym_income_table.json` remains byte-for-byte unchanged: total 10,000,
+- `gym_income_table.json` remains byte-for-byte unchanged in this revision (the 2026-11-12
+  Bottlecap and Vitamin owner amendment, below, later changes it): total 10,000,
   Master Ball weight 20, Shiny Lure 100, Poke Ball 4940, tenure 28,800 seconds.
   Its `evolution_item` placeholder is resolved by `items.resolve_item` in M7.4b.
 
@@ -332,3 +334,40 @@ decision 2026-11-12). Its effect and storage are C3. Each changed table has
   from the survivor roll. The artifact payload is unchanged; the manifest's
   balance hashes are re-recorded. Tests: tests/test_balance_tables.py and
   tests/test_content_integrity.py.
+
+## Owner amendment: raid boss minimum level (2026-11-12)
+`catch.json` (version 3, checked 2026-11-12) adds `raid_level_range: [20, 25]`, the
+whole-level range for World Legendary raid participants. `wild_level_range` stays
+[1, 20] for every other wild encounter.
+
+## Owner amendment: Bottlecap and Vitamin (2026-11-12)
+
+The owner added a Bottlecap to the gym survivor roll and a Vitamin to the hourly gym
+income and check-in rolls, and made Vitamins purchasable (D23, D29, D60 and D61 amended,
+owner decision 2026-11-12). Item effects and storage are C3. Each changed table has
+`checked: "2026-11-12"` and a provenance note naming this amendment.
+
+- `survivor_table.json` becomes `version: 3` with ten rows: Ultra Ball weight drops to
+  `(5, 1600)` and Bottlecap `(bottlecap, 1, 400)` is added; every other row and
+  `stardust_flat: 500` are unchanged. Total weight stays 10,000.
+- `gym_income_table.json` becomes `version: 2` with fourteen rows: Poke Ball weight drops
+  to `(5, 4840)` and Vitamin `(vitamin, 1, 100)` is added; every other row and
+  `tenure_seconds: 28800` are unchanged. Total weight stays 10,000. The offline D47
+  comparison therefore expects 24.176 balls per deployment instead of 24.576.
+- `checkin_table.json` becomes `version: 2` with five rows: Great Ball weight drops to
+  `(1, 34)` and Vitamin `(vitamin, 1, 1)` is added. Total weight stays 100.
+- `conversion_rates.json` becomes `version: 4`. `stardust_per_unit` adds `vitamin: 500` and
+  `bottlecap: 2500`, and the new `purchase_stardust: {vitamin: 5000}` is the Bag price of
+  one Vitamin. Both items are ordinary stackable Bag items, not rare pockets.
+- The find table is unchanged, so Bottlecaps come only from the survivor roll and Vitamins
+  only from gym income, check-ins and purchase. The artifact payload is unchanged; the
+  manifest's balance hashes are re-recorded. Tests: tests/test_balance_tables.py,
+  tests/test_content_integrity.py, tests/test_economy_d47.py, tests/test_checkin.py.
+
+## Owner amendment: ball trade-up (2026-11-12)
+
+`conversion_rates.json` (version 4, above) also adds `trade_up`, an ordered list of
+`{from, to, input_per_output}` rules: exactly Poke Ball to Great Ball with 2 inputs per
+output, then Great Ball to Ultra Ball with 2 inputs per output. No rule produces or
+consumes a Master Ball. C3 `items.trade_up` and the C5 Bag picker read only this list.
+Tests: tests/test_balance_tables.py, tests/test_ball_trade_up.py.

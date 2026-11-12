@@ -23,7 +23,7 @@ Open a Pokémon's details to Evolve; use Expand storage in Storage for 50 more s
 
 **Routes.** Pick a route from `/walker`; each favors different Pokémon types. Refreshing Field and Noisy Forest are free; unlock more with lifetime steps in this server.
 
-**Finds and check-ins.** Walking also finds items now and then. Use `/checkin` once an hour, 60 minutes after your last one. It always gives a Poké Ball plus one bonus item: a Great Ball, a Razz Berry, 2 Poké Balls or a Pinap Berry; an item that doesn't fit in your bag becomes 10 Stardust. It also queues one wild encounter if your queue has room; otherwise the reply says your queue is full. You can't check in while you're paused.
+**Finds and check-ins.** Walking also finds items now and then. Use `/checkin` once an hour, 60 minutes after your last one. It always gives a Poké Ball plus one bonus item: a Great Ball, a Razz Berry, 2 Poké Balls, a Pinap Berry or, rarely, a Vitamin; an item that doesn't fit in your bag becomes 10 Stardust. It also queues one wild encounter if your queue has room; otherwise the reply says your queue is full. You can't check in while you're paused.
 
 **Milestones.** Filling your Pokédex and catching special Pokémon earns reward bundles. Claim them from your inbox; see every milestone in the Pokédex.
 
@@ -31,6 +31,9 @@ Buy evolution items in Bag for 500 Stardust each, or use Buy & evolve on a missi
 
 **Shiny Lure.** Activate one from your bag for 4× shiny odds on your next 10 encounters.
 **Star Piece.** Activate one from Bag for 1.5× Stardust on your next 10 catch or find Stardust rewards.
+
+**Vitamins and Bottlecaps.** Use one from a Pokémon's details on its lowest IV: a Vitamin raises it by 1 and a Bottlecap raises it to the max, which can raise its CP and Appraisal stars. Neither works once all its IVs are perfect. Buy Vitamins in Bag for 5,000 Stardust each; Bottlecaps come from gym survivor rewards.
+**Trade up.** In Bag, trade 2 Poké Balls for 1 Great Ball, or 2 Great Balls for 1 Ultra Ball.
 
 <!-- page -->
 

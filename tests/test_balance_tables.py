@@ -66,9 +66,11 @@ class BalanceTableTests(unittest.TestCase):
         self.assertEqual(sum(w for _, w in rows.values()), 10000)
 
     def test_checkin_total_100(self):
+        # Owner amendment 2026-11-12: Vitamin 1, Great Ball 35 -> 34.
         rows = self.rows("checkin_table")
-        self.assertEqual(rows, {"great_ball": (1, 35), "razz_berry": (1, 30),
-                                "poke_ball": (2, 20), "pinap_berry": (1, 15)})
+        self.assertEqual(rows, {"great_ball": (1, 34), "razz_berry": (1, 30),
+                                "poke_ball": (2, 20), "pinap_berry": (1, 15),
+                                "vitamin": (1, 1)})
         self.assertEqual(sum(w for _, w in rows.values()), 100)
 
     def test_battle_rules_match_research_template_values(self):
@@ -90,14 +92,15 @@ class BalanceTableTests(unittest.TestCase):
         self.assertEqual({value for row in chart.values() for value in row.values()}, factors)
 
     def test_survivor_table_totals_10000_and_flat_500(self):
-        # Owner amendment 2026-11-12: Companion Mirror 500, Ultra Ball 2500 -> 2000.
+        # Owner amendments 2026-11-12: Companion Mirror 500, Ultra Ball 2500 -> 2000;
+        # then Bottlecap 400, Ultra Ball 2000 -> 1600.
         rows = self.rows("survivor_table")
         self.assertEqual(rows, {
-            "ultra_ball": (5, 2000), "golden_razz_berry": (3, 2000),
+            "ultra_ball": (5, 1600), "golden_razz_berry": (3, 2000),
             "silver_pinap_berry": (3, 1500), "rare_candy": (5, 1500),
             "star_piece": (2, 1000), "shiny_lure": (1, 800),
             "master_ball": (1, 600), "companion_mirror": (1, 500),
-            "world_legendary_ticket": (1, 100),
+            "bottlecap": (1, 400), "world_legendary_ticket": (1, 100),
         })
         self.assertEqual(sum(w for _, w in rows.values()), 10000)
         self.assertEqual(self.load("survivor_table")["stardust_flat"], 500)
@@ -109,13 +112,15 @@ class BalanceTableTests(unittest.TestCase):
         })
         self.assertEqual(table["gyms"], {"per_guild": 10, "name_max": 32})
 
-    def test_gym_income_table_d23_values_unchanged(self):
+    def test_gym_income_table_d23_values_with_owner_vitamin(self):
+        # Owner amendment 2026-11-12: Vitamin 100, Poke Ball 4940 -> 4840.
         rows = self.rows("gym_income_table")
         expected = self.rows("find_table") | {
-            "master_ball": (1, 20), "shiny_lure": (1, 100), "poke_ball": (5, 4940),
+            "master_ball": (1, 20), "shiny_lure": (1, 100), "poke_ball": (5, 4840),
+            "vitamin": (1, 100),
         }
         self.assertEqual(rows, expected)
-        self.assertEqual(len(rows), 13)
+        self.assertEqual(len(rows), 14)
         self.assertEqual(sum(w for _, w in rows.values()), 10000)
         self.assertEqual(self.load("gym_income_table")["tenure_seconds"], 28800)
 
@@ -236,8 +241,19 @@ class BalanceTableTests(unittest.TestCase):
             "pinap_berry": 5, "golden_razz_berry": 25, "silver_pinap_berry": 25,
             "rare_candy": 20, "master_ball": 500, "shiny_lure": 500,
             "star_piece": 50, "evolution_item": 100, "companion_mirror": 500,
+            "vitamin": 500, "bottlecap": 2500,
         })
-        self.assertNotIn("companion_mirror", self.load("capacities")["limits"]["rare_pockets"])
+        for item in ("companion_mirror", "vitamin", "bottlecap"):
+            self.assertNotIn(item, self.load("capacities")["limits"]["rare_pockets"])
+
+    def test_vitamin_price_and_ball_trade_up_rules(self):
+        # Owner amendments 2026-11-12: Vitamin purchase and ball trade-up.
+        table = self.load("conversion_rates")
+        self.assertEqual(table["purchase_stardust"], {"vitamin": 5000})
+        self.assertEqual(table["trade_up"], [
+            {"from": "poke_ball", "to": "great_ball", "input_per_output": 2},
+            {"from": "great_ball", "to": "ultra_ball", "input_per_output": 2},
+        ])
 
     def test_evolution_table_costs_and_item_price(self):
         table = self.load("evolution")
@@ -281,12 +297,15 @@ class BalanceTableTests(unittest.TestCase):
                 self.assertIsInstance(table, dict)
                 self.assertTrue(table["source"])
                 date.fromisoformat(table["checked"])
-                versions = {"find_table": 2, "conversion_rates": 3, "capacities": 3, "routes": 2,
-                            "survivor_table": 2, "catch": 2}
+                versions = {"find_table": 2, "conversion_rates": 4, "capacities": 3, "routes": 2,
+                            "survivor_table": 3, "catch": 3, "gym_income_table": 2, "checkin_table": 2}
                 self.assertEqual(table["version"], versions.get(name, 1))
-                mirror = {"survivor_table", "conversion_rates", "catch"}
-                if name in mirror:
+                amended = {"survivor_table", "conversion_rates", "catch", "gym_income_table", "checkin_table"}
+                if name in amended:
                     self.assertEqual(table["checked"], "2026-11-12")
+                    if name != "catch":
+                        self.assertIn("owner amendment Bottlecap and Vitamin (owner decision 2026-11-12)",
+                                      table["source"])
                 elif name in versions.keys() | {"evolution", "battle"}:
                     self.assertEqual(table["checked"], "2026-11-05")
         root = Path(__file__).parents[1] / "content" / "balance"
@@ -309,7 +328,7 @@ class BalanceTableTests(unittest.TestCase):
             "flee_probability": .1, "shiny_flee_probability": 0, "legendary_flee_probability": 0,
             "shiny_probability": 1 / 256, "lure_probability_multiplier": 4, "lure_encounters": 10,
             "mirror_encounters": 10, "mirror_probability": .2,
-            "wild_level_range": [1, 20], "wild_iv_range": [0, 15], "starter_level": 10, "starter_iv_range": [10, 15],
+            "wild_level_range": [1, 20], "raid_level_range": [20, 25], "wild_iv_range": [0, 15], "starter_level": 10, "starter_iv_range": [10, 15],
         })
         self.assertEqual(self.load("capacities")["limits"], {
             "storage": 250, "bag_units": 250,
