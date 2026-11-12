@@ -1,8 +1,8 @@
 # Plan: pokemon-trading — player-to-player Pokémon trading (`/trade`) and paged `/readme`
 
 **Status:** awaiting plan approval
-**Review:** round 1 on 2026-11-12 (independent reviewer: MUST 5, SHOULD 4, COULD 5). All findings and the owner decisions of 2026-11-12 are applied in revision 2 (§8). Re-review pending.
-**Home:** none assigned — proposed `feature/pokemon-trading · none`, cut from `docs/pokemon-trading-plan` (owner decision at G-A). Planning docs: local branch `docs/pokemon-trading-plan`.
+**Review:** round 1 (MUST 5, SHOULD 4, COULD 5) and round 2 (MUST 1, SHOULD 4, COULD 3), both 2026-11-12 by an independent reviewer; all applied in revisions 2 and 3 (§8). Re-review pending.
+**Home:** none assigned — proposed `feature/pokemon-trading · none`, cut from `main` **after** `fix/walker-stale-window` (router idle timeout) is integrated, with these planning docs carried over from `docs/pokemon-trading-plan` (owner decision at G-A).
 **Inputs:** owner requirement (§2) · owner decisions OD1–OD10 (2026-11-12, relayed by the coordinator) · [requirements D1–D61](../pokewalker-bot/README.md) (owner-only) · [v1.1/v2 plan](../pokewalker-v1.1-v2/PLAN.md) (conventions) · [PIPELINE.md](../../../PIPELINE.md)
 
 ## 0. Owner decisions (2026-11-12) — no product question remains open
@@ -17,7 +17,7 @@
 | OD6 (Q5) | Shiny, Legendary/Mythical and starter-origin Pokémon are tradable, with a "special trade" warning line |
 | OD7 (Q6) | Opening a trade posts **one** public message in the `/trade` channel, pinging only the partner |
 | OD8 | Trading works only in moderator-enabled trade channels (none by default), managed by `/walker-admin trade-channels add <channel> <reason> \| add-all <reason> \| remove <channel> <reason> \| list`, mirroring `/walker-admin channels` (C5 :212-256) |
-| OD9 (Q7) | Offers live 15 min from creation |
+| OD9 (Q7, amended 2026-11-12) | An offer lives 15 min **without activity** (coordinator relaying the owner's idle-timeout direction): open sets `expires_at=now+900`; join, offer and confirm each set `expires_at=MAX(expires_at,now+900)` |
 | OD10 | Rework `/readme` into private, flippable pages, each within the 4,096 limit. The final page covers admin/mod setup commands. The `/checkin` text is corrected. Add a trading section and the trade-channels commands. It must still work for unenrolled/excluded members and in the post-starter send. This is its own row (T8). |
 
 ## 1. Outcome and scope
@@ -52,7 +52,7 @@ README lists trading as "Later" (README.md:80) and is owner-only, so this sectio
 - `rg -n "SET companion_uid" pokewalker/` → profiles.py:144 and bot/storage.py:214, neither bumping the Pokémon revision.
 - `rg -n "DELETE FROM pokemon" pokewalker/` → none.
 - `grep -n "FROM pokemon\|UPDATE pokemon\|INTO pokemon" services/raids.py` → none.
-- `rg -n "UPDATE pokemon SET profile_id" tests/` → tests/test_companion.py:211-212, which T1 must handle.
+- `rg -n "UPDATE pokemon SET profile_id" tests/` → tests/test_companion.py:211-212, and tests/test_capacity.py:55-79 compares full profile rows (existing pops at :77-78); T1 handles both.
 - `rg -n "help_text" tests/ pokewalker/` → client.py:55, :123, walker.py:169, test_walker_router.py:34, :135, :152, test_account.py:41, test_readme.py:46. These are T8's fallout.
 
 | Anchor | Fact | Used by |
@@ -61,18 +61,18 @@ README lists trading as "Later" (README.md:80) and is owner-only, so this sectio
 | db/__init__.py:34-41, :110-116 | contiguous migrations (next **0018**); one job per `BEGIN IMMEDIATE` | T1, T4 |
 | services/research.py:10-18; storage.py:6-50 | `protected_reason` (deployed, favorite, companion first); identify/page/detail | T3 |
 | services/profiles.py:58-95, :104-108, :140-144 | profile/restrictions/`session_owner`; step policy uses a thread's parent; starter favorite + companion | T3, P13 |
-| services/gyms.py:215-221 | SAVEPOINT refusal precedent | T4 |
+| services/catching.py:30-37; walker.py (post-fix) :299-315, :438 | catch recovery reads the source encounter; T4 acknowledges it on swap | T4 |
 | services/catching.py:116-119; evolution.py:88-91; milestones.py:95-108 | Pokédex upsert keeps `seen_at`; `check_and_award` | T5 |
 | services/items.py:20-43, :106-146; checkin_table.json; bot/checkin.py:25-46 | check-in: 3600 s; 1 Poké Ball + 1 roll (Great Ball 35, Razz 30, 2 Poké Balls 20, Pinap 15); bag full → 10 Stardust; encounter if queue < 3, else "Queue is full"; paused/excluded/unenrolled refusals | T8 |
 | bot/admin_channels.py:20-32, :84-147 | `WalkerAdmin` (Manage Server), authorize/exclusion, channels add/add-all/remove/list | T2 |
 | admin_channels.py:84-334; mod.py:19, :87-213; admin.py:154-161 | every admin/mod command; `/admin` admin guild only | T8 |
 | bot/mod.py:90-91 | a `member: discord.Member` option works in production with no members intent | T7 |
 | bot/share.py:62-100 | permission check → reserve in writer → send after commit; failure text; no retry | T7 |
-| bot/walker.py:27-29, :43, :50-65, :114-170 | ID grammar, REOPEN; clock; handlers; router (owner check :129-131); post-starter help send :168-170 | T6, T8 |
+| bot/walker.py **post-fix** (`fix/walker-stale-window`, read via `git diff main` in its worktree): :27-37, :51, :58-72, :122-190, :185-187 | `REOPEN`/`TIMED_OUT`/`OUTDATED`, `IDLE_SECONDS`=900, `DOUBLE_PRESS_SECONDS`=10; clock; handlers; router (owner check :139, silent double press :176, refusals :178-180); post-starter help send | T6–T8 |
 | bot/raid.py:15-74 | top-level command → Walker session :30-36 | T7 |
 | bot/client.py:38-57, :87-94, :134, :148-156, :267-281, :297-299 | `load_help`, `/readme`; registration; dynamic items; sweep; manifest; check-config | T2, T7, T8 |
 | content/help.md; tests/test_readme.py:17-20, :58-75 | one approved text, hash-pinned; 3,845 UTF-16 units / 3,862 bytes (`python3` 2026-11-12) | T8 |
-| tests/test_receipt_owner.py:46-95; test_companion.py:211-212, :232-239 | legacy rebuild; owner-change fixture; trigger create/drop precedent | T1 |
+| tests/test_receipt_owner.py:46-95; test_companion.py:211-212; test_capacity.py:77-79 | legacy rebuild; owner-change fixture; full-row profile compare | T1 |
 
 **Do-not-touch:**
 - services `research`, `gyms`, `evolution`, `powerup`, `storage`, `catching`, `milestones`, `deletion`, `profiles`, `capacity`, `items`. They are imported, never edited.
@@ -93,21 +93,21 @@ README lists trading as "Later" (README.md:80) and is owner-only, so this sectio
 - **P1 Same server.** A profile is a (guild,user) pair (0001_core.sql:26). Composite FKs to `profiles(profile_id,guild_id)` bind both sides to the trade's guild (0014_gyms.sql:10, :24). The owner-change trigger also requires the old and new owner to share a guild.
 - **P2 Eligibility.** `tradable_reason` returns `not_owned` (missing, not `owned`, or another owner). Otherwise it reuses `research.protected_reason` (research.py:10-18) and refuses only `deployed`, `favorite` or `companion`. Shiny and Legendary/Mythical are tradable with the OD6 warning. Pending catches are encounters, not Pokémon rows. Raids and battle parties hold no lock (§3; gyms.py:243-250).
 - **P3 No mutation-side locks.** An offer pins `(uid, revision)`. Every Pokémon writer bumps the revision, so execution refuses a changed Pokémon. Set companion does not bump it, so execution checks companion explicitly.
-- **P4 Atomic execution.** Everything runs in the second confirmer's single writer job (C3 :71-75). The guarded `last_trade_at` UPDATE runs first and must hit 2 rows inside SAVEPOINT `trade_execute` (precedent gyms.py:215-221); then each owner `UPDATE` restates eligibility with rowcount 1. `pokemon_trade_guard` (0018) backs R1–R3/R5. SQL is in T4.
+- **P4 Atomic execution.** Everything runs in the second confirmer's single writer job (C3 :71-75). The guarded `last_trade_at` UPDATE must hit 2 rows and each owner `UPDATE` (restating eligibility) 1 row; any other count raises and rolls back the whole job (no savepoint). The step-4 cap check in T4 makes this unreachable in normal use; `pokemon_trade_guard` (0018) backs R1–R3/R5. SQL is in T4.
 - **P5 Handshake.** Every offer change bumps the trade `revision`, which voids both confirmations. Confirm carries the revision its screen showed and refuses `changed` on a mismatch (R7). Offer needs no seen revision, because it only changes your own side. Double-accept: the Writer serializes jobs, so the second job sees `completed` and shows the result.
 - **P6 Joining and limits.**
   - The opener's side is joined and `open=1`. The partner's side has `joined_at` NULL and `open=0` until the partner runs `/trade member:@opener`, so an uninvited member is never blocked.
   - A partial unique index allows one open (joined) trade per member.
-  - Expiry is lazy on touch. The 60 s sweep also expires stale trades and deletes ended trades more than a day old (client.py:148-156).
+  - Expiry is 15 min idle (OD9 amended): join, offer and confirm extend it. It is applied lazily on touch, and the 60 s sweep also expires idle trades and deletes ended trades more than a day old (client.py:148-156).
 - **P7 Cap (OD4).** `profiles.last_trade_at` survives the partner's deletion and pruning. It is checked at open/join/confirm (the caller sees the wait; a capped partner gives "They can't trade again yet."), with the P4 guard as backstop. The 86,400 s constant is in trading.py (precedents share.py:70, gyms.py:235). Deleting your own data resets your cap but loses every Pokémon.
 - **P8 Economy and Pokédex (OD3/OD5).**
   - No Candy, Stardust or items move, and nothing evolves.
   - Each receiver gets the catching.py:116-118 upsert (`caught_at` COALESCE keeps any earlier `caught_at`; `seen_at` is kept), keyed by the species from `storage.identify` (forms fold). Then `check_and_award` runs for both receivers (milestones.py:95-108).
   - Milestones pay once per profile (0004_milestones.sql:1-6). One Pokémon passed around many profiles pays each profile at most once; this is owner-accepted. The giver's Pokédex entries are never removed (D15).
 - **P9 No receipt.** C3 needs no receipt for a non-resource mutation (set_favorite storage.py:45-50 and Set companion write none). Trade state is the idempotency record.
-- **P10 Deletion.** Either profile's deletion cascades the trade and both sides. A given Pokémon stays with its receiver, with `source_encounter_id` set to NULL (0001_core.sql:115). The privacy text needs an owner edit (G-F).
+- **P10 Deletion and catch records.** Either profile's deletion cascades the trade and both sides. A given Pokémon stays with its receiver, with `source_encounter_id` set to NULL (0001_core.sql:115). The swap also sets `acknowledged_at` on each traded Pokémon's still-unacknowledged source encounter, so the giver's recovery never resurfaces it. The privacy text needs an owner edit (G-F).
 - **P11 Trade channels and ping (OD7/OD8).** `trade_channels` is its own table (0018). Every `/trade` needs an exactly enabled channel; threads are refused (the admin option is `TextChannel`, unlike step counting's parent rule, profiles.py:104-108). Open trades keep working after removal. One ping on `opened` only, sent after commit following share.py: Send Messages check, `last_trade_ping_at` reserved (one per 10 min per opener), `AllowedMentions(users=[partner])`; a failure keeps the trade and tells the opener.
-- **P12 UX (OD1).** Private ephemeral screens run on the presser's own Walker session (raid.py:30-36) through the shared `pw:v1:` router, which owner-checks presses (walker.py:129-131); the service also refuses non-participants. There is no `/walker` entry, stale `trade_*` presses say "reopen /trade", and a Refresh button covers partner changes.
+- **P12 UX (OD1).** Private ephemeral screens run on the presser's own Walker session (raid.py:30-36) through the shared `pw:v1:` router, which owner-checks presses (post-fix walker.py:139); the service also refuses non-participants. There is no `/walker` entry. For `trade_*` actions the router's four outcomes read: timed out → "This window timed out. Please reopen /trade for a fresh one."; outdated → "This screen is out of date. Please reopen /trade to refresh."; handler refusal → "That option changed since this screen opened. Please reopen /trade to refresh."; a double press within 10 s → silent. A Refresh button covers partner changes.
 - **P13 Restrictions and membership.** Excluded members cannot open, join, offer or confirm, and an excluded partner blocks execution. Paused members may trade, because pause only stops earning. The `member` option follows mod.py:90-91 and refuses bots and self. `partner_busy` says only "They're in another trade right now."
 - **P14 Capacity.** A 1-for-1 swap never changes an owned count, so there is no storage check and the bag is untouched.
 - **P15 Paged help (OD10).** `content/help.md` holds pages split by `<!-- page -->`, each ≤ 4,096 UTF-16 units. Stateless `pw:readme:v1:<page>` buttons (a `ReadmeItem` DynamicItem; no DB or session) work for unenrolled and excluded members. `bot.help_page(i)` serves `/readme` and the post-starter send. The final page lists `/walker-admin` (Manage Server) and `/walker-mod` (Moderate Members). `/admin` is omitted (owner-only, admin guild only, admin.py:154-161).
@@ -137,9 +137,10 @@ README lists trading as "Later" (README.md:80) and is owner-only, so this sectio
 - T3–T5 add the service, with no caller yet.
 - T6 adds handlers that are unreachable until T7 activates them.
 - T8 runs last, so the admin page can be tested against the final command tree.
+- **Precondition for every row:** the Home contains `fix/walker-stale-window`. T6–T8 are anchored to its walker.py, and T6 stops if those constants are missing.
 
 **Rules every ticket repeats:**
-- Time is `Walker.clock()` (walker.py:43), never `bot.clock` (client.py:78).
+- Time is `Walker.clock()` (post-fix walker.py:51), never `bot.clock` (client.py:78).
 - Check the session owner before any guard.
 - Confirm passes its screen's trade revision.
 - Renderers do no I/O (C5 :291).
@@ -183,6 +184,7 @@ README lists trading as "Later" (README.md:80) and is owner-only, so this sectio
 **G-A (owner).**
 - Approve this revised plan (OD1–OD10 recorded), assign the Home and choose the delivery scope.
 - **Accept:** that owner message, recorded in row 1.
+- **Predicate:** the Home is cut from `main` after `fix/walker-stale-window` is integrated (`git merge-base --is-ancestor <fix tip> <home>`).
 - **Stop if:** the owner revises an OD — re-brief the affected tickets before any row starts.
 
 **G-F (coordinator + owner).**
@@ -200,7 +202,7 @@ README lists trading as "Later" (README.md:80) and is owner-only, so this sectio
   - B's Pokédex marks the species caught and a milestone reaches the inbox.
   - Both are capped ("You can trade again in …"; "They can't trade again yet.").
   - Favoriting, deploying or setting companion on an offered Pokémon before the second confirm is refused.
-  - Stale buttons say "reopen /trade". `/walker` home has no trade entry.
+  - An old screen says reopen /trade; a quick double press does nothing. `/walker` home has no trade entry.
   - `/readme` pages flip, including for an excluded member, and the last page is admin setup.
 - Record the delivery outcome.
 
@@ -210,10 +212,11 @@ README lists trading as "Later" (README.md:80) and is owner-only, so this sectio
 - **Trigger reach.** The owner-change trigger blocks any future `profile_id` change (§3), including test fixtures (T1 fallout).
 - **Pokédex lending.** One rare catch can complete milestones for many profiles, at most once each (owner-accepted, OD5).
 - **Abuse.** Alt funnelling is limited to 1 trade/day per profile. Ping spam is limited to 1 per 10 min per opener, and only to enabled channels. Scams are limited by P5.
-- **Legacy catches.** A legacy pre-M6.8u Pokémon whose catch is still unacknowledged can be traded. Afterwards the giver may see that encounter's result screen once (walker.py:282-298, :421), and its Done only acknowledges. This is cosmetic. Unverified live count: `sqlite3 <db> "SELECT count(*) FROM pokemon p JOIN encounters e ON e.encounter_id=p.source_encounter_id WHERE p.state='owned' AND e.acknowledged_at IS NULL"`.
 - **Warts.** Received Pokémon keep their `caught_at`, so Storage sorts them by catch date (storage.py:32-33).
 
-## 8. Review responses — round 1 (2026-11-12) and owner decisions
+## 8. Review responses and owner decisions
+
+### Round 1 (2026-11-12)
 
 | Finding | Applied |
 |---|---|
@@ -222,7 +225,7 @@ README lists trading as "Later" (README.md:80) and is owner-only, so this sectio
 | MUST 3 Q4 credit path | P8; T5 (`confirm` takes `content`) |
 | MUST 4 trade channels and ping | `trade_channels` table (T1); T2; P11; T7; privacy text |
 | MUST 5 griefing | P6 unjoined partner `open=0`; `last_trade_ping_at` (T1/T3/T7) |
-| SHOULD 6 `unacknowledged_catch` | removed (P2); the residual legacy case is in §7 |
+| SHOULD 6 `unacknowledged_catch` | removed (P2); the legacy case is now closed by the swap acknowledging source encounters (round 2, COULD 6) |
 | SHOULD 7 reuse `protected_reason` | P2, T3 |
 | SHOULD 8 offer seen revision | removed (P5) |
 | SHOULD 9 `partner_busy` wording | P13 |
@@ -231,3 +234,18 @@ README lists trading as "Later" (README.md:80) and is owner-only, so this sectio
 | COULD 12 receipt | removed (P9) |
 | COULD 13 Member option | mod.py:90-91 cited; the stop condition is removed |
 | COULD 14 prune | sweep prune (P6, T5/T7); privacy text |
+
+### Round 2 (2026-11-12, on 9708b9d)
+
+Every round-1 item is confirmed fixed.
+
+| Finding | Applied |
+|---|---|
+| MUST 1: test_capacity.py full-row profile compare | T1 fallout adds `last_trade_at`/`last_trade_ping_at` pops at :77-78; the stop condition is narrowed to anything beyond the named changes; §3 evidence |
+| SHOULD 2: router outcomes | P12, T6 (three trade texts plus the silent double press; four tests replace the old stale test), G-F smoke; walker.py anchors moved to the post-fix file |
+| SHOULD 3: idle expiry | OD9 amended; P6; T3 (join/offer) and T4 (confirm) extend; `test_activity_extends_trade_expiry`, `test_idle_trade_expires_after_15_minutes`, `test_confirm_extends_trade_expiry` |
+| SHOULD 4: no savepoint | P4, T4 (a guard miss raises and rolls back; the "became capped" test targets the step-4 check); T5 "in the same job"; the gyms.py:215-221 anchor is removed |
+| SHOULD 5: page mapping | T8: page 1 is help.md:1-14 verbatim; the other paragraphs go to pages 2–3; the admin sentences of :35/:41/:43 go to the final page |
+| COULD 6: acknowledge source encounters | P10, T4 step 7, `test_swap_acknowledges_unacknowledged_source_encounters`; the §7 legacy paragraph is deleted |
+| COULD 7: session expiry | T7 uses `now + walker.IDLE_SECONDS` |
+| COULD 8: admin test roots | T8 walks `get_commands(guild=None)` from the `walker-admin`/`walker-mod` roots only |
