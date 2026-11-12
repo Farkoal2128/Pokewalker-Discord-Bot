@@ -1329,3 +1329,9 @@ manifest changes: after delivery one `sync-commands --global --yes` follows (the
 deploy installer runs it automatically). The ticket path, existing commands and
 persisted formats remain compatible. Tests: tests/test_admin_force_raid.py;
 test_raids, test_admin_channels and test_readme stay green.
+
+## Owner amendment: permanent /walker status (2026-11-12)
+`WalkerBot` passes `activity=discord.CustomActivity(name="/walker")` and status online
+to the client constructor, so Discord shows "/walker" as the bot's custom status on
+every connect and reconnect (identify and resume carry it). No command, intent or
+manifest change. Tests: tests/test_client_lifecycle.py.

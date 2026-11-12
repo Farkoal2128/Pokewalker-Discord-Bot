@@ -101,7 +101,8 @@ class WalkerBot(discord.Client):
     def __init__(self, settings, *, clock=time.monotonic, wait_for=asyncio.wait_for):
         intents = discord.Intents.none()
         intents.guilds = intents.guild_messages = intents.message_content = True
-        super().__init__(intents=intents, max_messages=None)
+        super().__init__(intents=intents, max_messages=None,
+                         activity=discord.CustomActivity(name="/walker"), status=discord.Status.online)
         self.settings, self.clock, self.wait_for = settings, clock, wait_for
         self.tree = app_commands.CommandTree(
             self, allowed_contexts=app_commands.AppCommandContext(

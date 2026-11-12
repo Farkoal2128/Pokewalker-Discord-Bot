@@ -82,6 +82,11 @@ class ClientLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.bot.tree.allowed_contexts.dm_channel)
         self.assertFalse(self.bot.tree.allowed_contexts.private_channel)
 
+    async def test_presence_is_permanent_walker_custom_status(self):
+        activity = self.bot._connection._activity
+        self.assertEqual(activity, discord.CustomActivity(name="/walker").to_dict())
+        self.assertEqual(self.bot._connection._status, "online")
+
     async def test_message_cache_disabled(self):
         self.assertIsNone(self.bot._connection.max_messages)
 
