@@ -219,7 +219,7 @@ class GymScreenTests(unittest.IsolatedAsyncioTestCase):
                                                (uid,)), active[0]['deployment_id'])
             before = await self.snapshot()
             duplicate = await route('gym_deploy_confirm', revision=revision)
-            duplicate.followup.send.assert_awaited_once()
+            duplicate.followup.send.assert_not_awaited()
             duplicate.edit_original_response.assert_not_awaited()
             self.assertEqual(await self.snapshot(), before)
             if uid == 'mon':

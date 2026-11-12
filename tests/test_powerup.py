@@ -181,7 +181,7 @@ class PowerupTests(unittest.IsolatedAsyncioTestCase):
         retry = self.interaction()
         await self.walker.route(retry, original)
         retry.edit_original_response.assert_not_awaited()
-        self.assertIn("reopen /walker", retry.followup.send.await_args.args[0])
+        retry.followup.send.assert_not_awaited()
         self.assertEqual(await self.snapshot(), before)
         self.assertEqual((await self.pokemon())["revision"], 1)
 

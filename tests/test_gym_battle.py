@@ -641,7 +641,7 @@ class GymBattleScreenTests(unittest.IsolatedAsyncioTestCase):
         before = await self.snapshot()
         duplicate = test_walker_router.WalkerTests.interaction(self, user='u', guild='g')
         await self.walker.route(duplicate, action)
-        duplicate.followup.send.assert_awaited_once()
+        duplicate.followup.send.assert_not_awaited()
         duplicate.edit_original_response.assert_not_awaited()
         self.assertEqual(await self.snapshot(), before)
         self.assertEqual(await self.scalar('SELECT count(*) FROM gym_battles'), 1)

@@ -26,7 +26,15 @@ from pokewalker.services import capacity, profiles, catching, storage as storage
 
 CUSTOM_ID = r"^pw:v1:(?P<session>[0-9a-f-]+):(?P<rev>\d+):(?P<action>[a-z_]+)$"
 EXCLUDED = "You are excluded here. Only /walker-account privacy, /walker-account delete-data and /walker-account opt-out are available."
-REOPEN = "Please reopen /walker; this screen is stale or expired."
+REOPEN = "That option changed since this screen opened. Please reopen /walker to refresh."
+TIMED_OUT = "This window timed out. Please reopen /walker for a fresh one."
+OUTDATED = "This screen is out of date. Please reopen /walker to refresh."
+IDLE_SECONDS = 900
+DOUBLE_PRESS_SECONDS = 10
+
+
+class _Outdated(Exception):
+    """A double press or a press racing the newer screen; dropped silently."""
 
 
 class _Refused(ValueError):
@@ -124,13 +132,18 @@ class Walker:
                 async with conn.execute("SELECT * FROM sessions WHERE session_id=?", (session_id,)) as cursor:
                     row = await cursor.fetchone()
                 if row is None:
-                    raise _Refused(REOPEN)
+                    raise _Refused(TIMED_OUT)
                 session = dict(row)
                 if (str(interaction.user.id) != session["user_id"]
                         or str(interaction.guild_id) != session["guild_id"]):
                     raise _Refused("This screen is not yours. Open /walker for your own screen.")
-                if session["expires_at"] <= self.clock() or str(session["revision"]) != revision:
-                    raise _Refused(REOPEN)
+                if session["expires_at"] <= self.clock():
+                    raise _Refused(TIMED_OUT)
+                if str(session["revision"]) != revision:
+                    # The last committed action set expires_at; a press soon after it raced that screen.
+                    if self.clock() - (session["expires_at"] - IDLE_SECONDS) < DOUBLE_PRESS_SECONDS:
+                        raise _Outdated()
+                    raise _Refused(OUTDATED)
                 if (await profiles.restrictions(conn, session["guild_id"], session["user_id"])).excluded:
                     raise _Refused(EXCLUDED)
                 if await opted_out(conn, session["guild_id"], session["user_id"]):
@@ -152,12 +165,16 @@ class Walker:
                 rendered = (await self.pending_menu(conn, session, pending) if pending is not None
                             else await handler(conn, session, interaction))
                 if not session.get("_read_only"):
-                    await conn.execute("UPDATE sessions SET revision=?,profile_id=?,selection=? WHERE session_id=?",
-                                       (session["revision"], session["profile_id"], session["selection"], session_id))
+                    await conn.execute("UPDATE sessions SET revision=?,profile_id=?,selection=?,expires_at=MAX(expires_at,?) "
+                                       "WHERE session_id=?", (session["revision"], session["profile_id"],
+                                                              session["selection"], self.clock() + IDLE_SECONDS,
+                                                              session_id))
                 return rendered
 
             try:
                 rendered = await self.bot.writer.run(dispatch)
+            except _Outdated:
+                return
             except _Refused as error:
                 await self.refuse(interaction, str(error))
                 return

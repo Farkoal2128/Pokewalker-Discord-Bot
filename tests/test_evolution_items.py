@@ -293,7 +293,7 @@ class EvolutionItemScreenTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.rows("SELECT quantity FROM inventory WHERE item_id='fire-stone'"), [{'quantity': 1}])
         self.assertEqual((await self.rows('SELECT stardust FROM profiles'))[0]['stardust'], 0)
         retry = await self.click(session, 'buy_confirm')
-        retry.followup.send.assert_awaited_once()
+        retry.followup.send.assert_not_awaited()
         self.assertEqual(len(await self.rows("SELECT * FROM action_receipts WHERE action='buy'")), 1)
 
     async def test_buy_confirm_disabled_when_unaffordable(self):

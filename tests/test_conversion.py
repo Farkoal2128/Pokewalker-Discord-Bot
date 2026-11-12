@@ -215,7 +215,7 @@ class ConversionTests(unittest.IsolatedAsyncioTestCase):
         self.walker = Walker(self.bot, clock=lambda: 1000)
         retry = self.interaction()
         await self.walker.route(retry, custom_id)
-        self.assertIn('stale', retry.followup.send.await_args.args[0])
+        retry.followup.send.assert_not_awaited()
         replay_session = {**before, 'revision': before['revision'] + 1}
         self.assertEqual(await self.convert(replay_session), {'item': 'poke_ball', 'quantity': 5, 'stardust': 10})
         self.assertEqual(await self.snapshot(), saved)

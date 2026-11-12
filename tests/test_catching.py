@@ -348,7 +348,7 @@ class CatchingTests(unittest.IsolatedAsyncioTestCase):
         session = await self.current(session)
         first, stale = await asyncio.gather(self.click(session, "master_confirm"), self.click(session, "master_confirm"))
         self.assertIn("caught", first.edit_original_response.await_args.kwargs["embed"].description)
-        self.assertIn("reopen", stale.followup.send.await_args.args[0].lower())
+        stale.followup.send.assert_not_awaited()
         self.assertEqual((await self.rows("SELECT * FROM inventory WHERE item_id='master_ball'"))[0]["quantity"], 0)
         self.assertEqual(len(await self.rows("SELECT * FROM catch_attempts")), 1)
         self.assertEqual((await self.rows("SELECT * FROM catch_attempts"))[0]["p"], 1)

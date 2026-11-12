@@ -136,7 +136,7 @@ class WalkerTests(unittest.IsolatedAsyncioTestCase):
         reopened, _ = await self.open()
         reopened.followup.send.assert_not_awaited()
         stale = await self.click(session, "onboard_confirm")
-        self.assertNotIn('embed', stale.followup.send.await_args.kwargs)
+        stale.followup.send.assert_not_awaited()
 
     async def test_readme_works_before_enrollment_and_for_excluded_member(self):
         from pokewalker.bot.client import readme_command
@@ -175,15 +175,67 @@ class WalkerTests(unittest.IsolatedAsyncioTestCase):
         _, session = await self.open()
         await self.assert_refused(session, "not yours", guild=999)
 
-    async def test_stale_revision_explains_reopen(self):
+    async def test_outdated_revision_is_dropped_silently(self):
         _, session = await self.open()
+        before = await self.rows()
         session["revision"] = 10
-        await self.assert_refused(session, "reopen /walker")
+        interaction = await self.click(session, "home")
+        self.assertEqual(await self.rows(), before)
+        interaction.followup.send.assert_not_awaited()
+        interaction.edit_original_response.assert_not_awaited()
 
-    async def test_expired_session_explains_reopen(self):
+    async def test_outdated_press_long_after_update_explains_refresh(self):
+        _, session = await self.open()
+        await self.click(session, "onboard_gen", ["1"])
+        self.walker.clock = lambda: 1010
+        await self.assert_refused(session, "This screen is out of date. Please reopen /walker to refresh.")
+
+    async def test_double_press_updates_once_without_refusal(self):
+        _, session = await self.open()
+        first, second = await asyncio.gather(self.click(session, "onboard_gen", ["1"]),
+                                             self.click(session, "onboard_gen", ["1"]))
+        self.assertEqual((await self.rows())[0]["revision"], 1)
+        self.assertEqual(first.edit_original_response.await_count + second.edit_original_response.await_count, 1)
+        first.followup.send.assert_not_awaited()
+        second.followup.send.assert_not_awaited()
+
+    async def test_expired_session_explains_timeout(self):
         _, session = await self.open()
         self.walker.clock = lambda: 1900
-        await self.assert_refused(session, "reopen /walker")
+        await self.assert_refused(session, "This window timed out. Please reopen /walker")
+
+    async def test_unknown_session_explains_timeout(self):
+        _, session = await self.open()
+        session["session_id"] = "00000000-0000-0000-0000-000000000000"
+        await self.assert_refused(session, "This window timed out. Please reopen /walker")
+
+    async def test_each_action_extends_idle_timeout(self):
+        _, session = await self.open()
+        self.walker.clock = lambda: 1800
+        await self.click(session, "onboard_gen", ["1"])
+        session = (await self.rows())[0]
+        self.assertEqual((session["revision"], session["expires_at"]), (1, 2700))
+        self.walker.clock = lambda: 2600
+        interaction = await self.click(session, "onboard_pick", ["1"])
+        interaction.followup.send.assert_not_awaited()
+        session = (await self.rows())[0]
+        self.assertEqual((session["revision"], session["expires_at"]), (2, 3500))
+
+    async def test_action_never_shortens_expiry(self):
+        _, session = await self.open()
+        await self.writer.run(lambda conn: conn.execute("UPDATE sessions SET expires_at=9000"))
+        await self.click(session, "onboard_gen", ["1"])
+        self.assertEqual((await self.rows())[0]["expires_at"], 9000)
+
+    async def test_refused_action_does_not_extend_timeout(self):
+        _, session = await self.open()
+        self.walker.clock = lambda: 1800
+        await self.click(session, "home", user=999)
+        self.assertEqual((await self.rows())[0]["expires_at"], 1900)
+
+    def test_option_refusal_wording_is_not_stale(self):
+        self.assertEqual(self.module.REOPEN,
+                         "That option changed since this screen opened. Please reopen /walker to refresh.")
 
     async def test_excluded_refused_at_entry_and_in_router(self):
         _, session = await self.open()

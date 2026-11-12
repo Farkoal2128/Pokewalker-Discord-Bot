@@ -244,9 +244,7 @@ class ShareTests(unittest.IsolatedAsyncioTestCase):
         _, session = await self.caught()
         interactions = await asyncio.gather(self.click(session, 'share'), self.click(session, 'share'))
         self.channel.send.assert_awaited_once()
-        self.assertEqual(sum(item.followup.send.await_count for item in interactions), 1)
-        self.assertIn('stale', next(item.followup.send.await_args.args[0] for item in interactions
-                                    if item.followup.send.await_count))
+        self.assertEqual(sum(item.followup.send.await_count for item in interactions), 0)
 
     async def test_send_failure_after_commit_explains_no_second_post(self):
         _, session = await self.caught()

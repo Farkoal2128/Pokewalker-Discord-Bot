@@ -417,7 +417,10 @@ class StorageTests(unittest.IsolatedAsyncioTestCase):
         before, writes = await self.rows("SELECT * FROM pokemon"), self.conn.total_changes
         for stale in (session, competing):
             interaction = await self.click(stale, "storage_favorite")
-            self.assertIn("reopen /walker", interaction.followup.send.await_args.args[0])
+            if stale is session:
+                interaction.followup.send.assert_not_awaited()
+            else:
+                self.assertIn("reopen /walker", interaction.followup.send.await_args.args[0])
             self.assertEqual(await self.rows("SELECT * FROM pokemon"), before)
             self.assertEqual(self.conn.total_changes, writes)
 

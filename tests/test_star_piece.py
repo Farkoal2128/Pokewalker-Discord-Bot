@@ -408,7 +408,7 @@ class StarPieceBagTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('Star Piece: 10 boosted Stardust rewards left', rendered['embed'].description)
         before = await self.snapshot()
         duplicate = await self.click(session, 'star_piece_activate')
-        duplicate.followup.send.assert_awaited_once()
+        duplicate.followup.send.assert_not_awaited()
         self.assertEqual(await self.snapshot(), before)
         self.assertEqual((await self.rows("SELECT quantity FROM inventory WHERE item_id='star_piece'"))[0]['quantity'], 1)
 

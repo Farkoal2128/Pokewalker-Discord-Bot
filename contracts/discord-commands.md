@@ -268,8 +268,9 @@ The one generic `WalkerItem` wraps both selects and buttons with the existing ID
 grammar. Each callback acknowledges the update before waiting on the writer.
 The router validates ID, durable owner and guild, expiry, revision, current exclusion
 and allowed action inside its writer transaction. Refused clicks change no state and
-get an ephemeral explanation; stale/expired IDs ask the user to reopen `/walker`.
-Successful handlers increment the session revision once. Edits per session are
+get an ephemeral explanation, except an outdated revision, which is dropped silently;
+expired or unknown sessions ask the user to reopen `/walker` (see the session idle
+timeout amendment). Successful handlers increment the session revision once. Edits per session are
 serialized so a delayed response cannot overwrite a newer screen.
 
 Onboarding routes before a profile exists: nine generations, three matching starters,
@@ -291,6 +292,23 @@ screen or None; M1.9 installs result recovery before home by default.
 Screen functions accept detached state and return `dict(embed=..., view=...)` without I/O.
 The router, render, reaction and client lifecycle tests cover this additive boundary;
 no schema migration or ID version change is required. Live acceptance remains G-3.
+
+## Owner amendment: session idle timeout (2026-11-12)
+The owner reported the stale-window refusal appearing on windows in active use.
+A Walker session now expires after 15 minutes without a successful action rather
+than 15 minutes after opening: every committed router dispatch raises `expires_at`
+to at least the router clock plus 900 seconds (never shortening it) in the same transaction as its revision.
+Read-only replays keep their stored expiry. A click whose revision differs from
+the stored revision on an owned, unexpired session changes no state. Within 10
+seconds of the last committed action (its expiry minus 900 seconds) it is a double
+press or a press racing the newer screen's edit: it sends no message and leaves the
+screen to the newer response. Later, the screen really is outdated (for example a
+lost edit), and it is refused with "This screen is out of date. Please reopen
+/walker to refresh." Expired or unknown sessions are refused with
+"This window timed out. Please reopen /walker for a fresh one." Handler-level
+refusals for an option that no longer applies say "That option changed since this
+screen opened. Please reopen /walker to refresh." instead of calling it stale.
+Tests: tests/test_walker_router.py. No schema, ID grammar or manifest change.
 
 ## M1.7 encounter screens (additive)
 The registered `open_encounter` handler reveals the oldest unresolved encounter by

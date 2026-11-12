@@ -750,7 +750,10 @@ class StorageCapacityTests(unittest.IsolatedAsyncioTestCase):
                           if r['reason'] == 'expand_storage'], [('stardust', -5000), ('capacity', 50)])
         for previous in (stale, other):
             refused = await self.click(previous, 'catch_upgrade')
-            self.assertIn('reopen /walker', refused.followup.send.await_args.args[0])
+            if previous is stale:
+                refused.followup.send.assert_not_awaited()
+            else:
+                self.assertIn('reopen /walker', refused.followup.send.await_args.args[0])
             self.assertEqual(await self.research_state(), after)
 
     async def test_pending_upgrade_store_failure_rolls_back_then_retries_once(self):
@@ -933,7 +936,7 @@ class StorageCapacityTests(unittest.IsolatedAsyncioTestCase):
         _, session = await self.screen(session, 'storage_send_confirm')
         after = await self.research_state()
         refused = await self.click(stale, 'storage_send_confirm')
-        self.assertIn('reopen /walker', refused.followup.send.await_args.args[0])
+        refused.followup.send.assert_not_awaited()
         self.assertEqual(await self.research_state(), after)
         self.assertEqual(len([r for r in after['action_receipts'] if r['action'] == 'research']), 1)
         self.assertEqual(len([r for r in after['resource_ledger'] if r['reason'] == 'research_send']), 1)
@@ -1134,7 +1137,7 @@ class StorageCapacityTests(unittest.IsolatedAsyncioTestCase):
         await self.screen(session, 'storage_send_confirm')
         after = await self.research_state()
         refused = await self.click(stale, 'storage_send_confirm')
-        self.assertIn('reopen /walker', refused.followup.send.await_args.args[0])
+        refused.followup.send.assert_not_awaited()
         self.assertEqual(await self.research_state(), after)
         self.assertEqual(len([r for r in after['action_receipts'] if r['action'] == 'research']), 1)
 
@@ -1425,7 +1428,7 @@ class StorageCapacityTests(unittest.IsolatedAsyncioTestCase):
         _, session = await self.screen(session, 'expand_storage_confirm')
         before = await self.purchase_state()
         old = await self.click(stale, 'expand_storage_confirm')
-        self.assertIn('reopen /walker', old.followup.send.await_args.args[0])
+        old.followup.send.assert_not_awaited()
         rendered, _ = await self.screen(session, 'expand_storage_confirm')
         self.assertIn('350 slots', rendered['embed'].description)
         self.assertIn('nothing', rendered['embed'].description.lower())
@@ -1615,7 +1618,7 @@ class BagCapacityTests(unittest.IsolatedAsyncioTestCase):
         clicks = await asyncio.gather(*(self.click(session, 'expand_bag_confirm') for _ in range(2)))
         self.assertEqual(sum(c.edit_original_response.await_count for c in clicks), 1)
         refused = next(c for c in clicks if not c.edit_original_response.await_count)
-        self.assertIn('reopen /walker', refused.followup.send.await_args.args[0])
+        refused.followup.send.assert_not_awaited()
         self.assertEqual(await self.rows('SELECT bag_limit,stardust FROM profiles'),
                          [{'bag_limit': 300, 'stardust': 12500}])
         self.assertEqual(len(await self.rows("SELECT * FROM action_receipts WHERE action='expand'")), 1)

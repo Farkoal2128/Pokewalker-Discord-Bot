@@ -288,7 +288,7 @@ class ResearchTests(unittest.IsolatedAsyncioTestCase):
             with patch.dict(self.walker.handlers, research_confirm=AsyncMock(side_effect=AssertionError("stale handler called"))):
                 await self.walker.route(retry, original_id)
             retry.edit_original_response.assert_not_awaited()
-            self.assertIn("reopen /walker", retry.followup.send.await_args.args[0])
+            retry.followup.send.assert_not_awaited()
             self.assertEqual((await self.balances(), await self.rows(), self.conn.total_changes), (before, sessions, writes))
         self.assertEqual((await self.direct_send(session, now=9999))["status"], "sent")
         self.assertEqual(await self.balances(), before)

@@ -700,7 +700,7 @@ class EvolutionScreenTests(unittest.IsolatedAsyncioTestCase):
         before = await self.snapshot()
         self.walker = self.module.Walker(self.bot, clock=lambda: 1001)
         interaction = await self.click(session, 'evolve_buy_confirm')
-        self.assertIn('reopen /walker', interaction.followup.send.await_args.args[0])
+        interaction.followup.send.assert_not_awaited()
         self.assertEqual(await self.snapshot(), before)
 
     async def test_other_user_cannot_buy_and_evolve(self):
@@ -788,7 +788,7 @@ class EvolutionScreenTests(unittest.IsolatedAsyncioTestCase):
         self.walker = self.module.Walker(self.bot, clock=lambda: 1001)
         interaction = await self.click(session, 'evolve_confirm')
         interaction.edit_original_response.assert_not_awaited()
-        self.assertIn('reopen /walker', interaction.followup.send.await_args.args[0])
+        interaction.followup.send.assert_not_awaited()
         self.assertEqual(await self.snapshot(), before)
 
     async def test_other_user_cannot_click(self):

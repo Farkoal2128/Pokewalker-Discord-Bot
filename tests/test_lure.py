@@ -187,7 +187,7 @@ class LureTests(unittest.IsolatedAsyncioTestCase):
         before = await self.current()
         clicks = await asyncio.gather(self.click(before, 'lure_activate'), self.click(before, 'lure_activate'))
         self.assertEqual(sum(c.edit_original_response.await_count for c in clicks), 1)
-        self.assertEqual(sum(c.followup.send.await_count for c in clicks), 1)
+        self.assertEqual(sum(c.followup.send.await_count for c in clicks), 0)
         effect = (await self.rows('SELECT * FROM active_effects'))[0]
         await self.credit(1100)
         await self.close()
@@ -196,7 +196,7 @@ class LureTests(unittest.IsolatedAsyncioTestCase):
         self.bot.writer = self.writer
         saved = await self.snapshot()
         stale = await self.click(before, 'lure_activate')
-        stale.followup.send.assert_awaited_once()
+        stale.followup.send.assert_not_awaited()
         stale.edit_original_response.assert_not_awaited()
         self.assertEqual(await self.activate({**before, 'revision': before['revision'] + 1}, 8000), effect)
         self.assertEqual(await self.snapshot(), saved)
