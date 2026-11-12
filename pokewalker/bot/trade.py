@@ -1,15 +1,19 @@
-"""Private trade screens and their handlers on the shared Walker router (C5)."""
+"""The /trade command and private trade screens with their handlers on the shared Walker router (C5)."""
 
 from datetime import datetime, timezone
 from functools import partial
 import json
 import math
+from uuid import uuid4
 
+import aiohttp
 import discord
+from discord import app_commands
 
 from pokewalker.bot.screens_catch import custom_id
 from pokewalker.domain.cp import appraisal
-from pokewalker.services import storage, trading
+from pokewalker.services import profiles, storage, trading
+from pokewalker.services.deletion import opted_out
 
 ENDED = "This trade ended. Use /trade member to start again."
 REASONS = {"favorite": "it is a favorite", "companion": "it is a companion", "deployed": "it is defending a gym",
@@ -165,11 +169,10 @@ def handlers(walker):
         selection = selected(session)
         result = await trading.confirm(conn, session, selection["trade_id"], selection.get("trade_revision"),
                                        walker.clock(), walker.bot.content)
-        minutes = math.ceil(result.get("seconds_left", 0) / 60)
         return await ended(conn, session, selection["trade_id"], result, {
             "waiting": "Confirmed. Waiting for them.",
             "changed": "The offer changed — review it and confirm again.",
-            "capped": f"You can trade again in {minutes // 60}h {minutes % 60}m.",
+            "capped": _capped(result.get("seconds_left", 0)),
             "partner_capped": "They can't trade again yet.",
             "partner_unavailable": "They can't trade right now.",
             "offer_invalid": f"That Pokémon can't be traded: {REASONS.get(result.get('reason'), result.get('reason'))}."})
@@ -182,3 +185,94 @@ def handlers(walker):
     return {"trade_pick": trade_pick, "trade_offer": trade_offer, "trade_confirm": trade_confirm,
             "trade_refresh": trade_refresh, "trade_cancel": trade_cancel,
             "trade_prev": partial(trade_page, delta=-10), "trade_next": partial(trade_page, delta=10)}
+
+
+def _capped(seconds):
+    minutes = math.ceil(seconds / 60)
+    return f"You can trade again in {minutes // 60}h {minutes % 60}m."
+
+
+def command(bot):
+    from pokewalker.bot.walker import EXCLUDED, IDLE_SECONDS, _forget
+
+    @app_commands.command(name="trade", description="Trade a Pokémon with a member of this server")
+    @app_commands.guild_only()
+    async def trade(interaction: discord.Interaction, member: discord.Member = None):
+        await interaction.response.defer(ephemeral=True)
+        if interaction.guild_id is None:
+            await interaction.edit_original_response(content="Use /trade in a server.")
+            return
+        channel = interaction.channel
+        permissions = channel.permissions_for(interaction.guild.me) if channel is not None else None
+        can_ping = bool(permissions is not None and permissions.send_messages)
+
+        async def open_trade(conn):
+            guild_id, user_id = str(interaction.guild_id), str(interaction.user.id)
+            async with conn.execute("SELECT 1 FROM trade_channels WHERE guild_id=? AND channel_id=?",
+                                    (guild_id, str(interaction.channel_id))) as cursor:
+                if await cursor.fetchone() is None:
+                    return {"content": "Trading isn't enabled in this channel. "
+                                       "A moderator can enable it with /walker-admin trade-channels add."}
+            if await opted_out(conn, guild_id, user_id):
+                return {"content": "Run /walker-account opt-in first"}
+            profile = await profiles.get_profile(conn, guild_id, user_id)
+            if profile is None:
+                return {"content": "Open /walker to enroll before trading."}
+            if (await profiles.restrictions(conn, guild_id, user_id)).excluded:
+                return {"content": EXCLUDED}
+            if member is not None and member.bot:
+                return {"content": "You can't trade with a bot."}
+            now = bot.walker.clock()
+            session = {"session_id": str(uuid4()), "guild_id": guild_id, "user_id": user_id,
+                       "profile_id": profile["profile_id"], "revision": 0, "expires_at": now + IDLE_SECONDS,
+                       "selection": "{}"}
+            await conn.execute("INSERT INTO sessions(session_id,guild_id,user_id,profile_id,revision,expires_at,"
+                               "selection) VALUES (?,?,?,?,?,?,?)", tuple(session.values()))
+            if member is None:
+                current = await trading.current(conn, session, now)
+                result = {"status": "reopened", "trade_id": current["trade_id"]} if current else {"status": "none"}
+            else:
+                result = await trading.open_or_join(conn, session, str(member.id), now, can_ping)
+            if "trade_id" not in result:
+                await conn.execute("DELETE FROM sessions WHERE session_id=?", (session["session_id"],))
+                return {"content": {
+                    "none": "Use /trade member:@someone to start or join a trade.",
+                    "self": "You can't trade with yourself.",
+                    "partner_not_enrolled": "They haven't started walking in this server.",
+                    "partner_unavailable": "They can't trade right now.",
+                    "busy": f"You're already in a trade with <@{result.get('partner_user_id')}>; "
+                            "finish or cancel it first.",
+                    "partner_busy": "They're in another trade right now.",
+                    "capped": _capped(result.get("seconds_left", 0)),
+                    "partner_capped": "They can't trade again yet.",
+                    "excluded": EXCLUDED}.get(result["status"], "Use /trade member:@someone to start or join a trade.")}
+            state = await trading.view(conn, session, result["trade_id"], now, bot.content, bot.walker.multipliers)
+            session["selection"] = json.dumps({"trade_id": result["trade_id"], "trade_revision": state["revision"]})
+            await conn.execute("UPDATE sessions SET selection=? WHERE session_id=?",
+                               (session["selection"], session["session_id"]))
+            return {"state": {**state, "session": session}, "ping": result.get("ping"),
+                    "partner": state["partner_user_id"]}
+
+        outcome = await bot.writer.run(open_trade)
+        if "state" not in outcome:
+            await interaction.edit_original_response(content=outcome["content"],
+                                                     allowed_mentions=discord.AllowedMentions.none())
+            return
+        notice = {"rate_limited": "Opened without a ping (one per 10 minutes). Ask them to run /trade.",
+                  "no_permission": "Couldn't ping them; ask them to run /trade."}.get(outcome["ping"])
+        if outcome["ping"] == "reserved":
+            partner = int(outcome["partner"])
+            try:
+                await channel.send(f"<@{partner}>, <@{interaction.user.id}> wants to trade a Pokémon with you. "
+                                   "Run /trade and choose them to join.",
+                                   allowed_mentions=discord.AllowedMentions(
+                                       everyone=False, roles=False, users=[discord.Object(id=partner)]))
+            except (discord.HTTPException, discord.RateLimited, aiohttp.ClientError, OSError):
+                notice = "Couldn't ping them; ask them to run /trade."
+            else:
+                notice = "Pinged them here."
+        rendered = render_trade({**outcome["state"], "notice": notice})
+        await interaction.edit_original_response(**rendered, allowed_mentions=discord.AllowedMentions.none())
+        _forget(rendered)
+
+    return trade

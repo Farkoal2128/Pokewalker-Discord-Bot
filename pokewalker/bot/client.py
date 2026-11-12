@@ -20,8 +20,9 @@ from pokewalker.bot.mod import WalkerMod
 from pokewalker.bot.account import WalkerAccount, load_privacy
 from pokewalker.bot.checkin import command as checkin_command
 from pokewalker.bot.raid import command as raid_command
+from pokewalker.bot.trade import command as trade_command
 from pokewalker.bot.heartbeat import Heartbeat
-from pokewalker.services import gyms, raids, research
+from pokewalker.services import gyms, raids, research, trading
 from pokewalker.services.reactions import ReactionService
 from pokewalker.services.deletion import replay_markers
 from pokewalker.bot import admin, messages
@@ -94,6 +95,7 @@ class WalkerBot(discord.Client):
         self.tree.add_command(command(self))
         self.tree.add_command(checkin_command(self))
         self.tree.add_command(raid_command(self))
+        self.tree.add_command(trade_command(self))
         self.tree.add_command(readme_command(self))
         self.admin = admin.register(self)
         self.started_at = self.clock()
@@ -154,6 +156,7 @@ class WalkerBot(discord.Client):
             await gyms.settle(conn, now, self.walker.rng, self.content)
             await raids.expire(conn, now)
             await research.auto_send(conn, now, self.content)
+            await trading.prune(conn, now)
             # A day of grace past expiry; the router already refuses expired sessions.
             await conn.execute('DELETE FROM sessions WHERE expires_at<=?', (now - 86400,))
         await self.writer.run(settle)

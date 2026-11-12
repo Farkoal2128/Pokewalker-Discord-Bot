@@ -1213,3 +1213,46 @@ actions keep the `/walker` texts. Producers: `bot.trade`, `bot.walker`; consumer
 trade participants and the later `/trade` command. No schema, ID grammar or
 manifest change. Tests: `tests/test_trade_screens.py`; `tests/test_walker_router.py`
 and `tests/test_screens.py` stay green.
+
+## `/trade` command and partner ping (additive)
+Pokemon-trading T7 (OD1, OD7, OD8, P6, P11–P13) adds the top-level guild-only
+`/trade [member]` command ("Trade a Pokémon with a member of this server"), registered
+after `/raid`; `member` is an optional Discord Member option (mod.py pattern). It is
+never a button, option or sub-screen of `/walker` or any other command, and `/walker`
+gains no option. It defers ephemerally; without a guild it says "Use /trade in a
+server.". Before the writer job it records whether the bot can Send Messages in the
+interaction channel. One writer job, using Walker.clock(), applies in order:
+1. the interaction channel ID is not exactly a `trade_channels` row of this guild
+   (threads never match their parent) → "Trading isn't enabled in this channel. A
+   moderator can enable it with /walker-admin trade-channels add."; nothing is written;
+2. opted out → "Run /walker-account opt-in first"; 3. no profile → "Open /walker to
+   enroll before trading."; 4. excluded → the existing exclusion text; 5. a bot member
+   → "You can't trade with a bot.";
+6. no member: the caller's joined open trade (`trading.current`) is reopened, else "Use
+   /trade member:@someone to start or join a trade.";
+7. otherwise `trading.open_or_join` with the permission flag. Refusals read: `self`
+   "You can't trade with yourself."; `partner_not_enrolled` "They haven't started
+   walking in this server."; `partner_unavailable` "They can't trade right now.";
+   `busy` "You're already in a trade with <@X>; finish or cancel it first.";
+   `partner_busy` "They're in another trade right now."; `capped` "You can trade again
+   in Xh Ym." (minutes rounded up); `partner_capped` "They can't trade again yet.".
+A refusal leaves no session. Success (opened, joined, reopened, or a bare reopen)
+persists a normal Walker session (revision 0, expiry now + `IDLE_SECONDS`, selection
+`{trade_id, trade_revision}`) and shows `render_trade` over `trading.view`, all
+replies under `AllowedMentions.none()`.
+
+Only `opened` with ping `reserved` posts, after commit and outside the writer job, one
+public message in the interaction channel: "<@partner>, <@opener> wants to trade a
+Pokémon with you. Run /trade and choose them to join." with
+`AllowedMentions(everyone=False, roles=False, users=[partner])`. The opener's screen
+adds "Pinged them here." when sent; an HTTP, rate-limit or transport failure (the
+share.py set) keeps the trade open and adds "Couldn't ping them; ask them to run
+/trade."; `rate_limited` adds "Opened without a ping (one per 10 minutes). Ask them to
+run /trade."; `no_permission` adds "Couldn't ping them; ask them to run /trade.".
+Joining and reopening never ping and never retry. The 60 s sweep also calls
+`trading.prune` (expire idle open trades; delete trades ended over a day ago).
+Producers: `bot.trade.command`, `bot.client`; consumers: Discord members and the
+trade screens. No schema or ID grammar change. The global command manifest changes:
+delivery needs one `sync-commands --global --yes`. Tests:
+`tests/test_trade_command.py`; `tests/test_client_lifecycle.py`,
+`tests/test_trade_screens.py` and `tests/test_share.py` stay green.
