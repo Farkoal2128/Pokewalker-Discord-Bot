@@ -1,6 +1,6 @@
 # Plan: pokemon-trading — player-to-player Pokémon trading (`/trade`)
 
-**Status:** approved (G-A ✅ 2026-11-12); implementing
+**Status:** implemented; awaiting owner G-F items (privacy disclosure, command sync, smoke)
 **Review:** Review rounds 1–2 applied; see git history of this file. Round 3 (2026-11-12) has also been applied.
 **Home:** `feature/pokemon-trading · none` (assigned at G-A), cut from `main` at or after **8face5b** (router idle timeout), with these planning docs carried over from `docs/pokemon-trading-plan` (owner decision at G-A).
 **Inputs:** owner requirement (§2) · owner decisions OD1–OD9 (2026-11-12, relayed by the coordinator) · [requirements D1–D61](../pokewalker-bot/README.md) (owner-only) · [v1.1/v2 plan](../pokewalker-v1.1-v2/PLAN.md) (conventions) · [PIPELINE.md](../../../PIPELINE.md)
@@ -124,14 +124,14 @@ Every row is `seam` (PIPELINE.md:13): ≤ 2 production files, ≤ 300 production
 | Step | Ticket(s) | Kind | Tier | Effort | Status |
 |---|---|---|---|---|---|
 | 1 | G-A plan approval, Home, delivery scope | 🚦 | — | — | ✅ owner 2026-11-12: "once that's done, implement the plan" after review loop clean (round 5, ce45a05); Home `feature/pokemon-trading` at a3f9d8e ⊇ 8face5b; delivery local-only, owner deploys |
-| 2 | [T1](tickets/T1.md) migration `0018_trades.sql` + test fallout; C3 | impl | seam | S | pending |
-| 3 | [T2](tickets/T2.md) `/walker-admin trade-channels`; C5 | impl | seam | M | pending |
-| 4 | [T3](tickets/T3.md) `services/trading.py`: eligibility, open/join/reopen, cap + ping window, offer, cancel; C3 | impl | seam | M | pending |
-| 5 | [T4](tickets/T4.md) confirm + atomic swap with cap guard; deletion cases; C3 | impl | seam | M | pending |
-| 6 | [T5](tickets/T5.md) Pokédex/milestone credit, D15 amendment, view, prune; C3 | impl | seam | S | pending |
-| 7 | [T6](tickets/T6.md) `bot/trade.py` screens + handlers on the Walker router; C5 | impl | seam | M | pending |
-| 8 | [T7](tickets/T7.md) `/trade` command, channel gate, ping, registration, sweep; C5 | impl | seam | M | pending |
-| 9 | G-F final: independent GO, exact-tree full `test_cmd`, privacy disclosure, sync + owner smoke, delivery per G-A | 🚦 | — | — | pending |
+| 2 | [T1](tickets/T1.md) migration `0018_trades.sql` + test fallout; C3 | impl | seam | S | ✅ 9a9eb9b, independent review GO |
+| 3 | [T2](tickets/T2.md) `/walker-admin trade-channels`; C5 | impl | seam | M | ✅ 3508fb2, independent review GO |
+| 4 | [T3](tickets/T3.md) `services/trading.py`: eligibility, open/join/reopen, cap + ping window, offer, cancel; C3 | impl | seam | M | ✅ 324cc63, independent review GO |
+| 5 | [T4](tickets/T4.md) confirm + atomic swap with cap guard; deletion cases; C3 | impl | seam | M | ✅ a6f13ab, independent review GO |
+| 6 | [T5](tickets/T5.md) Pokédex/milestone credit, D15 amendment, view, prune; C3 | impl | seam | S | ✅ c9407ae, independent review GO |
+| 7 | [T6](tickets/T6.md) `bot/trade.py` screens + handlers on the Walker router; C5 | impl | seam | M | ✅ 7118b70 + a4d6bc2, independent review GO |
+| 8 | [T7](tickets/T7.md) `/trade` command, channel gate, ping, registration, sweep; C5 | impl | seam | M | ✅ 6a49e5d, independent review GO |
+| 9 | G-F final: independent GO, exact-tree full `test_cmd`, privacy disclosure, sync + owner smoke, delivery per G-A | 🚦 | — | — | coordinator ✅ integration GO (c5bf32b..a4d6bc2); `Tests: tree 74bcfafb0c29cacd9814519a40e73e5cf6359d4e test_cmd PASS` (1555 tests); owner: privacy.md disclosure, sync-commands, two-account smoke pending |
 
 ## 6. Gate briefs
 
