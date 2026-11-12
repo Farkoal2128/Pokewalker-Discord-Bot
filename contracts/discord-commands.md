@@ -1125,3 +1125,40 @@ consumers: private session router and C3 raids. Existing render states use defau
 Bag remains within five rows, and existing commands/schema remain compatible.
 Tests: test_raids, test_client_lifecycle, test_heartbeat, test_lure, test_readme.
 G-F2 and live Discord gates remain separate; M8.2a's accepted retry-window risk remains.
+
+## Trade channel configuration (additive)
+Pokemon-trading OD8/P11 adds the `trade-channels` subgroup under the existing
+`/walker-admin` root, attached on the client's local tree at construction without
+synchronizing: `add <channel> <reason>`, `add-all <reason>`, `remove <channel>
+<reason>` and `list`. The subgroup inherits the root's guild-only and Manage Server
+defaults; every handler defers ephemerally and rechecks `manage_guild` and P15
+exclusion through `WalkerAdmin.authorize`, so non-managers and excluded members get
+a private refusal. The default is no trade channels: a guild trades nowhere until a
+moderator enables a channel. The channel option is a `TextChannel`; threads are not
+enabled through a parent. Add/remove refuse a channel from another guild ("Choose a
+channel in this server.") and a stripped-empty reason ("A reason is required.").
+Each runs as one writer job that rechecks exclusion, upserts the guild, then
+`INSERT OR IGNORE`s or deletes the `trade_channels` row and inserts one `mod_audit`
+row (guild, actor, target kind `channel`, channel target, action
+`trade_channels_add|trade_channels_remove`, stripped reason, UTC epoch time),
+atomically; repeating add or remove changes no row but audits each call. Replies are
+"Trade channel added." and "Trade channel removed."; add appends "Missing Send
+Messages; trade pings will fail until permissions recover." when the bot lacks Send
+Messages in that channel. `add-all` mirrors `channels add-all`: the same reason
+rule, `guild.fetch_member` with the same HTTPException and Manage Server refusals,
+then one writer job that rechecks exclusion and enables each `guild.text_channels`
+entry where the bot has View Channel and Send Messages. Existing trade channels are
+untouched and unaudited; each newly enabled channel gets one audit row; any failure
+rolls back the whole batch. The mention-suppressed reply is "Enabled N channels;
+skipped M (no access); K already enabled. Channels created later are not added
+automatically." ("1 channel" when N is 1). `list` reads only this guild's trade
+channels in a read-only writer job with an exclusion recheck, writes no audit, and
+replies with channel mentions under `AllowedMentions.none()`, chunked below the
+2,000-character limit in private follow-ups ("No trade channels configured." when
+empty). Per P11, removal never closes a trade already open there; the later `/trade`
+handlers own that behavior.
+Producers: `bot.admin_trade_channels`; consumers: Discord moderators and the later
+`/trade` channel check. Schema: migration 0018 `trade_channels` (no further change).
+Registration stays local; after delivery the owner runs one
+`sync-commands --global --yes`. Tests: `tests/test_admin_trade_channels.py`;
+`tests/test_admin_channels.py` and `tests/test_client_lifecycle.py` stay green.

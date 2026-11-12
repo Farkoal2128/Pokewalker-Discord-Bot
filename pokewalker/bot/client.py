@@ -15,6 +15,7 @@ from discord import app_commands
 from pokewalker.config import Settings, snowflake
 from pokewalker.db import Writer, open_db
 from pokewalker.bot.admin_channels import WalkerAdmin
+from pokewalker.bot.admin_trade_channels import TradeChannels
 from pokewalker.bot.mod import WalkerMod
 from pokewalker.bot.account import WalkerAccount, load_privacy
 from pokewalker.bot.checkin import command as checkin_command
@@ -84,7 +85,9 @@ class WalkerBot(discord.Client):
             self, allowed_contexts=app_commands.AppCommandContext(
                 guild=True, dm_channel=False, private_channel=False),
             allowed_installs=app_commands.AppInstallationType(guild=True, user=False))
-        self.tree.add_command(WalkerAdmin(self))
+        admin_group = WalkerAdmin(self)
+        admin_group.add_command(TradeChannels(admin_group))
+        self.tree.add_command(admin_group)
         self.tree.add_command(WalkerMod(self))
         self.tree.add_command(WalkerAccount(self))
         self.walker = Walker(self)
