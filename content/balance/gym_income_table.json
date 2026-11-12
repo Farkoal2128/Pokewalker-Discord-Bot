@@ -1,12 +1,12 @@
 {
-  "source": "docs/features/pokewalker-bot/README.md D23/D24; docs/research/go-systems/items-and-catching.md:81-95",
-  "checked": "2026-11-04",
-  "version": 1,
+  "source": "docs/features/pokewalker-bot/README.md D23/D24; docs/research/go-systems/items-and-catching.md:81-95; owner amendment Bottlecap and Vitamin (owner decision 2026-11-12)",
+  "checked": "2026-11-12",
+  "version": 2,
   "rows": [
     {
       "item": "poke_ball",
       "quantity": 5,
-      "weight": 4940
+      "weight": 4840
     },
     {
       "item": "great_ball",
@@ -67,6 +67,11 @@
       "item": "evolution_item",
       "quantity": 1,
       "weight": 200
+    },
+    {
+      "item": "vitamin",
+      "quantity": 1,
+      "weight": 100
     }
   ],
   "tenure_seconds": 28800

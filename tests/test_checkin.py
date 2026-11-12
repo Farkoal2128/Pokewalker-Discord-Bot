@@ -59,7 +59,7 @@ class CheckinTests(unittest.IsolatedAsyncioTestCase):
                          {'poke_ball': 1, 'great_ball': 1})
         self.assertEqual((await self.rows('profiles'))[0]['last_checkin_at'], 10000)
 
-    async def test_pack_weights_35_30_20_15_never_rare_seeded(self):
+    async def test_pack_weights_34_30_20_15_1_never_rare_seeded(self):
         self.assertTrue(hasattr(items, 'roll_checkin'), 'M3.2 common pack roll is absent')
         class Tickets(random.Random):
             def random(self):
@@ -67,9 +67,11 @@ class CheckinTests(unittest.IsolatedAsyncioTestCase):
         rng = Tickets(23)
         rng.tickets = iter(range(100))
         rows = [items.roll_checkin(rng) for _ in range(100)]
+        # Owner amendment 2026-11-12: Vitamin 1, Great Ball 35 -> 34; Vitamin is an ordinary item.
         self.assertEqual(Counter((r['item'], r['quantity']) for r in rows),
-                         {('great_ball', 1): 35, ('razz_berry', 1): 30,
-                          ('poke_ball', 2): 20, ('pinap_berry', 1): 15})
+                         {('great_ball', 1): 34, ('razz_berry', 1): 30,
+                          ('poke_ball', 2): 20, ('pinap_berry', 1): 15, ('vitamin', 1): 1})
+        self.assertFalse({r['item'] for r in rows} & set(items.RARE))
         left, right = random.Random(19), random.Random(19)
         self.assertEqual([items.roll_checkin(left) for _ in range(30)],
                          [items.roll_checkin(right) for _ in range(30)])
@@ -96,7 +98,8 @@ class CheckinTests(unittest.IsolatedAsyncioTestCase):
                 await self.conn.execute('UPDATE profiles SET last_checkin_at=NULL,stardust=0')
                 await self.conn.execute('INSERT OR REPLACE INTO inventory VALUES (?, ?, ?)',
                                         (self.pid, 'poke_ball', units))
-                result = await self.checkin(now=10000 + units, seed=0)
+                # Seed 6 rolls the 2-Poké-Ball pack under the owner-amended (2026-11-12) weights.
+                result = await self.checkin(now=10000 + units, seed=6)
                 self.assertEqual([o['dust'] for o in result['outcomes']],
                                  [0 if units == 249 else 10, 10])
                 self.assertEqual(result['outcomes'][1]['quantity'], 2)
@@ -256,6 +259,18 @@ class CheckinTests(unittest.IsolatedAsyncioTestCase):
         await self.conn.execute('UPDATE restrictions SET excluded=1')
         await command.callback(interaction)
         self.assertIn('Excluded', interaction.edit_original_response.await_args.kwargs['content'])
+
+    async def test_command_names_a_vitamin_pack(self):
+        command = await self.command()
+        interaction = self.interaction()
+        vitamin = next(row for row in load_table('checkin_table')['rows'] if row['item'] == 'vitamin')
+        with patch('pokewalker.bot.checkin.time.time', return_value=10000), \
+                patch.object(items, 'roll_checkin', return_value=vitamin):
+            await command.callback(interaction)
+        self.assertEqual(interaction.edit_original_response.await_args.kwargs['content'],
+                         'Poké Ball ×1\nVitamin ×1')
+        self.assertEqual({r['item_id']: r['quantity'] for r in await self.rows('inventory')},
+                         {'poke_ball': 1, 'vitamin': 1})
 
 
 class CheckinEncounterTests(unittest.IsolatedAsyncioTestCase):

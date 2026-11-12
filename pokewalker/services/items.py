@@ -188,17 +188,26 @@ async def convert(conn, session, item_id, quantity, content=None):
 
 
 async def buy_evolution_item(conn, session, kind, now, content):
+    return await _buy(conn, session, kind, load_table('evolution')['item_price_stardust'],
+                      known=lambda: any(item['id'] == kind for item in content['evolution_items']))
+
+
+async def buy_vitamin(conn, session, now):
+    return await _buy(conn, session, 'vitamin', load_table('conversion_rates')['purchase_stardust']['vitamin'])
+
+
+async def _buy(conn, session, kind, price, known=None):
+    """One Stardust-priced Bag item per session revision, shared by evolution items and Vitamins."""
     if not conn.in_transaction:
         raise RuntimeError('Purchases require an active writer transaction')
     profile, refusal = await session_owner(conn, session)
     if refusal is not None:
         return refusal
     pid, key = session['profile_id'], f"buy:{session['session_id']}:{session['revision']}"
-    price = load_table('evolution')['item_price_stardust']
     async with conn.execute('SELECT 1 FROM action_receipts WHERE key=?', (key,)) as cursor:
         replay = await cursor.fetchone()
     if replay is None:
-        if not any(item['id'] == kind for item in content['evolution_items']):
+        if known is not None and not known():
             return {'status': 'refused'}
         if profile['stardust'] < price:
             return {'status': 'insufficient'}
@@ -215,6 +224,44 @@ async def buy_evolution_item(conn, session, kind, now, content):
         return {'item': kind, 'quantity': 1, 'stardust': price}, lines
 
     return await with_receipt(conn, key, 'buy', compute, profile_id=pid)
+
+
+def trade_up_rule(item_id):
+    """The conversion_rates trade_up rule consuming item_id, or None."""
+    return next((rule for rule in load_table('conversion_rates')['trade_up'] if rule['from'] == item_id), None)
+
+
+async def trade_up(conn, session, item_id, outputs):
+    if not conn.in_transaction:
+        raise RuntimeError('Trade-ups require an active writer transaction')
+    _, refusal = await session_owner(conn, session)
+    if refusal is not None:
+        return refusal
+    rule = trade_up_rule(item_id)
+    if rule is None or type(outputs) is not int or outputs < 1:
+        return {'status': 'refused'}
+    pid, key = session['profile_id'], f"tradeup:{session['session_id']}:{session['revision']}"
+    consumed, target = rule['input_per_output'] * outputs, rule['to']
+    async with conn.execute('SELECT 1 FROM action_receipts WHERE key=?', (key,)) as cursor:
+        replay = await cursor.fetchone()
+    if replay is None:
+        async with conn.execute('SELECT quantity FROM inventory WHERE profile_id=? AND item_id=?',
+                                (pid, item_id)) as cursor:
+            held = await cursor.fetchone()
+        if held is None or held['quantity'] < consumed:
+            return {'status': 'insufficient'}
+
+    async def compute(conn):
+        await conn.execute('UPDATE inventory SET quantity=quantity-? WHERE profile_id=? AND item_id=?',
+                           (consumed, pid, item_id))
+        await conn.execute('INSERT INTO inventory VALUES (?,?,?) ON CONFLICT(profile_id,item_id) '
+                           'DO UPDATE SET quantity=quantity+excluded.quantity', (pid, target, outputs))
+        lines = [{'profile_id': pid, 'resource': 'item', 'resource_id': resource_id,
+                  'delta': delta, 'reason': 'trade_up'} for resource_id, delta in
+                 ((item_id, -consumed), (target, outputs))]
+        return {'from': item_id, 'to': target, 'consumed': consumed, 'produced': outputs}, lines
+
+    return await with_receipt(conn, key, 'trade_up', compute, profile_id=pid)
 
 
 async def _active_encounter_effect(conn, profile_id, kind):

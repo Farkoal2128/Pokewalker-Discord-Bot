@@ -348,7 +348,12 @@ class StorageTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(expected, text)
         self.assertNotIn("level", text.lower())
         buttons = self.buttons(rendered)
-        self.assertEqual(set(buttons), {"Unfavorite", "Back", "Send for research", "Power up", "Set companion", "Share", "Evolve"})
+        # Owner amendment 2026-11-12 adds Use Bottlecap and Use Vitamin (disabled while none is held).
+        self.assertEqual(set(buttons), {"Unfavorite", "Back", "Send for research", "Power up", "Set companion", "Share",
+                                        "Evolve", "Use Bottlecap", "Use Vitamin"})
+        for name in ("Use Bottlecap", "Use Vitamin"):
+            self.assertTrue(buttons[name].disabled)
+            self.assertEqual(buttons[name].row, 2)
         self.assertFalse(buttons["Power up"].disabled)
         self.assertFalse(buttons["Set companion"].disabled)
         self.assertEqual(buttons["Power up"].row, 1)

@@ -1255,3 +1255,52 @@ each participant's level from catch rule `raid_level_range` [20, 25] (whole leve
 stored as `level_x2` 40-50) instead of `wild_level_range`; IVs, gender and shiny roll
 as before, and no level is displayed. Existing raid encounters keep their rolls.
 Ordinary wild encounters are unchanged. Tests: tests/test_raids.py, tests/test_encounters.py.
+
+## Owner amendment: Bottlecap and Vitamin (2026-11-12)
+`bottlecap` and `vitamin` are ordinary stackable Bag items, not rare pockets. They convert
+at 2,500 and 500 Stardust and come from the survivor roll (Bottlecap), the hourly gym
+income and check-in rolls (Vitamin) and the Vitamin purchase below (C4). No schema change:
+the pokemon IV CHECKs (0..15) hold, and neither pokemon_deployed_guard (state, level_x2,
+pokemon_id) nor pokemon_trade_guard (profile_id) fires on an IV update.
+
+`services.iv_items.lowest(ivs)` returns the index of the lowest of (attack, defense,
+stamina); ties go to Attack, then Defense, then Stamina. `apply(item, ivs)` sets that IV
+to 15 for bottlecap and adds 1, never past 15, for vitamin. `held(conn, profile_id)` maps
+both items to their inventory counts. `quote(conn, profile_id, uid, item, content,
+multipliers)` returns None for a Pokemon the profile does not own, else cp_before,
+cp_after, stars_before and stars_after (domain.cp cp and appraisal), have, perfect (all
+three IVs are 15) and deployed. `use(conn, session, uid, expected_revision, item, content,
+multipliers)` requires a writer transaction and returns {status, pokemon}. In order: an
+unknown item is refused; a session whose profile is no longer the member's is stale; an
+excluded member is excluded; a Pokemon the profile does not own (missing, sent, traded
+away or foreign) is stale. An existing `<item>:<uid>:<expected_revision>` receipt (action
+bottlecap or vitamin) is replayed when this profile owns it, otherwise stale. Then a
+gym-deployed Pokemon is deployed, a revision other than expected_revision is stale, three
+15 IVs are perfect and an empty pocket is missing. These refusals write nothing. Success,
+inside that receipt, sets the changed IV, bumps pokemon.revision by one, consumes one item
+and writes one `item`/<item> ledger line of -1 with reason bottlecap or vitamin, and
+returns status used with the updated Pokemon. The revision bump makes an offered trade
+Pokemon `changed` at trade execution. Appraisal stars, CP and HP are derived from the
+stored IVs on every screen, so all of them reflect the change.
+
+`items.buy_vitamin(conn, session, now)` shares buy_evolution_item's purchase helper and
+its `buy:<session_id>:<revision>` receipt (action buy). The price is conversion_rates
+`purchase_stardust.vitamin` (5,000). Before replay, session_owner refusals (stale,
+excluded), insufficient (Stardust below the price) and bag_full (one more unit would exceed
+bag_limit) return without mutation. Success debits the price, adds one vitamin and records
+the ledger lines stardust -5000 and item vitamin +1, both with reason buy. buy_evolution_item
+keeps its behavior. Producers: item services; consumers: Pokemon details, Bag and receipt
+readers. Tests: tests/test_iv_items.py, tests/test_evolution_items.py.
+
+## Owner amendment: ball trade-up (2026-11-12)
+`items.trade_up(conn, session, item_id, outputs)` requires a writer transaction and returns
+session_owner refusals (stale, excluded) first. item_id must be a `from` in conversion_rates
+`trade_up` and outputs a positive integer, else refused. Under the `tradeup:<session_id>:
+<revision>` receipt (action trade_up), checked before replay, a held quantity of item_id
+below input_per_output × outputs returns insufficient without mutation. Success atomically
+removes input_per_output × outputs of item_id, adds outputs of the rule's `to` item
+(inserting the inventory row when absent) and records two item ledger lines, the input's
+negative and the output's positive delta, both with reason trade_up. It returns {from, to,
+consumed, produced}; replays return the saved result. Bag units only fall, so the bag limit
+never refuses a trade-up, and no Master Ball is involved. No schema change. Tests:
+tests/test_ball_trade_up.py.

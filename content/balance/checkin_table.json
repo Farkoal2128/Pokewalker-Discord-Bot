@@ -1,12 +1,12 @@
 {
-  "source": "docs/features/pokewalker-bot/README.md D29",
-  "checked": "2026-11-04",
-  "version": 1,
+  "source": "docs/features/pokewalker-bot/README.md D29; owner amendment Bottlecap and Vitamin (owner decision 2026-11-12)",
+  "checked": "2026-11-12",
+  "version": 2,
   "rows": [
     {
       "item": "great_ball",
       "quantity": 1,
-      "weight": 35
+      "weight": 34
     },
     {
       "item": "razz_berry",
@@ -22,6 +22,11 @@
       "item": "pinap_berry",
       "quantity": 1,
       "weight": 15
+    },
+    {
+      "item": "vitamin",
+      "quantity": 1,
+      "weight": 1
     }
   ]
 }

@@ -1,7 +1,7 @@
 {
-  "source": "docs/features/pokewalker-bot/README.md D61; docs/features/pokewalker-v1.1-v2/PLAN.md Q2 (v1.1 item scope); owner amendment Companion Mirror (owner decision 2026-11-12)",
+  "source": "docs/features/pokewalker-bot/README.md D61; docs/features/pokewalker-v1.1-v2/PLAN.md Q2 (v1.1 item scope); owner amendment Companion Mirror (owner decision 2026-11-12); owner amendment Bottlecap and Vitamin (owner decision 2026-11-12); owner amendment ball trade-up (owner decision 2026-11-12)",
   "checked": "2026-11-12",
-  "version": 3,
+  "version": 4,
   "stardust_per_unit": {
     "poke_ball": 2,
     "great_ball": 5,
@@ -15,6 +15,23 @@
     "shiny_lure": 500,
     "star_piece": 50,
     "evolution_item": 100,
-    "companion_mirror": 500
-  }
+    "companion_mirror": 500,
+    "vitamin": 500,
+    "bottlecap": 2500
+  },
+  "purchase_stardust": {
+    "vitamin": 5000
+  },
+  "trade_up": [
+    {
+      "from": "poke_ball",
+      "to": "great_ball",
+      "input_per_output": 2
+    },
+    {
+      "from": "great_ball",
+      "to": "ultra_ball",
+      "input_per_output": 2
+    }
+  ]
 }

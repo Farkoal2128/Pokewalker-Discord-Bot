@@ -1329,3 +1329,48 @@ manifest changes: after delivery one `sync-commands --global --yes` follows (the
 deploy installer runs it automatically). The ticket path, existing commands and
 persisted formats remain compatible. Tests: tests/test_admin_force_raid.py;
 test_raids, test_admin_channels and test_readme stay green.
+
+## Owner amendment: Bottlecap and Vitamin (2026-11-12)
+Pokemon details gain a third button row: `Use Bottlecap` (`iv_bottlecap`) and `Use Vitamin`
+(`iv_vitamin`). Each is disabled when none of that item is held, when all three IVs are 15
+or while the Pokemon is gym-deployed. Pressing one opens a private preview titled
+`Use Bottlecap` or `Use Vitamin`: "CP <before> → <after> · Appraisal <a> → <b> stars ·
+uses 1 <Item> (have N)", with Confirm (`iv_bottlecap_confirm` or `iv_vitamin_confirm`) and
+Back (`storage_detail`). The preview never shows IV values or the hidden level. Confirm
+requires that item's preview and calls C3 iv_items.use with the saved Pokemon revision,
+then returns the updated details, whose CP and "Appraisal: N stars" reflect the new IVs.
+Preview and confirm refusals are private and spend nothing: perfect "Its IVs are already
+perfect. No <Item> was used.", missing "You have no <Item>. Nothing was used.", deployed
+"Recall it from the gym first", a confirm without its preview "Preview the <Item> before
+confirming.", and every other refusal the reopen text. Details keep at most 9 components
+in 3 rows.
+
+Check-in replies name the new pack "Vitamin ×1".
+
+The Bag shows `Buy Vitamin` (`vitamin_buy_preview`). Its preview reads "5,000 Stardust → 1 ×
+Vitamin · have N Stardust" (thousands separators), with Confirm (`vitamin_buy_confirm`,
+disabled when unaffordable) and Back (Bag). Confirm requires that preview, else "Preview
+the purchase before confirming."; C3 insufficient is "Not enough Stardust. Nothing was
+spent." and bag_full "Bag is full. Nothing was spent."; success returns the Bag with the
+notice "5,000 Stardust → 1 × Vitamin". Tests: tests/test_iv_items.py.
+
+## Owner amendment: ball trade-up (2026-11-12)
+The Bag shows `Trade up` (`tradeup_pick`), disabled unless at least two of a trade-up input
+are held. tradeup_pick shows a select (`tradeup_qty`) whose options are "Poké Ball → Great
+Ball (2:1)" and "Great Ball → Ultra Ball (2:1)", each only while its input is held at least
+twice, and Back (Bag); with neither it refuses "You need at least 2 Poké Balls or 2 Great
+Balls to trade up." tradeup_qty accepts exactly one displayed option and shows a
+quantity select (`tradeup_preview`) of outputs `sorted({min(q, most) for q in (1, 5, 10, 25,
+50, 100, most)})`, where most is held // 2 and is labelled "All (most)". tradeup_preview
+accepts exactly one displayed quantity n and shows "<2n> × Poké Ball → <n> × Great Ball"
+(names follow the rule) and "This cannot be undone.", with Confirm (`tradeup_confirm`) and
+Back (Bag). Confirm requires that preview, else "Preview the trade-up before confirming.";
+C3 insufficient is "Not enough balls held. Nothing was traded."; success returns the Bag
+with the preview line as a notice. Action IDs avoid the `trade_` prefix, which the router
+reserves for /trade refusal texts. With every button the Bag has 10 buttons in at most
+three rows of five, within Discord's 25 components. Rendering stays free of I/O; no slash
+command or ID grammar change. Tests: tests/test_ball_trade_up.py, tests/test_capacity.py.
+
+The paged /readme player pages gain short Vitamins and Bottlecaps and Trade up paragraphs,
+and the check-in sentence names the Vitamin; the admin page is unchanged.
+Tests: tests/test_readme.py.

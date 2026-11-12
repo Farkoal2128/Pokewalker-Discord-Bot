@@ -50,7 +50,7 @@ These are playtest values. Changing one later is a deliberate requirements chang
 | D20 | **Steps and encounters (D9):** the first **300 accepted words (base steps) per rolling hour** each award a full step, and every later word in that hour awards **0.25** of a step. The per-message cap, 15-second cooldown and 30-per-minute cap stay; the minute cap counts accepted words (base steps) before the 0.25 reduction. One encounter per **100 awarded steps**. **There is no hourly encounter cap.** Encounters are limited only by the step curve and the 3-encounter queue (D5). **Counting:** steps are stored in hundredths. For each accepted word, look at the base steps (words) credited to the player in this server during the previous 60 minutes, by message time. If fewer than 300, the word awards 1.00 step; otherwise 0.25. The threshold counts accepted words, never awarded steps. A message that crosses 300 is split word by word. Fractions are never rounded away: the encounter, find and companion meters (D20, D21, D25) all accumulate hundredths and keep the remainder after each trigger. |
 | D21 | **Passive finds (D11):** one find per 100 awarded steps, at most **3 per rolling hour**. While 3 finds have been granted in the last 60 minutes, the find meter is **frozen**: new steps add nothing to it, and no backlog builds up (as with the full queue, D5). The freeze starts **immediately** when the third find is granted. Steps from the rest of that same message are discarded for the find meter; for example, with 99 on the meter and a message awarding 20, the find triggers and the other 19 are dropped. Whatever remains on the meter at that moment is kept. Use the weight table in [items-and-catching](../../research/go-systems/items-and-catching.md#v1-item-scope-and-walking-drops). **In v1** the Star Piece (50) and Evolution item (200) rows are removed, because those items arrive in v1.1. The remaining weights total 9,750 and are used as they are; for example, the Master Ball is 10/9,750 ≈ 0.10%. **From v1.1** the full 10,000-weight table applies. |
 | D22 | **Check-in (D12):** available again **60 minutes after the last successful check-in**, not on the clock hour. |
-| D23 | **Gym income (D13):** one item for each full hour held. Each completed hour gets exactly one reward receipt. `/gym rewards` pays the completed hours that have no receipt yet, and ending the deployment pays any remaining ones, so no hour is paid twice. **Exception:** when a moderator excludes the holder (D31), unpaid hours are forfeited. Uses the full passive table (D21, v1.1 form) with the Master Ball raised to **20** and the Shiny Lure to **100**, and the Poké Ball row lowered from 5,000 to **4,940**, so the total stays 10,000: exactly **0.2%** and **1%**. At most one held gym per player per server. |
+| D23 | **Gym income (D13):** one item for each full hour held. Each completed hour gets exactly one reward receipt. `/gym rewards` pays the completed hours that have no receipt yet, and ending the deployment pays any remaining ones, so no hour is paid twice. **Exception:** when a moderator excludes the holder (D31), unpaid hours are forfeited. Uses the full passive table (D21, v1.1 form) with the Master Ball raised to **20** and the Shiny Lure to **100**, and the Poké Ball row lowered from 5,000 to **4,940**, so the total stays 10,000: exactly **0.2%** and **1%**. By owner decision 2026-11-12 the table also has a **Vitamin ×1: 100** row (1%), paid for by lowering the Poké Ball row to **4,840**; the total stays 10,000. At most one held gym per player per server. |
 | D24 | **Gym tenure:** a defender goes home **8 real hours** after deployment. This replaces the researched activity-day fatigue and 7-day backstop, so one deployment earns at most 8 gym items. |
 | D25 | **Companion (D14):** 1 Candy for the companion's **own evolution family** per **150 awarded steps**. The companion can be changed at any time, and progress toward the next Candy is kept. The meter belongs to the player's server profile, not to a Pokémon. Each Candy goes to the family of whichever Pokémon is the companion at the moment the meter reaches 150. Restrictions are in D30. |
 | D26 | **Onboarding (D16):** the player picks a starter (D34), then gets 30 Poké Balls, 5 Razz Berries, and the first encounter queued immediately. |
@@ -58,7 +58,7 @@ These are playtest values. Changing one later is a deliberate requirements chang
 | D48 | **Shares show a picture (D19).** Share embeds include the Pokémon's sprite as the embed image, hotlinked from the PokéAPI sprites repository at a **pinned commit**. Discord fetches it; the bot hosts and renders nothing. Use the exact form, gender and shiny state: the front sprite (shiny or not) of that form, and the female sprite where the species has gender differences (D53). If no matching sprite exists, send the share without an image and never substitute a non-shiny or base-form picture. The embed text (name, CP, shiny, catcher) stays complete without the image. |
 | D49 | **Pictures everywhere a Pokémon appears.** Every screen showing **one** Pokémon includes its picture, using the same exact-form, exact-shiny sprite rule and no-substitute fallback as D48. **v1** hotlinks sprites: the encounter reveal and catch result show the wild Pokémon as the embed image; `/walker` shows the companion as the embed thumbnail; the storage details view and Pokédex entries show the selected Pokémon. **No version renders images (owner decision 2026-11-04):** every picture, in v1, v1.1 and v2, is the hotlinked sprite, which Discord fetches. **Lists of many Pokémon (storage pages, the Pokédex list) are text only**; opening one entry shows its picture. **v2** gym screens (matchup, battle result, defender) show the relevant sprites as embed images or thumbnails. Text always carries the full information. |
 | D28 | **Data deletion:** `/walker-account delete-data` wipes the player's data in the **current server only**. Profile IDs are random UUIDs, never reused, even after a restore. **Deletion markers:** before deleting, the bot appends a minimal marker (the deleted **profile ID**, server ID, time) to a small marker log outside the game database, and syncs it to disk. Then it deletes the profile. On every startup, any marked profile that still exists is deleted again, which also finishes a deletion interrupted by a crash. The marker log is copied off-machine with every hourly backup, and a restore always uses the **newest** marker log available, deleting only those exact profile IDs, so a player who re-enrolled later (and so has a new profile ID) is untouched. Accepted limit: if the whole host is lost, deletions made after the last **successful** off-machine copy of the marker log can be lost along with other data from that period. Normally that is under an hour, but longer if uploads have been failing, so the age of the last successful copy is monitored with the backups. Deleting a profile that holds a gym ends that deployment exactly as an exclusion does: the defender is removed, unpaid hours are forfeited (D23), and battles in progress against it are aborted. Nothing is ever credited to a later profile. **Retention exceptions:** moderation audit entries about the player and any **active** restriction (pause, exclusion, share ban) are kept, keyed by `(guild_id, user_id)` rather than by profile, so they also apply to a re-enrolled profile. A **raid participation record** (server, user, spawn) is also kept, but only until that spawn expires (D60). The privacy text says so, and the delete-then-re-enroll case is a required test. Backups are pruned by **age alone**: anything older than 28 days is deleted locally and off-machine, whether or not newer uploads succeed. A failed prune raises an alert and is retried, so deleted data leaves all backups within 28 days, or as soon as the off-machine store is reachable again. The privacy text states this. |
-| D29 | **Check-in common item (D12):** one roll, weights out of 100: **Great Ball ×1: 35**, **Razz Berry ×1: 30**, **Poké Ball ×2: 20**, **Pinap Berry ×1: 15**. It never grants rare items. Like passive finds, a pack that doesn't fit in a full bag becomes 10 Stardust. The guaranteed Poké Ball is granted **first**, then the random pack is checked against the space left. Each converts to 10 Stardust on its own if it doesn't fit. A check-in always succeeds and always restarts the 60-minute timer. |
+| D29 | **Check-in common item (D12):** one roll, weights out of 100: **Great Ball ×1: 34** (35 before the owner decision 2026-11-12), **Razz Berry ×1: 30**, **Poké Ball ×2: 20**, **Pinap Berry ×1: 15**, **Vitamin ×1: 1** (owner decision 2026-11-12). It never grants rare items. Like passive finds, a pack that doesn't fit in a full bag becomes 10 Stardust. The guaranteed Poké Ball is granted **first**, then the random pack is checked against the space left. Each converts to 10 Stardust on its own if it doesn't fit. A check-in always succeeds and always restarts the 60-minute timer. |
 | D30 | **Companion restrictions (D14):** the current companion cannot defend a gym, be sent for research, or be selected as a gym attacker. A Pokémon deployed to a gym cannot be made the companion. A player with no companion still earns steps; only companion Candy pauses. |
 | D31 | **Moderation tools (D17):** see the list below. |
 | D32 | **Gym defender weakening (D24):** the defender's battle HP is `ceil(canonical_HP × (2.0 − 0.1 × h))`, where `h` is the number of full hours since deployment (0–7). That is 2.0× when placed and 1.3× in its last hour; at 8 hours it goes home. The value is frozen when a battle starts. Stored CP, level, IVs and HP never change. |
@@ -321,7 +321,7 @@ based on [pokeapi-forms.md](../../research/data-visuals/pokeapi-forms.md).
 
   | Outcome | Weight | Chance |
   |---|---:|---:|
-  | 5 Ultra Balls (weight reduced by owner decision 2026-11-12) | 2,000 | 20% |
+  | 5 Ultra Balls (weight reduced by owner decisions 2026-11-12) | 1,600 | 16% |
   | 3 Golden Razz Berries | 2,000 | 20% |
   | 3 Silver Pinap Berries | 1,500 | 15% |
   | 5 Rare Candy | 1,500 | 15% |
@@ -329,6 +329,7 @@ based on [pokeapi-forms.md](../../research/data-visuals/pokeapi-forms.md).
   | Shiny Lure | 800 | 8% |
   | Master Ball | 600 | 6% |
   | Companion Mirror (owner decision 2026-11-12) | 500 | 5% |
+  | Bottlecap (owner decision 2026-11-12) | 400 | 4% |
   | **World Legendary Ticket** | 100 | 1% |
 
   Rewards land in the D59 reward inbox, so a full bag or rare pocket never converts or loses
@@ -392,6 +393,8 @@ based on [pokeapi-forms.md](../../research/data-visuals/pokeapi-forms.md).
   | Star Piece (v1.1) | 50 |
   | Evolution item (v1.1; sells for 500) | 100 |
   | Master Ball, Shiny Lure | 500, the same as the duplicate rule |
+  | Vitamin (owner decision 2026-11-12; sells for 5,000) | 500 |
+  | Bottlecap (owner decision 2026-11-12) | 2,500 |
   | World Legendary Ticket (v2) | Can't be converted |
 
   For scale: a bag of 30 Poké Balls converts to 60 Stardust, while an ordinary catch pays
@@ -399,6 +402,29 @@ based on [pokeapi-forms.md](../../research/data-visuals/pokeapi-forms.md).
   acceptance case: confirm the same conversion of 5 of 20 Poké Balls twice, including a
   restart after commit but before the reply. The result must be exactly 15 balls and +10
   Stardust, using the action-receipt rule.
+
+### Bottlecap, Vitamin and ball trade-up (owner decision 2026-11-12)
+
+The owner requested: "Create a gym survivor item called Bottlecap which increases the lowest
+IV to max on a pokemon, and if the pokemon is already maxed on all 3, don't allow the item to
+be used on the pokemon. Make sure it updates the Stars. Create a more common item called
+Vitamin which increases the lowest IV by one, and add it as a rare item to the pool of gym
+hourly rewards and a 1% chance in the /checkin pool. Allow users to buy Vitamins at the cost
+of 5000 each." and "Also implement a trade-up system for pokeballs, 2 pokeballs for 1 great
+ball, 2 great balls for 1 ultra ball in the bag." The approved design:
+
+- **Bottlecap and Vitamin** are ordinary stackable Bag items. They come from the survivor roll
+  (Bottlecap, D60), the hourly gym income (Vitamin, D23), check-ins (Vitamin, D29) and a Bag
+  purchase of **5,000 Stardust** per Vitamin. They convert at 2,500 and 500 Stardust (D61).
+- Used from a Pokémon's details on one owned Pokémon, they change its **lowest IV** (ties go
+  to Attack, then Defense, then Stamina): a Bottlecap sets it to 15, a Vitamin adds 1. Both
+  are refused, spending nothing, when all three IVs are 15, and for a gym defender. A private
+  preview shows the CP and Appraisal stars before and after, never the IVs or the hidden
+  level (D36). Each use spends exactly one item once, even on a double press or restart, and
+  changes the Pokémon's revision, so a pending trade offer of it is refused.
+- **Trade up** in the Bag turns 2 Poké Balls into 1 Great Ball, or 2 Great Balls into 1
+  Ultra Ball, for a chosen quantity after a preview, in one transaction. Master Balls are never
+  traded up.
 
 ## Open questions
 
