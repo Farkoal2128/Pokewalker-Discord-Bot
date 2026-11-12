@@ -1,7 +1,7 @@
 {
-  "source": "docs/features/pokewalker-bot/README.md D38/D42/D47; docs/features/pokewalker-bot/PLAN.md P4/P5; docs/research/go-systems/items-and-catching.md, shinies-and-lures.md",
-  "checked": "2026-11-04",
-  "version": 1,
+  "source": "docs/features/pokewalker-bot/README.md D38/D42/D47; docs/features/pokewalker-bot/PLAN.md P4/P5; docs/research/go-systems/items-and-catching.md, shinies-and-lures.md; owner amendment Companion Mirror (owner decision 2026-11-12)",
+  "checked": "2026-11-12",
+  "version": 2,
   "rules": {
     "base_catch_rates": {
       "common": 0.5,
@@ -33,6 +33,8 @@
     "shiny_probability": 0.00390625,
     "lure_probability_multiplier": 4,
     "lure_encounters": 10,
+    "mirror_encounters": 10,
+    "mirror_probability": 0.2,
     "wild_level_range": [
       1,
       20

@@ -1642,10 +1642,12 @@ class BagCapacityTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_bag_view_within_5_rows_all_buttons(self):
         await self.conn.executemany('INSERT INTO inventory VALUES (?,?,1)',
-                                    [('p', 'master_ball'), ('p', 'shiny_lure'), ('p', 'star_piece')])
+                                    [('p', 'master_ball'), ('p', 'shiny_lure'), ('p', 'star_piece'),
+                                     ('p', 'companion_mirror')])
         rendered = await self.screen('bag')
         self.assertEqual(set(self.buttons(rendered)),
-                         {'Convert', 'Buy evolution item', 'Shiny Lure', 'Star Piece', 'Expand bag', 'Back'})
+                         {'Convert', 'Buy evolution item', 'Shiny Lure', 'Star Piece', 'Companion Mirror',
+                          'Expand bag', 'Back'})
         view = rendered['view']
         self.assertLessEqual(len(view.children), 25)
         widths = [0] * 5

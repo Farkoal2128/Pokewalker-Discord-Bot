@@ -16,6 +16,7 @@ from types import MappingProxyType
 
 
 LEGENDARY = "Legendary/Mythical"
+MIRROR_TIERS = ("Common", "Uncommon", "Evolved")
 
 
 @dataclass(frozen=True)
@@ -97,6 +98,37 @@ def generate(identity_pools: Mapping[str, Sequence[Mapping]], route: Mapping,
                 for tier, pool in identity_pools.items()}
     tier = roll_tier(eligible, chances, rng)
     identity = pick_identity(eligible.get(tier, []), weights, rng)
+    return _spec(identity, tier, lure_active, rng, rules)
+
+
+def mirror_hit(rng: random.Random, *, rules: Mapping) -> bool:
+    """One Companion Mirror draw per generated encounter."""
+    return rng.random() < rules["mirror_probability"]
+
+
+def mirror_pools(identities: Sequence[Mapping], family_id: int) -> dict[str, list[Mapping]]:
+    """Encounter identities of one family the mirror may attract, by tier.
+
+    Only Common, Uncommon and Evolved tiers qualify; Legendary/Mythical and Rare tiers
+    and any Legendary- or Mythical-flagged identity are skipped. Empty means none.
+    """
+    pools: dict[str, list[Mapping]] = {}
+    for identity in identities:
+        if (identity["family_id"] == family_id and identity["tier"] in MIRROR_TIERS
+                and not identity["is_legendary"] and not identity["is_mythical"]):
+            pools.setdefault(identity["tier"], []).append(identity)
+    return pools
+
+
+def generate_mirror(pools: Mapping[str, Sequence[Mapping]], rng: random.Random, *,
+                    chances: Mapping, rules: Mapping) -> EncounterSpec:
+    """Tier by roll_tier without the Legendary draw, then uniform; routes are ignored."""
+    tier = roll_tier(pools, {**chances, "legendary": 0}, rng)
+    return _spec(rng.choice(pools[tier]), tier, False, rng, rules)
+
+
+def _spec(identity: Mapping, tier: str, lure_active: bool, rng: random.Random,
+          rules: Mapping) -> EncounterSpec:
     gender, variety = roll_gender(identity, rng)
     shiny = roll_shiny(rng, lure_active, rules=rules)
     level_x2, ivs = roll_level_ivs(rng, rules=rules)

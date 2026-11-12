@@ -300,7 +300,8 @@ increases to `version: 3`. Each has nonempty `source` and `checked: "2026-11-05"
   `(item, quantity, weight)`: Ultra Ball `(5, 2500)`, Golden Razz `(3, 2000)`,
   Silver Pinap `(3, 1500)`, Rare Candy `(5, 1500)`, Star Piece `(2, 1000)`,
   Shiny Lure `(1, 800)`, Master Ball `(1, 600)`, World Legendary Ticket `(1, 100)`.
-  Total weight is 10,000; flat Stardust is paid with every item outcome. D60
+  Total weight is 10,000; flat Stardust is paid with every item outcome. The
+  Companion Mirror owner amendment (2026-11-12, below) makes this nine rows. D60
   rewards enter the inbox on undefeated tenure expiry, with no overflow conversion.
 - `capacities.json` adds `limits.rare_pockets.world_legendary_ticket: 1` and
   top-level `gyms: {per_guild: 10, name_max: 32}`. Gym counts and ticket pockets
@@ -313,3 +314,21 @@ Rebuild the production manifest with `python -m content.build` to record all
 balance hashes. Artifact payload and CSV inputs remain unchanged. Focused checks
 cover balance tables, content integrity, economy model, the raw-CSV rebuild check
 and diff whitespace. G-F2 retains independent review and full-suite qualification.
+
+## Owner amendment: Companion Mirror (2026-11-12)
+
+The owner added a Companion Mirror to the gym survivor roll (D60 amended, owner
+decision 2026-11-12). Its effect and storage are C3. Each changed table has
+`checked: "2026-11-12"` and a provenance note naming this amendment.
+
+- `survivor_table.json` becomes `version: 2` with nine rows: Ultra Ball weight
+  drops to `(5, 2000)` and Companion Mirror `(companion_mirror, 1, 500)` is added;
+  every other row and `stardust_flat: 500` are unchanged. Total weight stays 10,000.
+- `conversion_rates.json` becomes `version: 3` and adds `companion_mirror: 500`.
+  The Mirror is an ordinary stackable Bag item, not a rare pocket.
+- `catch.json` becomes `version: 2` and adds `mirror_encounters: 10` and
+  `mirror_probability: 0.2`.
+- Find, check-in and gym income tables are unchanged, so the Mirror comes only
+  from the survivor roll. The artifact payload is unchanged; the manifest's
+  balance hashes are re-recorded. Tests: tests/test_balance_tables.py and
+  tests/test_content_integrity.py.

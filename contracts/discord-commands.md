@@ -1280,3 +1280,22 @@ Candy is held. Pressing it applies one power-up step paid with one Rare Candy in
 of Candy and Stardust, through the same saved Pokemon revision, guards and receipt as
 Confirm, and returns the updated details. Refusals privately request reopening.
 Rendering stays free of I/O. Tests: tests/test_powerup.py.
+
+## Owner amendment: Companion Mirror Bag button (2026-11-12)
+The Bag shows a `Companion Mirror` button (`mirror_confirm`). It is disabled when
+none is held or while an encounter booster (Shiny Lure or Companion Mirror) is
+active; the Shiny Lure button is likewise disabled while a Mirror is active. An
+active Mirror adds "Companion Mirror: N encounters remaining". mirror_confirm warns
+before use: "For your next 10 generated encounters, each has a 20% chance to be a
+Pokémon from your companion's family line, on any route. ⚠ The mirror never
+attracts Legendary, Mythical or Rare Pokémon — those family members are skipped,
+and if none qualify the encounter is a normal one. Existing queued encounters are
+unchanged." When there is no companion, or the current companion's family has no
+eligible candidate (C3 mirror_pools), it adds "⚠ Your current companion's family
+has no Pokémon the mirror can attract." Activate (`mirror_activate`) and Back
+follow. Only mirror_activate consumes the item, through C3 activate_mirror.
+Skipped confirmation is refused without mutation; already_active and missing
+refuse without consuming. Existing owner/guild, exclusion, revision and expiry
+guards apply. The Bag stays within Discord's 5 buttons per row and 25 components.
+Rendering stays free of I/O; no slash command or ID grammar change. Tests:
+tests/test_companion_mirror.py, tests/test_capacity.py.

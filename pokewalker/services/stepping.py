@@ -9,7 +9,7 @@ from uuid import uuid4
 from content.balance import load_table
 from pokewalker.db import with_receipt
 from pokewalker.domain import encounters, steps
-from pokewalker.services.items import active_lure, apply_finds
+from pokewalker.services.items import active_lure, active_mirror, apply_finds
 from pokewalker.services.profiles import content_facts, get_profile, queue_size, restrictions
 from pokewalker.services.storage import detail, identify
 
@@ -66,9 +66,17 @@ async def spawn_encounter(conn, profile, content, rng, at, channel_id=None, mess
     """Queue one wild encounter on the profile's route; callers check the queue has room."""
     pid = profile["profile_id"]
     version, pools = content_facts(content)
+    chances, rules = load_table("tier_chances")["chances"], load_table("catch")["rules"]
     lure_id = await active_lure(conn, pid)
-    spec = encounters.generate(pools, content["routes"][profile["route_id"]], lure_id is not None, rng,
-        chances=load_table("tier_chances")["chances"], rules=load_table("catch")["rules"])
+    mirror_id = None if lure_id is not None else await active_mirror(conn, pid)
+    spec = None
+    if mirror_id is not None and encounters.mirror_hit(rng, rules=rules):
+        candidates = await companion_mirror_pools(conn, pid, content)
+        if candidates:
+            spec = encounters.generate_mirror(candidates, rng, chances=chances, rules=rules)
+    if spec is None:
+        spec = encounters.generate(pools, content["routes"][profile["route_id"]], lure_id is not None, rng,
+                                   chances=chances, rules=rules)
     eid = str(uuid4())
     await conn.execute(
         "INSERT INTO encounters(encounter_id,profile_id,source_channel_id,source_message_id,"
@@ -76,10 +84,20 @@ async def spawn_encounter(conn, profile, content, rng, at, channel_id=None, mess
         "content_version,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (eid, pid, channel_id, message_id, spec.pokemon_id, spec.level_x2, *spec.ivs,
          spec.gender or "genderless", spec.shiny, spec.tier, profile["route_id"], lure_id, version, at))
-    if lure_id is not None:
+    if lure_id is not None or mirror_id is not None:
         await conn.execute('UPDATE active_effects SET remaining_encounters=remaining_encounters-1 '
-                           'WHERE effect_id=?', (lure_id,))
+                           'WHERE effect_id=?', (lure_id or mirror_id,))
     return eid
+
+
+async def companion_mirror_pools(conn, profile_id, content):
+    """Mirror candidates for the profile's current companion; empty without one."""
+    async with conn.execute("SELECT companion_uid FROM profiles WHERE profile_id=?", (profile_id,)) as cursor:
+        row = await cursor.fetchone()
+    pokemon = await detail(conn, profile_id, row["companion_uid"]) if row and row["companion_uid"] else None
+    if pokemon is None:
+        return {}
+    return encounters.mirror_pools(content["identities"], identify(content, pokemon)[0]["family_id"])
 
 
 async def credit_message(conn, profile, words, created_at, message_id, channel_id, *,

@@ -90,12 +90,14 @@ class BalanceTableTests(unittest.TestCase):
         self.assertEqual({value for row in chart.values() for value in row.values()}, factors)
 
     def test_survivor_table_totals_10000_and_flat_500(self):
+        # Owner amendment 2026-11-12: Companion Mirror 500, Ultra Ball 2500 -> 2000.
         rows = self.rows("survivor_table")
         self.assertEqual(rows, {
-            "ultra_ball": (5, 2500), "golden_razz_berry": (3, 2000),
+            "ultra_ball": (5, 2000), "golden_razz_berry": (3, 2000),
             "silver_pinap_berry": (3, 1500), "rare_candy": (5, 1500),
             "star_piece": (2, 1000), "shiny_lure": (1, 800),
-            "master_ball": (1, 600), "world_legendary_ticket": (1, 100),
+            "master_ball": (1, 600), "companion_mirror": (1, 500),
+            "world_legendary_ticket": (1, 100),
         })
         self.assertEqual(sum(w for _, w in rows.values()), 10000)
         self.assertEqual(self.load("survivor_table")["stardust_flat"], 500)
@@ -233,8 +235,9 @@ class BalanceTableTests(unittest.TestCase):
             "poke_ball": 2, "great_ball": 5, "ultra_ball": 10, "razz_berry": 5,
             "pinap_berry": 5, "golden_razz_berry": 25, "silver_pinap_berry": 25,
             "rare_candy": 20, "master_ball": 500, "shiny_lure": 500,
-            "star_piece": 50, "evolution_item": 100,
+            "star_piece": 50, "evolution_item": 100, "companion_mirror": 500,
         })
+        self.assertNotIn("companion_mirror", self.load("capacities")["limits"]["rare_pockets"])
 
     def test_evolution_table_costs_and_item_price(self):
         table = self.load("evolution")
@@ -278,9 +281,13 @@ class BalanceTableTests(unittest.TestCase):
                 self.assertIsInstance(table, dict)
                 self.assertTrue(table["source"])
                 date.fromisoformat(table["checked"])
-                versions = {"find_table": 2, "conversion_rates": 2, "capacities": 3, "routes": 2}
+                versions = {"find_table": 2, "conversion_rates": 3, "capacities": 3, "routes": 2,
+                            "survivor_table": 2, "catch": 2}
                 self.assertEqual(table["version"], versions.get(name, 1))
-                if name in versions.keys() | {"evolution", "battle", "survivor_table"}:
+                mirror = {"survivor_table", "conversion_rates", "catch"}
+                if name in mirror:
+                    self.assertEqual(table["checked"], "2026-11-12")
+                elif name in versions.keys() | {"evolution", "battle"}:
                     self.assertEqual(table["checked"], "2026-11-05")
         root = Path(__file__).parents[1] / "content" / "balance"
         self.assertEqual({p.stem for p in root.glob("*.json")}, set(TABLES))
@@ -301,6 +308,7 @@ class BalanceTableTests(unittest.TestCase):
             "pinap_candy_multiplier": 2, "silver_pinap_candy": {"numerator": 7, "denominator": 3, "rounding": "floor"},
             "flee_probability": .1, "shiny_flee_probability": 0, "legendary_flee_probability": 0,
             "shiny_probability": 1 / 256, "lure_probability_multiplier": 4, "lure_encounters": 10,
+            "mirror_encounters": 10, "mirror_probability": .2,
             "wild_level_range": [1, 20], "wild_iv_range": [0, 15], "starter_level": 10, "starter_iv_range": [10, 15],
         })
         self.assertEqual(self.load("capacities")["limits"], {

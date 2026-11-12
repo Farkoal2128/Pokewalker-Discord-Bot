@@ -8,7 +8,7 @@ import discord
 
 from content.balance import load_table
 from pokewalker.bot.screens_catch import custom_id
-from pokewalker.services import capacity, items, raids
+from pokewalker.services import capacity, items, raids, stepping
 
 
 def name(item, content=None):
@@ -24,6 +24,16 @@ def quantities(item, held):
 
 def available(state):
     return [item for item in state['rates'] if state['inventory'].get(item, 0) > 0]
+
+
+def mirror_text(encounters=10, percent=20, eligible=True):
+    text = (f"For your next {encounters} generated encounters, each has a {percent}% chance to be a Pokémon "
+            "from your companion's family line, on any route. ⚠ The mirror never attracts Legendary, "
+            "Mythical or Rare Pokémon — those family members are skipped, and if none qualify the encounter "
+            "is a normal one. Existing queued encounters are unchanged.")
+    if not eligible:
+        text += "\n⚠ Your current companion's family has no Pokémon the mirror can attract."
+    return text
 
 
 def render(state):
@@ -42,11 +52,15 @@ def render(state):
     held = inventory.get('shiny_lure', 0)
     if active:
         text += f"\n{active['remaining_encounters']} encounters remaining"
+    mirror = state.get('mirror')
+    if mirror:
+        text += f"\nCompanion Mirror: {mirror['remaining_encounters']} encounters remaining"
     star_piece = state.get('star_piece')
     if star_piece:
         text += f"\nStar Piece: {star_piece['remaining_rewards']} boosted Stardust rewards left"
     label = 'Stored — available after the current effect ends' if active and held else 'Shiny Lure'
-    buttons = [('Convert', 'convert_pick', not held_items), (label, 'shiny_lure', bool(active) or not held),
+    booster = bool(active) or bool(mirror)
+    buttons = [('Convert', 'convert_pick', not held_items), (label, 'shiny_lure', booster or not held),
                ('Back', 'home', False)]
     if kinds:
         buttons.insert(1, ('Buy evolution item', 'buy_pick', False))
@@ -55,6 +69,9 @@ def render(state):
                            bool(star_piece) or inventory.get('star_piece', 0) < 1))
     if inventory.get('world_legendary_ticket', 0) > 0:
         buttons.insert(-1, ('Use World Legendary Ticket', 'wlt_confirm', False))
+    if 'mirror' in state:
+        buttons.insert(-1, ('Companion Mirror', 'mirror_confirm',
+                            booster or inventory.get('companion_mirror', 0) < 1))
     if state.get('can_expand'):
         buttons.insert(-1, ('Expand bag', 'expand_bag_preview', False))
     if mode in ('pick', 'qty', 'buy_pick'):
@@ -88,6 +105,10 @@ def render(state):
     elif mode == 'lure_confirm':
         text = '4× shiny odds for the next 10 generated encounters; existing queued encounters are unchanged.'
         buttons = [('Activate', 'lure_activate', False), ('Back', 'bag', False)]
+    elif mode == 'mirror_confirm':
+        text = mirror_text(state.get('mirror_encounters', 10), state.get('mirror_percent', 20),
+                           state.get('mirror_eligible', True))
+        buttons = [('Activate', 'mirror_activate', False), ('Back', 'bag', False)]
     elif mode == 'star_piece_confirm':
         text = '1.5× Stardust on your next 10 catch or find Stardust rewards'
         buttons = [('Activate', 'star_piece_activate', False), ('Back', 'bag', False)]
@@ -124,11 +145,15 @@ def handlers(walker):
         lure = await items.active_lure(conn, session['profile_id'])
         async with conn.execute('SELECT remaining_encounters FROM active_effects WHERE effect_id=?', (lure,)) as cursor:
             active = await cursor.fetchone()
+        mirror = await items.active_mirror(conn, session['profile_id'])
+        async with conn.execute('SELECT remaining_encounters FROM active_effects WHERE effect_id=?', (mirror,)) as cursor:
+            mirror_active = await cursor.fetchone()
         star_piece = await items.active_star_piece(conn, session['profile_id'])
         async with conn.execute('SELECT remaining_rewards FROM active_effects WHERE effect_id=?', (star_piece,)) as cursor:
             star_active = await cursor.fetchone()
         content = getattr(walker.bot, 'content', None)
         rates = dict(load_table('conversion_rates')['stardust_per_unit'])
+        rules = load_table('catch')['rules']
         for kind in (content or {}).get('evolution_items', []):
             rates[kind['id']] = items.rate_for(kind['id'], content)
         return {'session': session, 'selection': json.loads(session['selection']), 'mode': mode,
@@ -137,6 +162,9 @@ def handlers(walker):
                 'can_expand': True,
                 'lure': dict(active) if active is not None else None,
                 'star_piece': dict(star_active) if star_active is not None else None,
+                'mirror': dict(mirror_active) if mirror_active is not None else None,
+                'mirror_encounters': rules['mirror_encounters'],
+                'mirror_percent': round(rules['mirror_probability'] * 100),
                 'stardust': profile['stardust'], 'rates': rates, 'notice': notice,
                 'content': content or {}, 'buy_price': load_table('evolution')['item_price_stardust']}
 
@@ -252,7 +280,7 @@ def handlers(walker):
 
     async def lure_confirm(conn, session, interaction):
         current = await state(conn, session)
-        if current['lure'] or current['inventory'].get('shiny_lure', 0) < 1:
+        if current['lure'] or current['mirror'] or current['inventory'].get('shiny_lure', 0) < 1:
             raise _Refused('No Shiny Lure is available to activate.')
         session['selection'] = json.dumps({'phase': 'lure_confirm'})
         return render(await state(conn, session, 'lure_confirm'))
@@ -263,6 +291,25 @@ def handlers(walker):
         result = await items.activate_lure(conn, session, walker.clock())
         if 'status' in result:
             raise _Refused('A Shiny Lure is already active.' if result['status'] == 'already_active' else REOPEN)
+        session['selection'] = '{}'
+        return render(await state(conn, session))
+
+    async def mirror_confirm(conn, session, interaction):
+        current = await state(conn, session)
+        if current['lure'] or current['mirror'] or current['inventory'].get('companion_mirror', 0) < 1:
+            raise _Refused('No Companion Mirror is available to activate.')
+        content = getattr(walker.bot, 'content', None)
+        pools = await stepping.companion_mirror_pools(conn, session['profile_id'], content) if content else {}
+        session['selection'] = json.dumps({'phase': 'mirror_confirm'})
+        return render({**await state(conn, session, 'mirror_confirm'), 'mirror_eligible': bool(pools)})
+
+    async def mirror_activate(conn, session, interaction):
+        if json.loads(session['selection']).get('phase') != 'mirror_confirm':
+            raise _Refused('Preview the Companion Mirror before confirming.')
+        result = await items.activate_mirror(conn, session, walker.clock())
+        if 'status' in result:
+            raise _Refused({'already_active': 'A Shiny Lure or Companion Mirror is already active.',
+                            'missing': 'No Companion Mirror is available to activate.'}.get(result['status'], REOPEN))
         session['selection'] = '{}'
         return render(await state(conn, session))
 
@@ -330,6 +377,7 @@ def handlers(walker):
             'buy_next': partial(pick, buy=True, delta=10), 'buy_preview': buy_preview, 'buy_confirm': buy_confirm,
             'convert_qty': qty, 'convert_preview': preview,
             'shiny_lure': lure_confirm, 'lure_activate': lure_activate,
+            'mirror_confirm': mirror_confirm, 'mirror_activate': mirror_activate,
             'wlt_confirm': wlt_confirm, 'wlt_use': wlt_use,
             'star_piece_confirm': star_piece_confirm, 'star_piece_activate': star_piece_activate,
             'convert_confirm': confirm, 'convert_confirm_rare': confirm_rare}

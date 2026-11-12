@@ -1,7 +1,7 @@
 {
-  "source": "docs/features/pokewalker-bot/README.md D61; docs/features/pokewalker-v1.1-v2/PLAN.md Q2 (v1.1 item scope)",
-  "checked": "2026-11-05",
-  "version": 2,
+  "source": "docs/features/pokewalker-bot/README.md D61; docs/features/pokewalker-v1.1-v2/PLAN.md Q2 (v1.1 item scope); owner amendment Companion Mirror (owner decision 2026-11-12)",
+  "checked": "2026-11-12",
+  "version": 3,
   "stardust_per_unit": {
     "poke_ball": 2,
     "great_ball": 5,
@@ -14,6 +14,7 @@
     "master_ball": 500,
     "shiny_lure": 500,
     "star_piece": 50,
-    "evolution_item": 100
+    "evolution_item": 100,
+    "companion_mirror": 500
   }
 }

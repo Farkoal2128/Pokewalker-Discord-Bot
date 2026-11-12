@@ -217,42 +217,60 @@ async def buy_evolution_item(conn, session, kind, now, content):
     return await with_receipt(conn, key, 'buy', compute, profile_id=pid)
 
 
-async def active_lure(conn, profile_id):
-    async with conn.execute("SELECT effect_id FROM active_effects WHERE profile_id=? AND kind='shiny_lure' "
-                            'AND remaining_encounters>0', (profile_id,)) as cursor:
+async def _active_encounter_effect(conn, profile_id, kind):
+    async with conn.execute('SELECT effect_id FROM active_effects WHERE profile_id=? AND kind=? '
+                            'AND remaining_encounters>0', (profile_id, kind)) as cursor:
         row = await cursor.fetchone()
     return row['effect_id'] if row is not None else None
 
 
-async def activate_lure(conn, session, now):
+async def active_lure(conn, profile_id):
+    return await _active_encounter_effect(conn, profile_id, 'shiny_lure')
+
+
+async def active_mirror(conn, profile_id):
+    return await _active_encounter_effect(conn, profile_id, 'companion_mirror')
+
+
+async def _activate_encounter_effect(conn, session, now, *, kind, action, label, encounters_rule):
+    """One encounter booster (Shiny Lure or Companion Mirror) at a time, per profile."""
     if not conn.in_transaction:
-        raise RuntimeError('Lure activation requires an active writer transaction')
+        raise RuntimeError(f'{label} activation requires an active writer transaction')
     _, refusal = await session_owner(conn, session)
     if refusal is not None:
         return refusal
-    pid, key = session['profile_id'], f"lure:{session['session_id']}:{session['revision']}"
+    pid, key = session['profile_id'], f"{action}:{session['session_id']}:{session['revision']}"
 
     async def compute(conn):
         async with conn.execute('SELECT 1 FROM active_effects WHERE profile_id=? AND remaining_encounters>0',
                                 (pid,)) as cursor:
             if await cursor.fetchone() is not None:
                 return {'status': 'already_active'}, []
-        async with conn.execute("SELECT quantity FROM inventory WHERE profile_id=? AND item_id='shiny_lure'",
-                                (pid,)) as cursor:
+        async with conn.execute('SELECT quantity FROM inventory WHERE profile_id=? AND item_id=?',
+                                (pid, kind)) as cursor:
             held = await cursor.fetchone()
         if held is None or held['quantity'] < 1:
             return {'status': 'missing'}, []
-        effect = {'effect_id': str(uuid4()), 'profile_id': pid, 'kind': 'shiny_lure',
+        effect = {'effect_id': str(uuid4()), 'profile_id': pid, 'kind': kind,
                   'starts_at': now, 'expires_at': None, 'receipt_key': key,
-                  'remaining_encounters': load_table('catch')['rules']['lure_encounters'], 'remaining_rewards': 0}
-        await conn.execute("UPDATE inventory SET quantity=quantity-1 WHERE profile_id=? AND item_id='shiny_lure'",
-                           (pid,))
+                  'remaining_encounters': load_table('catch')['rules'][encounters_rule], 'remaining_rewards': 0}
+        await conn.execute('UPDATE inventory SET quantity=quantity-1 WHERE profile_id=? AND item_id=?', (pid, kind))
         await conn.execute('INSERT INTO active_effects(effect_id,profile_id,kind,starts_at,expires_at,receipt_key,'
                            'remaining_encounters,remaining_rewards) VALUES (?,?,?,?,?,?,?,?)', tuple(effect.values()))
-        return effect, [{'profile_id': pid, 'resource': 'item', 'resource_id': 'shiny_lure',
-                         'delta': -1, 'reason': 'lure_activate'}]
+        return effect, [{'profile_id': pid, 'resource': 'item', 'resource_id': kind,
+                         'delta': -1, 'reason': f'{action}_activate'}]
 
-    return await with_receipt(conn, key, 'lure', compute, profile_id=pid)
+    return await with_receipt(conn, key, action, compute, profile_id=pid)
+
+
+async def activate_lure(conn, session, now):
+    return await _activate_encounter_effect(conn, session, now, kind='shiny_lure', action='lure',
+                                            label='Lure', encounters_rule='lure_encounters')
+
+
+async def activate_mirror(conn, session, now):
+    return await _activate_encounter_effect(conn, session, now, kind='companion_mirror', action='mirror',
+                                            label='Companion Mirror', encounters_rule='mirror_encounters')
 
 
 async def active_star_piece(conn, profile_id):

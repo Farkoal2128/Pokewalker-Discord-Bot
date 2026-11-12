@@ -96,7 +96,8 @@ class TradingSchemaTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual((await upgraded.execute_fetchall(
                         f'SELECT count(*) FROM {table}'))[0][0], 0)
                 self.assertEqual((await upgraded.execute_fetchall('PRAGMA foreign_key_check')), [])
-                self.assertEqual((await upgraded.execute_fetchall('PRAGMA user_version'))[0][0], 18)
+                self.assertEqual((await upgraded.execute_fetchall('PRAGMA user_version'))[0][0],
+                                 len(list(db.MIGRATIONS.glob('[0-9][0-9][0-9][0-9]_*.sql'))))
             finally:
                 await upgraded.close()
 

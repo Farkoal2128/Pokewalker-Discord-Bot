@@ -1,12 +1,12 @@
 {
-  "source": "docs/features/pokewalker-bot/README.md D60; docs/features/pokewalker-v1.1-v2/PLAN.md Q9 (owner decision 2026-11-05)",
-  "checked": "2026-11-05",
-  "version": 1,
+  "source": "docs/features/pokewalker-bot/README.md D60; docs/features/pokewalker-v1.1-v2/PLAN.md Q9 (owner decision 2026-11-05); owner amendment Companion Mirror (owner decision 2026-11-12)",
+  "checked": "2026-11-12",
+  "version": 2,
   "rows": [
     {
       "item": "ultra_ball",
       "quantity": 5,
-      "weight": 2500
+      "weight": 2000
     },
     {
       "item": "golden_razz_berry",
@@ -37,6 +37,11 @@
       "item": "master_ball",
       "quantity": 1,
       "weight": 600
+    },
+    {
+      "item": "companion_mirror",
+      "quantity": 1,
+      "weight": 500
     },
     {
       "item": "world_legendary_ticket",

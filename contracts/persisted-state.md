@@ -1179,3 +1179,46 @@ inventory unit, leaves family Candy and Stardust unchanged and writes one
 `item`/`rare_candy` ledger line of -1 with reason powerup. It shares the
 `powerup:<uid>:<expected_revision>` receipt, so one Pokemon revision can be powered
 up once by either method. No schema change. Tests: tests/test_powerup.py.
+
+## Owner amendment: Companion Mirror (2026-11-12)
+The owner added a Companion Mirror to the gym survivor roll (C4). `companion_mirror`
+is an ordinary stackable Bag item, not a rare pocket, and converts at 500 Stardust.
+Migration 0019 rebuilds active_effects, preserving every column, row and effect ID
+and recreating the active_effects_profile_remaining, active_effects_one_active and
+active_effects_one_star_piece indexes. kind also admits `companion_mirror`, which,
+like shiny_lure, requires remaining_rewards=0; remaining_encounters stays 0..10.
+Lures and Mirrors are both encounter effects under active_effects_one_active, so a
+profile has at most one positive remaining_encounters counter. Older binaries
+refuse schema 19; rollback requires a compatible backup.
+
+`services.items.active_mirror(conn, profile_id)` returns the effect ID or None,
+filtering kind=companion_mirror and remaining_encounters>0.
+`activate_mirror(conn, session, now)` follows activate_lure: it requires a writer
+transaction and rechecks durable ownership (stale) and exclusion (excluded) before
+receipt replay. Inside the owner-bearing `mirror:<session_id>:<revision>` receipt
+(action mirror), any effect with remaining_encounters>0 (Lure or Mirror) returns
+already_active; otherwise an empty pocket returns missing. Neither refusal consumes
+an item. Success returns the effect dict (kind companion_mirror, NULL expires_at,
+remaining_encounters = catch rules `mirror_encounters` (10), remaining_rewards 0),
+atomically consumes one companion_mirror and records one item delta -1 with reason
+mirror_activate. Replays return the saved result. activate_lure is unchanged and so
+returns already_active while a Mirror is active.
+
+`stepping.spawn_encounter` (message steps and /checkin) decrements an active
+Mirror's remaining_encounters once for every generated encounter, in the generating
+transaction, so the effect ends after ten encounters; a full queue generates none
+and spends nothing. For each generated encounter `encounters.mirror_hit` draws
+`rng.random() < mirror_probability` (0.2). On a hit the profile's companion_uid is
+read at generation time; its family (via storage.identify) selects
+`encounters.mirror_pools(content identities, family_id)`: identities of that family
+whose tier is Common, Uncommon or Evolved and that are neither Legendary nor
+Mythical, so the Legendary/Mythical and Rare (for example Ultra Beast) tiers never
+qualify. Non-empty pools go to `encounters.generate_mirror`, which picks the tier
+with roll_tier over the candidate tiers with the Legendary draw set to zero, then
+an identity uniformly within that tier. Route weights are ignored. Gender, shiny
+(ordinary odds), level and IVs roll as for any encounter. A miss, no companion or
+empty pools generate the ordinary route encounter. The encounter keeps the
+profile's route_id and a NULL lure_id; queued encounters never change. Producers:
+migration, item service and stepping; consumers: Bag, receipt readers and
+encounter generation. Tests: tests/test_companion_mirror.py, tests/test_lure.py,
+tests/test_star_piece.py.

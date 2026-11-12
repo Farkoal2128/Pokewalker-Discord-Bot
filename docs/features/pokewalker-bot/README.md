@@ -321,13 +321,14 @@ based on [pokeapi-forms.md](../../research/data-visuals/pokeapi-forms.md).
 
   | Outcome | Weight | Chance |
   |---|---:|---:|
-  | 5 Ultra Balls | 2,500 | 25% |
+  | 5 Ultra Balls (weight reduced by owner decision 2026-11-12) | 2,000 | 20% |
   | 3 Golden Razz Berries | 2,000 | 20% |
   | 3 Silver Pinap Berries | 1,500 | 15% |
   | 5 Rare Candy | 1,500 | 15% |
   | 2 Star Pieces | 1,000 | 10% |
   | Shiny Lure | 800 | 8% |
   | Master Ball | 600 | 6% |
+  | Companion Mirror (owner decision 2026-11-12) | 500 | 5% |
   | **World Legendary Ticket** | 100 | 1% |
 
   Rewards land in the D59 reward inbox, so a full bag or rare pocket never converts or loses
