@@ -600,3 +600,58 @@ class DeletionTests(unittest.IsolatedAsyncioTestCase):
         os.link(self.db_path, alias)
         with self.assertRaisesRegex(ValueError, "marker log"):
             Settings(Secret("synthetic"), self.db_path, owner_ids=frozenset({3}), marker_log_path=alias)
+
+    async def trade_pair(self):
+        """A joined trade between members 2 and 3, each offering a Pokemon caught from its own encounter."""
+        trading = importlib.import_module("pokewalker.services.trading")
+        partner = await self.profile("1", "3")
+        await self.profile("1", "4")
+        sessions = {}
+        for user, profile in (("2", self.profile_id), ("3", partner)):
+            await self.conn.execute("INSERT INTO sessions(session_id,guild_id,user_id,profile_id,expires_at) "
+                                    "VALUES (?,'1',?,?,1e12)", ("s" + user, user, profile))
+            sessions[user] = {"session_id": "s" + user, "guild_id": "1", "user_id": user, "profile_id": profile}
+            await self.conn.execute(
+                "INSERT INTO encounters(encounter_id,profile_id,pokemon_id,level_x2,iv_attack,iv_defense,"
+                "iv_stamina,gender,shiny,tier,route_id,state,content_version,created_at) "
+                "VALUES (?,?,1,20,10,10,10,'male',0,'common','refreshing_field','caught','fixture',0)",
+                ("e" + user, profile))
+            await self.conn.execute(
+                "INSERT INTO pokemon(pokemon_uid,profile_id,pokemon_id,level_x2,iv_attack,iv_defense,"
+                "iv_stamina,gender,shiny,origin,content_version,caught_at,source_encounter_id) "
+                "VALUES (?,?,1,20,10,10,10,'male',0,'catch','fixture',0,?)", ("mon" + user, profile, "e" + user))
+        trade_id = (await self.writer.run(
+            lambda conn: trading.open_or_join(conn, sessions["2"], "3", 10, False)))["trade_id"]
+        await self.writer.run(lambda conn: trading.open_or_join(conn, sessions["3"], "2", 20, False))
+        for user in ("2", "3"):
+            await self.writer.run(lambda conn, user=user: trading.offer(conn, sessions[user], trade_id,
+                                                                        "mon" + user, 30))
+        return trading, sessions, partner, trade_id
+
+    async def test_delete_data_mid_trade_removes_trade_and_frees_partner(self):
+        trading, sessions, partner, trade_id = await self.trade_pair()
+        await self.run_marker("delete")
+        for table in ("trades", "trade_sides"):
+            self.assertEqual(await self.scalar(f"SELECT count(*) FROM {table}"), 0)
+        self.assertEqual(await self.scalar("SELECT profile_id||revision FROM pokemon"), partner + "0")
+        content = json.loads(Path('content/artifact/content.json').read_text(encoding='utf-8'))
+        self.assertEqual(await self.writer.run(
+            lambda conn: trading.confirm(conn, sessions["3"], trade_id, 2, 40, content)), {"status": "stale"})
+        self.assertIsNone(await self.writer.run(lambda conn: trading.current(conn, sessions["3"], 40)))
+        self.assertEqual((await self.writer.run(
+            lambda conn: trading.open_or_join(conn, sessions["3"], "4", 40, False)))["status"], "opened")
+
+    async def test_cap_survives_partner_deletion_given_pokemon_stays(self):
+        trading, sessions, partner, trade_id = await self.trade_pair()
+        content = json.loads(Path('content/artifact/content.json').read_text(encoding='utf-8'))
+        results = [await self.writer.run(lambda conn, user=user: trading.confirm(
+            conn, sessions[user], trade_id, 2, 40, content)) for user in ("2", "3")]
+        self.assertEqual([result["status"] for result in results], ["waiting", "completed"])
+        await self.run_marker("delete")
+        self.assertEqual([tuple(row) for row in await self.conn.execute_fetchall(
+            "SELECT pokemon_uid,profile_id,source_encounter_id FROM pokemon")], [("mon2", partner, None)])
+        self.assertEqual(await self.scalar("SELECT count(*) FROM trades"), 0)
+        self.assertEqual(await self.scalar("SELECT last_trade_at FROM profiles WHERE profile_id=?", (partner,)), 40)
+        self.assertEqual(await self.writer.run(lambda conn: trading.open_or_join(conn, sessions["3"], "4", 50, False)),
+                         {"status": "capped", "seconds_left": 86390})
+        self.assertEqual(await self.conn.execute_fetchall("PRAGMA foreign_key_check"), [])

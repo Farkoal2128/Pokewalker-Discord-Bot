@@ -1,12 +1,18 @@
-"""C3 trading service: eligibility, open/join/reopen, cap, ping window, offer, cancel."""
+"""C3 trading service: eligibility, open/join/reopen, cap, ping window, offer, cancel, confirm and swap."""
 
+import asyncio
 import importlib
 import json
 from pathlib import Path
+import sqlite3
 import unittest
+from unittest.mock import patch
 
 from pokewalker import db
 import test_db
+
+CONTENT = json.loads(Path('content/artifact/content.json').read_text(encoding='utf-8'))
+_NEUTRAL = {'is_legendary': False, 'is_mythical': False}
 
 
 class TradingTests(unittest.IsolatedAsyncioTestCase):
@@ -317,6 +323,313 @@ class TradingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.cancel('u', trade_id, now=1300), {'status': 'ended'})
         self.assertEqual(await self.offer('u', trade_id, now=1300), {'status': 'ended'})
         self.assertIsNone(await self.current('u', 1300))
+
+    # T4: confirm and the atomic swap.
+
+    async def confirm(self, user, trade_id, seen, now=1200):
+        return await self.writer.run(lambda conn: self.svc().confirm(
+            conn, self.session(user), trade_id, seen, now, CONTENT))
+
+    async def ready(self, a='u', b='v', mine='mon', theirs='theirs'):
+        """A joined trade where a offers mine and b offers theirs, at trade revision 2."""
+        if mine != 'mon':
+            await self.pokemon(mine, user=a)
+        await self.pokemon(theirs, user=b)
+        trade_id = (await self.open(a, b))['trade_id']
+        self.assertEqual((await self.open(b, a, now=1050))['status'], 'joined')
+        self.assertEqual((await self.offer(a, trade_id, mine))['status'], 'offered')
+        self.assertEqual((await self.offer(b, trade_id, theirs))['revision'], 2)
+        return trade_id
+
+    async def owners(self):
+        return {row['pokemon_uid']: (row['profile_id'], row['revision'])
+                for row in await self.rows('SELECT * FROM pokemon')}
+
+    async def last_trade(self):
+        return {row['user_id']: row['last_trade_at'] for row in await self.rows('SELECT * FROM profiles')}
+
+    async def test_both_confirm_swaps_and_caps_both_for_24h(self):
+        trade_id = await self.ready()
+        self.assertEqual(await self.confirm('u', trade_id, 2), {'status': 'waiting', 'trade_id': trade_id})
+        self.assertEqual(await self.confirm('v', trade_id, 2, now=1300), {'status': 'completed', 'trade_id': trade_id})
+        self.assertEqual(await self.owners(), {'mon': (self.ids['v'], 1), 'theirs': (self.ids['u'], 1)})
+        trade = await self.trade(trade_id)
+        self.assertEqual((trade['state'], trade['ended_at'], trade['revision']), ('completed', 1300, 3))
+        self.assertEqual([side['open'] for side in await self.sides(trade_id)], [0, 0])
+        self.assertEqual(await self.last_trade(), {'u': 1300, 'v': 1300, 'w': None, 'y': None, 'x': None})
+        self.assertEqual(await self.open('u', 'w', now=1300 + 86399), {'status': 'capped', 'seconds_left': 1})
+        self.assertEqual(await self.open('w', 'v', now=1300 + 86399), {'status': 'partner_capped'})
+        self.assertEqual((await self.open('u', 'w', now=1300 + 86400))['status'], 'opened')
+
+    async def test_first_confirm_waits_without_swap(self):
+        trade_id = await self.ready()
+        pokemon = await self.owners()
+        for _ in range(2):
+            self.assertEqual(await self.confirm('u', trade_id, 2), {'status': 'waiting', 'trade_id': trade_id})
+        self.assertEqual([side['confirmed_revision'] for side in await self.sides(trade_id)], [2, None])
+        self.assertEqual(await self.owners(), pokemon)
+        self.assertEqual(((await self.trade(trade_id))['state'], (await self.trade(trade_id))['revision']), ('open', 2))
+        self.assertEqual(set((await self.last_trade()).values()), {None})
+
+    async def test_confirm_extends_trade_expiry(self):
+        trade_id = await self.ready()
+        self.assertEqual((await self.trade(trade_id))['expires_at'], 2000)
+        await self.confirm('u', trade_id, 2, now=1500)
+        self.assertEqual((await self.trade(trade_id))['expires_at'], 2400)
+        await self.confirm('u', trade_id, 2, now=1400)
+        self.assertEqual((await self.trade(trade_id))['expires_at'], 2400, 'activity never shortens expiry')
+        self.assertEqual(await self.confirm('v', trade_id, 1, now=1600), {'status': 'changed'})
+        self.assertEqual((await self.trade(trade_id))['expires_at'], 2400, 'a refused confirm is not activity')
+        self.assertEqual(await self.confirm('v', trade_id, 2, now=2400), {'status': 'expired'})
+        self.assertEqual((await self.trade(trade_id))['state'], 'expired')
+
+    async def test_concurrent_confirms_same_trade_swap_once(self):
+        trade_id = await self.ready()
+        results = await asyncio.gather(*(self.confirm(user, trade_id, 2) for user in ('u', 'v', 'u', 'v')))
+        self.assertEqual(sorted(result['status'] for result in results), ['completed'] * 3 + ['waiting'])
+        self.assertEqual({result['trade_id'] for result in results}, {trade_id})
+        self.assertEqual(await self.owners(), {'mon': (self.ids['v'], 1), 'theirs': (self.ids['u'], 1)})
+        self.assertEqual((await self.trade(trade_id))['revision'], 3)
+
+    async def test_concurrent_confirms_on_two_trades_complete_each_once(self):
+        first = await self.ready()
+        second = await self.ready('w', 'y', 'wmon', 'ymon')
+        calls = [(user, trade_id) for _ in range(2) for user, trade_id in
+                 (('u', first), ('w', second), ('v', first), ('y', second))]
+        results = await asyncio.gather(*(self.confirm(user, trade_id, 2) for user, trade_id in calls))
+        for trade_id in (first, second):
+            mine = [result['status'] for result in results if result['trade_id'] == trade_id]
+            self.assertEqual(sorted(mine), ['completed'] * 3 + ['waiting'])
+            self.assertEqual((await self.trade(trade_id))['state'], 'completed')
+        self.assertEqual(await self.owners(), {'mon': (self.ids['v'], 1), 'theirs': (self.ids['u'], 1),
+                                               'wmon': (self.ids['y'], 1), 'ymon': (self.ids['w'], 1)})
+        self.assertEqual(await self.last_trade(), {'u': 1200, 'v': 1200, 'w': 1200, 'y': 1200, 'x': None})
+
+    async def test_repeat_confirm_after_completion_returns_completed(self):
+        trade_id = await self.ready()
+        await self.confirm('u', trade_id, 2)
+        await self.confirm('v', trade_id, 2)
+        before = await self.state()
+        for user, seen in (('u', 2), ('v', 2), ('u', 3), ('v', 0)):
+            with self.subTest(user=user, seen=seen):
+                self.assertEqual(await self.confirm(user, trade_id, seen, now=1300),
+                                 {'status': 'completed', 'trade_id': trade_id})
+        self.assertEqual(await self.confirm('w', trade_id, 2), {'status': 'stale'})
+        self.assertEqual(await self.offer('u', trade_id, 'theirs'), {'status': 'ended'})
+        self.assertEqual(await self.cancel('v', trade_id), {'status': 'ended'})
+        self.assertEqual(await self.state(), before)
+
+    async def test_offer_change_requires_both_confirms_again(self):
+        trade_id = await self.ready()
+        await self.pokemon('other', user='v')
+        self.assertEqual((await self.confirm('u', trade_id, 2))['status'], 'waiting')
+        self.assertEqual((await self.offer('v', trade_id, 'other'))['revision'], 3)
+        self.assertEqual([side['confirmed_revision'] for side in await self.sides(trade_id)], [None, None])
+        self.assertEqual((await self.confirm('v', trade_id, 3))['status'], 'waiting')
+        self.assertEqual(await self.confirm('u', trade_id, 2), {'status': 'changed'})
+        self.assertEqual((await self.owners())['mon'], (self.ids['u'], 0))
+        self.assertEqual(await self.confirm('u', trade_id, 3), {'status': 'completed', 'trade_id': trade_id})
+        owners = await self.owners()
+        self.assertEqual((owners['mon'], owners['other'], owners['theirs']),
+                         ((self.ids['v'], 1), (self.ids['u'], 1), (self.ids['v'], 0)))
+
+    async def test_confirm_with_stale_seen_revision_refused(self):
+        trade_id = await self.ready()
+        await self.confirm('v', trade_id, 2)
+        before = await self.state()
+        for user, seen in (('u', 1), ('u', 3), ('v', 0)):
+            with self.subTest(user=user, seen=seen):
+                self.assertEqual(await self.confirm(user, trade_id, seen), {'status': 'changed'})
+        self.assertEqual(await self.state(), before)
+
+    async def test_confirm_refuses_stale_caller_and_incomplete_trade(self):
+        trade_id = (await self.open('u', 'v'))['trade_id']
+        before = await self.state()
+        for user in ('v', 'w', 'x'):
+            with self.subTest(user=user):
+                self.assertEqual(await self.confirm(user, trade_id, 0), {'status': 'stale'})
+        self.assertEqual(await self.confirm('u', 'missing', 0), {'status': 'stale'})
+        self.assertEqual(await self.confirm('u', trade_id, 0), {'status': 'incomplete'})
+        self.assertEqual(await self.state(), before)
+        await self.open('v', 'u', now=1050)
+        self.assertEqual((await self.offer('u', trade_id))['revision'], 1)
+        joined = await self.state()
+        self.assertEqual(await self.confirm('v', trade_id, 1), {'status': 'incomplete'})
+        self.assertEqual(await self.state(), joined)
+
+    async def invalid(self, trade_id, side, reason):
+        """The second confirm finds one offer invalid: that offer and both confirmations clear, nothing moves."""
+        self.assertEqual((await self.confirm('u', trade_id, 2))['status'], 'waiting')
+        sides = await self.sides(trade_id)
+        owners = {uid: owner for uid, (owner, _) in (await self.owners()).items()}
+        self.assertEqual(await self.confirm('v', trade_id, 2, now=1300),
+                         {'status': 'offer_invalid', 'side': side, 'reason': reason})
+        after = await self.sides(trade_id)
+        self.assertEqual([(s['pokemon_uid'], s['pokemon_revision']) for s in after],
+                         [(None, None) if s['side'] == side else (s['pokemon_uid'], s['pokemon_revision'])
+                          for s in sides])
+        self.assertEqual([s['confirmed_revision'] for s in after], [None, None])
+        trade = await self.trade(trade_id)
+        self.assertEqual((trade['state'], trade['revision'], trade['expires_at']), ('open', 3, 2200))
+        self.assertEqual({uid: owner for uid, (owner, _) in (await self.owners()).items()}, owners)
+        self.assertEqual(set((await self.last_trade()).values()), {None})
+
+    async def test_execute_refuses_pokemon_favorited_after_offer(self):
+        trade_id = await self.ready()
+        storage = importlib.import_module('pokewalker.services.storage')
+        self.assertIsNotNone(await self.writer.run(
+            lambda conn: storage.set_favorite(conn, self.ids['u'], 'mon', 1, 0)))
+        await self.invalid(trade_id, 0, 'favorite')
+
+    async def test_execute_refuses_pokemon_deployed_after_offer(self):
+        trade_id = await self.ready()
+        await self.conn.execute("INSERT INTO gyms(gym_id,guild_id,name,created_at) VALUES ('gym','g','Park',0)")
+        await self.conn.execute(
+            'INSERT INTO gym_deployments(deployment_id,guild_id,gym_id,profile_id,pokemon_uid,'
+            "deployed_at,ends_at) VALUES ('d','g','gym',?,'theirs',0,100)", (self.ids['v'],))
+        # gyms.py deploys with revision+1, like every Pokemon writer.
+        await self.conn.execute("UPDATE pokemon SET gym_deployment_id='d',revision=revision+1 "
+                                "WHERE pokemon_uid='theirs'")
+        await self.invalid(trade_id, 1, 'deployed')
+
+    async def test_execute_refuses_pokemon_made_companion_after_offer(self):
+        trade_id = await self.ready()
+        # Set companion (bot/storage.py) bumps no revision, so only the explicit check catches it.
+        await self.conn.execute("UPDATE profiles SET companion_uid='mon' WHERE user_id='u'")
+        await self.invalid(trade_id, 0, 'companion')
+
+    async def test_execute_refuses_evolved_powered_or_sent_after_offer(self):
+        # The same writes as evolution.py, powerup.py and research.py: each bumps the revision.
+        for case, change, reason in (
+                ('evolved', 'pokemon_id=2', 'changed'), ('powered', 'level_x2=level_x2+1', 'changed'),
+                ('sent', "state='sent'", 'not_owned')):
+            with self.subTest(case=case):
+                await self.conn.execute('DELETE FROM trades')
+                trade_id = await self.ready(mine='u_' + case, theirs='v_' + case)
+                await self.conn.execute(f'UPDATE pokemon SET {change},revision=revision+1 WHERE pokemon_uid=?',
+                                        ('v_' + case,))
+                await self.invalid(trade_id, 1, reason)
+
+    async def test_execute_refuses_excluded_partner(self):
+        trade_id = await self.ready()
+        self.assertEqual((await self.confirm('u', trade_id, 2))['status'], 'waiting')
+        await self.conn.execute("INSERT INTO restrictions(guild_id,user_id,excluded) VALUES ('g','v',1)")
+        pokemon = await self.owners()
+        self.assertEqual(await self.confirm('u', trade_id, 2), {'status': 'partner_unavailable'})
+        self.assertEqual([side['confirmed_revision'] for side in await self.sides(trade_id)], [None, None])
+        self.assertEqual(await self.confirm('v', trade_id, 2), {'status': 'excluded'})
+        self.assertEqual(await self.owners(), pokemon)
+        self.assertEqual((await self.trade(trade_id))['state'], 'open')
+
+    async def test_step4_refuses_side_that_became_capped(self):
+        trade_id = await self.ready()
+        self.assertEqual((await self.confirm('v', trade_id, 2))['status'], 'waiting')
+        await self.conn.execute("UPDATE profiles SET last_trade_at=1100 WHERE user_id='u'")
+        before = await self.state()
+        self.assertEqual(await self.confirm('u', trade_id, 2), {'status': 'capped', 'seconds_left': 86300})
+        self.assertEqual(await self.confirm('v', trade_id, 2), {'status': 'partner_capped'})
+        self.assertEqual(await self.state(), before)
+
+    async def test_cap_boundary_allows_trade_at_exactly_86400_seconds(self):
+        trade_id = await self.ready()
+        await self.conn.execute("UPDATE profiles SET last_trade_at=? WHERE user_id='u'", (1200 - 86400,))
+        await self.conn.execute("UPDATE profiles SET last_trade_at=? WHERE user_id='v'", (1200 - 86399,))
+        self.assertEqual(await self.confirm('u', trade_id, 2), {'status': 'partner_capped'})
+        self.assertEqual(await self.confirm('v', trade_id, 2), {'status': 'capped', 'seconds_left': 1})
+        await self.conn.execute("UPDATE profiles SET last_trade_at=? WHERE user_id='v'", (1200 - 86400,))
+        self.assertEqual((await self.confirm('u', trade_id, 2))['status'], 'waiting')
+        self.assertEqual(await self.confirm('v', trade_id, 2), {'status': 'completed', 'trade_id': trade_id})
+        self.assertEqual((await self.last_trade())['u'], 1200)
+        self.assertEqual((await self.last_trade())['v'], 1200)
+
+    async def test_backstops_roll_back_whole_job(self):
+        svc = self.svc()
+        cases = (
+            # Step 7.1: the guarded last_trade_at UPDATE hits one row, not two.
+            ('cap_left', "UPDATE profiles SET last_trade_at=1150 WHERE user_id='v'", RuntimeError),
+            # Step 7.2: the owner UPDATE restating eligibility hits no row.
+            ('tradable_reason', "UPDATE pokemon SET favorite=1 WHERE pokemon_uid='theirs'", RuntimeError),
+            # The pokemon_trade_guard trigger: a companion passes the UPDATE's own filter.
+            ('tradable_reason', "UPDATE profiles SET companion_uid='theirs' WHERE user_id='v'",
+             sqlite3.IntegrityError))
+        for check, sql, error in cases:
+            with self.subTest(check=check, sql=sql):
+                await self.conn.execute('DELETE FROM trades')
+                await self.conn.execute('UPDATE profiles SET last_trade_at=NULL,companion_uid=NULL')
+                await self.conn.execute('DELETE FROM pokemon')
+                await self.pokemon('mon')
+                trade_id = await self.ready()
+                self.assertEqual((await self.confirm('u', trade_id, 2))['status'], 'waiting')
+                await self.conn.execute(sql)
+                before = await self.state()
+                with patch.object(svc, check, return_value=None if check == 'tradable_reason' else 0), \
+                        self.assertRaises(error):
+                    await self.confirm('v', trade_id, 2, now=1300)
+                self.assertEqual(await self.state(), before)
+                self.assertNotEqual((await self.confirm('v', trade_id, 2, now=1300))['status'], 'completed')
+
+    async def test_swap_acknowledges_unacknowledged_source_encounters(self):
+        for encounter, user, acknowledged in (('e_mon', 'u', None), ('e_theirs', 'v', 50), ('e_other', 'u', None)):
+            await self.conn.execute(
+                'INSERT INTO encounters(encounter_id,profile_id,pokemon_id,level_x2,iv_attack,iv_defense,'
+                "iv_stamina,gender,shiny,tier,route_id,state,content_version,created_at,acknowledged_at) "
+                "VALUES (?,?,1,20,10,10,10,'male',0,'common','refreshing_field','caught','test',0,?)",
+                (encounter, self.ids[user], acknowledged))
+        await self.conn.execute("UPDATE pokemon SET source_encounter_id='e_mon' WHERE pokemon_uid='mon'")
+        await self.pokemon('theirs', user='v', source_encounter_id='e_theirs')
+        trade_id = await self.ready(theirs='plain')
+        await self.offer('v', trade_id, 'theirs')
+        await self.confirm('u', trade_id, 3)
+        self.assertEqual((await self.confirm('v', trade_id, 3, now=1300))['status'], 'completed')
+        encounters = await self.rows('SELECT * FROM encounters')
+        self.assertEqual({row['encounter_id']: row['acknowledged_at'] for row in encounters},
+                         {'e_mon': 1300, 'e_theirs': 50, 'e_other': None})
+
+    async def test_trade_moves_no_candy_stardust_or_items(self):
+        for user in ('u', 'v'):
+            await self.conn.execute('UPDATE profiles SET stardust=? WHERE profile_id=?',
+                                    (500 if user == 'u' else 900, self.ids[user]))
+            await self.conn.execute('INSERT INTO candy VALUES (?,1,?)', (self.ids[user], 3 if user == 'u' else 5))
+            await self.conn.execute("INSERT INTO inventory VALUES (?,'poke_ball',?)", (self.ids[user], 7))
+        trade_id = await self.ready()
+        tables = ('candy', 'inventory', 'action_receipts', 'resource_ledger')
+        before = {table: await self.rows(f'SELECT * FROM {table} ORDER BY 1,2') for table in tables}
+        stardust = await self.rows('SELECT profile_id,stardust FROM profiles ORDER BY 1')
+        await self.confirm('u', trade_id, 2)
+        self.assertEqual((await self.confirm('v', trade_id, 2))['status'], 'completed')
+        self.assertEqual({table: await self.rows(f'SELECT * FROM {table} ORDER BY 1,2') for table in tables}, before)
+        self.assertEqual(await self.rows('SELECT profile_id,stardust FROM profiles ORDER BY 1'), stardust)
+
+    async def test_full_storage_members_can_still_swap_one_for_one(self):
+        for user in ('u', 'v'):
+            for index in range(249):
+                await self.pokemon(f'{user}{index:03}', user=user)
+        trade_id = await self.ready()
+        owned = "SELECT count(*) FROM pokemon WHERE profile_id=? AND state='owned'"
+        for user in ('u', 'v'):
+            self.assertEqual(await self.scalar('SELECT storage_limit FROM profiles WHERE profile_id=?',
+                                               (self.ids[user],)), 250)
+            self.assertEqual(await self.scalar(owned, (self.ids[user],)), 250)
+        await self.confirm('u', trade_id, 2)
+        self.assertEqual((await self.confirm('v', trade_id, 2))['status'], 'completed')
+        for user in ('u', 'v'):
+            self.assertEqual(await self.scalar(owned, (self.ids[user],)), 250)
+
+    async def test_old_owner_actions_on_traded_pokemon_are_stale(self):
+        storage = importlib.import_module('pokewalker.services.storage')
+        trade_id = await self.ready()
+        await self.confirm('u', trade_id, 2)
+        await self.confirm('v', trade_id, 2)
+        self.assertIsNone(await storage.detail(self.conn, self.ids['u'], 'mon'))
+        self.assertIsNone(await self.writer.run(lambda conn: storage.set_favorite(conn, self.ids['u'], 'mon', 1, 1)))
+        profile = (await self.rows("SELECT * FROM profiles WHERE user_id='u'"))[0]
+        pokemon = (await self.rows("SELECT * FROM pokemon WHERE pokemon_uid='mon'"))[0]
+        self.assertEqual(self.svc().tradable_reason(_NEUTRAL, pokemon, profile), 'not_owned')
+        rows, _, _ = await self.svc().eligible_page(self.conn, self.ids['u'], 0)
+        self.assertEqual([row['pokemon_uid'] for row in rows], ['theirs'])
+        self.assertEqual((await storage.detail(self.conn, self.ids['v'], 'mon'))['revision'], 1)
+        self.assertEqual((await self.writer.run(
+            lambda conn: storage.set_favorite(conn, self.ids['v'], 'mon', 1, 1)))['favorite'], 1)
 
 
 if __name__ == '__main__':

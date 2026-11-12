@@ -1075,3 +1075,50 @@ trade_id,now) lets a joined participant move an open trade to cancelled with
 ended_at=now. No receipts, items or resources are written. Producers: trading
 service; consumers: later trade execution, screens and /trade (T4-T7). No
 schema change. Tests: test_trading and test_trading_schema.
+
+## Trade execution, cap and deletion (additive)
+docs/features/pokemon-trading/PLAN.md OD4/OD9 and P3-P5/P7/P9/P10/P14 add
+confirm(conn,session,trade_id,seen_revision,now,content) to
+pokewalker/services/trading.py, run as one writer job. It refuses, in order: a
+non-participant or unjoined caller as stale (after session_owner
+stale/excluded); a completed trade as {status: completed, trade_id} (so a
+double accept is idempotent), a cancelled one as ended and an expired one as
+expired; a trade revision other than seen_revision as changed; a side not yet
+joined or without an offer as incomplete; capped (with seconds_left) or
+partner_capped under the 24 h cap; and partner_unavailable when the partner is
+excluded, which also clears the caller's confirmation. Apart from lazy expiry
+and that cleared confirmation, these refusals write nothing.
+
+Otherwise it sets the caller's confirmed_revision to the trade revision and
+runs activity (expires_at=MAX(expires_at,now+900)). If the partner has not
+confirmed this revision it returns waiting with the trade_id. When both have,
+it re-checks each side in side order: the pinned Pokemon must still pass
+storage.detail for its owner, tradable_reason with its storage.identify
+identity, and the pinned revision (a revision change reports changed, a sent
+or moved Pokemon not_owned). Set companion bumps no revision, so the companion
+check is explicit. The first failing side gets
+{status: offer_invalid, side, reason}: that offer is cleared, both
+confirmations are cleared and the trade revision is bumped, and only that
+cleanup commits.
+
+The swap then, in the same job: sets last_trade_at=now on both profiles where
+it is NULL or <=now-86400 and requires exactly two rows; moves each offered
+Pokemon to the other member with revision+1, restating owner, pinned revision,
+owned, not favorite and not deployed, and requires exactly one row each;
+acknowledges each moved Pokemon's unacknowledged source encounter (none when
+NULL) so the giver's catch recovery never resurfaces it; and marks the trade
+completed with ended_at=now and revision+1, which closes both sides. A guard
+miss raises and the writer rolls back the whole job, including the
+confirmation and activity; pokemon_trade_guard is the second backstop. A
+completed trade caps both members until last_trade_at+86400; exactly 86400 s
+later they may trade again. No receipt is written, and no Candy, Stardust or
+items move. A 1-for-1 swap leaves each owned count unchanged, so a full Storage
+does not block it. A traded Pokemon is no longer the old owner's, so their
+later actions on it find nothing (stale).
+
+Deleting either profile cascades its trades and sides, so the partner is free
+to trade again. A received Pokemon stays with its receiver after the giver's
+deletion, with source_encounter_id set to NULL, and the receiver's
+last_trade_at survives. Producers: trading service; consumers: trade screens
+and /trade (T6-T7). No schema change. Tests: test_trading, test_deletion,
+test_trading_schema.

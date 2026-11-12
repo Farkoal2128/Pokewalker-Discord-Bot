@@ -139,7 +139,7 @@ async def current(conn, session, now):
     return None if row is None else {**dict(row), 'sides': await _sides(conn, row['trade_id'])}
 
 
-async def _participant(conn, session, trade_id, now):
+async def _participant(conn, session, trade_id, now, completed=False):
     """(profile, trade) for a joined participant of an open trade, else (None, refusal)."""
     _writer(conn)
     me, refusal = await profiles.session_owner(conn, session)
@@ -154,6 +154,8 @@ async def _participant(conn, session, trade_id, now):
     if trade['state'] == 'open' and trade['expires_at'] <= now:
         await _expire(conn, (me['profile_id'],), now)
         return None, {'status': 'expired'}
+    if completed and trade['state'] == 'completed':
+        return None, {'status': 'completed', 'trade_id': trade_id}
     if trade['state'] != 'open':
         return None, {'status': 'expired' if trade['state'] == 'expired' else 'ended'}
     return me, dict(trade)
@@ -181,3 +183,79 @@ async def cancel(conn, session, trade_id, now):
         return trade
     await conn.execute("UPDATE trades SET state='cancelled',ended_at=? WHERE trade_id=?", (now, trade_id))
     return {'status': 'cancelled', 'trade_id': trade_id}
+
+
+async def _recheck(conn, sides, owners, content):
+    """(rows, None) with both offered Pokemon, or (None, {side, reason}) for the first one no longer tradable
+    at its pinned revision."""
+    rows = []
+    for side in sides:
+        owner = owners[side['profile_id']]
+        pokemon = await storage.detail(conn, owner['profile_id'], side['pokemon_uid'])
+        identity = storage.identify(content, pokemon)[0] if pokemon is not None else _NEUTRAL
+        reason = tradable_reason(identity, pokemon, owner)
+        if reason is None and pokemon['revision'] != side['pokemon_revision']:
+            reason = 'changed'
+        if reason is not None:
+            return None, {'side': side['side'], 'reason': reason}
+        rows.append(pokemon)
+    return rows, None
+
+
+async def _swap(conn, trade_id, sides, pokemon, now):
+    """Steps 7.1-7.4; any guard miss raises so the writer rolls back the whole job."""
+    async with conn.execute('UPDATE profiles SET last_trade_at=? WHERE profile_id IN (?,?) '
+                            'AND (last_trade_at IS NULL OR last_trade_at<=?)',
+                            (now, sides[0]['profile_id'], sides[1]['profile_id'], now - CAP_SECONDS)) as cursor:
+        if cursor.rowcount != 2:
+            raise RuntimeError('Trade cap guard refused the swap')
+    for side, row in zip(sides, pokemon):
+        receiver = sides[1 - side['side']]['profile_id']
+        async with conn.execute("UPDATE pokemon SET profile_id=?,revision=revision+1 WHERE pokemon_uid=? "
+                                "AND profile_id=? AND revision=? AND state='owned' AND favorite=0 "
+                                'AND gym_deployment_id IS NULL',
+                                (receiver, side['pokemon_uid'], side['profile_id'],
+                                 side['pokemon_revision'])) as cursor:
+            if cursor.rowcount != 1:
+                raise RuntimeError('Trade owner guard refused the swap')
+        await conn.execute('UPDATE encounters SET acknowledged_at=? WHERE encounter_id=? AND acknowledged_at IS NULL',
+                           (now, row['source_encounter_id']))
+    await conn.execute("UPDATE trades SET state='completed',ended_at=?,revision=revision+1 WHERE trade_id=?",
+                       (now, trade_id))
+
+
+async def confirm(conn, session, trade_id, seen_revision, now, content):
+    me, trade = await _participant(conn, session, trade_id, now, completed=True)
+    if me is None:
+        return trade
+    if trade['revision'] != seen_revision:
+        return {'status': 'changed'}
+    sides = await _sides(conn, trade_id)
+    if any(side['joined_at'] is None or side['pokemon_uid'] is None for side in sides):
+        return {'status': 'incomplete'}
+    mine = next(side for side in sides if side['profile_id'] == me['profile_id'])
+    other = sides[1 - mine['side']]
+    async with conn.execute('SELECT * FROM profiles WHERE profile_id=?', (other['profile_id'],)) as cursor:
+        partner = dict(await cursor.fetchone())
+    if cap_left(me, now):
+        return {'status': 'capped', 'seconds_left': cap_left(me, now)}
+    if cap_left(partner, now):
+        return {'status': 'partner_capped'}
+    if (await profiles.restrictions(conn, partner['guild_id'], partner['user_id'])).excluded:
+        await conn.execute('UPDATE trade_sides SET confirmed_revision=NULL WHERE trade_id=? AND side=?',
+                           (trade_id, mine['side']))
+        return {'status': 'partner_unavailable'}
+    await conn.execute('UPDATE trade_sides SET confirmed_revision=? WHERE trade_id=? AND side=?',
+                       (trade['revision'], trade_id, mine['side']))
+    await _activity(conn, trade_id, now)
+    if other['confirmed_revision'] != trade['revision']:
+        return {'status': 'waiting', 'trade_id': trade_id}
+    pokemon, invalid = await _recheck(conn, sides, {me['profile_id']: me, partner['profile_id']: partner}, content)
+    if invalid is not None:
+        await conn.execute('UPDATE trade_sides SET pokemon_uid=NULL,pokemon_revision=NULL WHERE trade_id=? AND side=?',
+                           (trade_id, invalid['side']))
+        await conn.execute('UPDATE trade_sides SET confirmed_revision=NULL WHERE trade_id=?', (trade_id,))
+        await conn.execute('UPDATE trades SET revision=revision+1 WHERE trade_id=?', (trade_id,))
+        return {'status': 'offer_invalid', **invalid}
+    await _swap(conn, trade_id, sides, pokemon, now)
+    return {'status': 'completed', 'trade_id': trade_id}
