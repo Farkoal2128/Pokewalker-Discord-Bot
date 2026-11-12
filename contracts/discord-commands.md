@@ -1374,3 +1374,9 @@ command or ID grammar change. Tests: tests/test_ball_trade_up.py, tests/test_cap
 The paged /readme player pages gain short Vitamins and Bottlecaps and Trade up paragraphs,
 and the check-in sentence names the Vitamin; the admin page is unchanged.
 Tests: tests/test_readme.py.
+
+## Owner amendment: permanent /walker status (2026-11-12)
+`WalkerBot` passes `activity=discord.CustomActivity(name="/walker")` and status online
+to the client constructor, so Discord shows "/walker" as the bot's custom status on
+every connect and reconnect (identify and resume carry it). No command, intent or
+manifest change. Tests: tests/test_client_lifecycle.py.
