@@ -208,8 +208,13 @@ class CompanionTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await self.snapshot(), before)
         await self.writer.run(lambda conn: conn.execute(
             "INSERT INTO profiles(profile_id,guild_id,user_id,created_at) VALUES ('foreign','123','999',0)"))
+        await self.writer.run(lambda conn: conn.execute('DROP TRIGGER pokemon_trade_guard'))
         await self.writer.run(lambda conn: conn.execute(
             "UPDATE pokemon SET profile_id='foreign' WHERE pokemon_uid=?", (self.new_uid,)))
+        from pokewalker.db import MIGRATIONS
+        trades = (MIGRATIONS / '0018_trades.sql').read_text(encoding='utf-8')
+        guard = trades[trades.index('CREATE TRIGGER pokemon_trade_guard '):].split('END;', 1)[0] + 'END;'
+        await self.writer.run(lambda conn: conn.execute(guard))
         before = await self.snapshot()
         refused = await self.click(session, "companion")
         refused.followup.send.assert_awaited_once()

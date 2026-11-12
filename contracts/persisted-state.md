@@ -991,3 +991,40 @@ Producer: client sweep and raids.expire; consumers: catching, walker recovery,
 queue and deletion. Tests: test_raids plus walker acknowledgement, deletion and
 gym regressions. G-F2 remains pending until the owner commits the privacy
 retention disclosure; this contract is not runtime privacy text or live evidence.
+
+## Trading schema (0018, additive)
+The owner's trading requirement (R0-R5, docs/features/pokemon-trading/PLAN.md
+P1/P4/P6/P7/P11) adds migration 0018, preserving existing rows. trades has
+trade_id, guild_id (guild deletion cascades), initiator_profile_id and
+partner_profile_id, state open/completed/cancelled/expired (default open),
+revision (default 0), created_at, expires_at (must exceed created_at) and
+nullable ended_at, all UTC epoch seconds. Composite foreign keys bind both
+profiles to the trade's guild through profiles(profile_id,guild_id); deleting
+either profile deletes the trade and its sides.
+
+trade_sides has primary key (trade_id,side), side 0 or 1, the side's profile_id,
+nullable joined_at, pokemon_uid, pokemon_revision and confirmed_revision, and
+open 0/1 (default 0). open=1 requires joined_at. (trade_id,profile_id) is unique,
+so one profile never fills both sides. Composite foreign keys bind each side to
+its trade and to a profile in the same guild, cascading deletes. pokemon_uid has
+no foreign key: a Pokemon is deleted only with its profile, which cascades the
+trade. The partial unique index trade_sides_one_open allows at most one open=1
+side per profile; unjoined sides (open=0) are unlimited, so an invitee is never
+blocked. The trade_close_sides trigger sets open=0 on both sides whenever a
+trade's state is updated to anything other than open.
+
+trade_channels has guild_id (guild deletion cascades) and channel_id, primary key
+(guild_id,channel_id); no channel is enabled by default. Profiles gain nullable
+last_trade_at and last_trade_ping_at REAL.
+
+The pokemon_trade_guard trigger aborts with "Pokemon is not tradable" any update
+that changes pokemon.profile_id while the Pokemon is not owned (sent), is
+favorited, is gym-deployed, is any profile's companion_uid, or would move to a
+profile in another guild, including direct SQL bypasses of service checks.
+Updates leaving profile_id unchanged are unaffected.
+
+Producer: migration 0018; consumers: the later trading service, trade-channel
+admin commands, sweep and deletion. No existing writer changes pokemon.profile_id.
+Older binaries refuse schema 18; rollback requires a compatible backup, never
+lowering user_version. Tests: test_trading_schema plus the receipt-owner,
+companion, capacity, database, form, route-unlock, gym and deletion regressions.
