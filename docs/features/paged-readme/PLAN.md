@@ -2,7 +2,7 @@
 
 **Status:** awaiting plan approval
 **Review:** none yet. This plan was split from pokemon-trading on 2026-11-12 (that plan's round-3 SHOULD 1). Its content was reviewed there as T8 in rounds 1–2; see the git history of `docs/features/pokemon-trading/PLAN.md`.
-**Home:** none assigned. Proposed: `feature/paged-readme · none`, cut only after pokemon-trading reaches G-F (owner decision at G-A).
+**Home:** none assigned. Proposed: `feature/paged-readme · none`, cut from pokemon-trading's accepted candidate (or from `main` once that candidate is integrated), only after pokemon-trading reaches G-F (owner decision at G-A).
 **Inputs:** owner decision OD1 (2026-11-12, relayed by the coordinator) · [pokemon-trading plan](../pokemon-trading/PLAN.md) (`trade-channels`, `/trade`) · C5 discord-commands.md:32-38 (readme amendment), :122 (component IDs) · [PIPELINE.md](../../../PIPELINE.md)
 
 ## 0. Owner decision (2026-11-12)
@@ -10,7 +10,7 @@
 **OD1** (relayed as OD10 in the trading brief): rework `/readme` into private pages the reader flips through.
 - Each page stays within the 4,096 limit.
 - The final page is for admin/moderator setup commands.
-- Correct the `/checkin` text: hourly cooldown; a guaranteed Poké Ball, a common item, and one wild encounter if the queue has room, otherwise the "queue is full" note.
+- Correct the `/checkin` text (exact wording in R1).
 - Add a short trading section on a player page, and the trade-channels commands on the admin page.
 - Keep it working for unenrolled and excluded members, and in the one-time post-starter send.
 
@@ -114,6 +114,7 @@ R1 is `seam`: ≤ 2 production files (client.py, walker.py) and ≤ 300 producti
 **G-A (owner).**
 - **Predicate:** pokemon-trading's G-F row is ✅, and its accepted candidate is an ancestor of the Home (`git merge-base --is-ancestor <trading accepted sha> <home>`).
 - **Accept:** that owner message.
+- **Re-anchor:** re-verify the §3 and R1 line anchors at the trading candidate (trading T2/T6/T7 edit client.py and walker.py); where lines moved, use the symbols `load_help`, `self.help_text`, `add_dynamic_items` and the `onboard_confirm` follow-up.
 - **Stop if:** pokemon-trading changes its command set after G-F. In that case, re-brief R1's command list.
 
 **G-F (coordinator + owner).**
