@@ -29,13 +29,24 @@ Existing commands and persisted formats remain compatible; no migration is requi
 Tests: test_raids, test_walker_encounter, test_client_lifecycle, test_readme.
 Focused evidence leaves G-F2 and live Discord acceptance open.
 
-## Owner amendment: readme (2026-11-05)
+## Owner amendment: readme (2026-11-05; paged 2026-11-12, OD1)
 The guild-only `/readme` command privately displays the approved `content/help.md`
 text to any member, including unenrolled or excluded members, without consulting
-profile state. Startup loads that fixed repository-relative file and refuses missing,
-blank, or text over 4096 UTF-16 code units. After starter confirmation the same text is
-sent once privately; the normal home screen remains available. The command is part
-of the global command manifest. This is additive and does not alter persisted data.
+profile state. The file holds pages separated by a line containing exactly
+`<!-- page -->`. Startup loads that fixed repository-relative file and refuses it
+(with an error naming help) when it is missing or unreadable, has fewer than two pages,
+or any page is blank or over 4096 UTF-16 code units; check-config applies the same load.
+`WalkerBot.help_page(i)` renders page i (0-based) as an embed titled
+`Pokéwalker help (i+1/N)` plus Prev/Next buttons with unique stateless IDs
+`pw:readme:v1:<target>`, disabled at the first and last page. Clicking one edits the
+private message to that page with no writer, profile, session or restriction lookup;
+an out-of-range page (for example after a help edit) gets a private "Run /readme again."
+The last page, "Server setup (admins and moderators)", names every `/walker-admin`
+and `/walker-mod` subcommand; the owner-only `/admin` group is not documented.
+`/readme` and the one-time private send after starter confirmation both show page 1;
+the normal home screen remains available. The command is part of the global command
+manifest. The paging revision is compatible and does not alter persisted data.
+Tests: test_readme, test_walker_router, test_account, test_client_lifecycle.
 
 ## M4.4 opt-in shares and post-commit effects (additive)
 Transaction handlers may return an after_commit zero-argument async callback in
@@ -122,6 +133,8 @@ production clients or persisted formats change.
 - Component IDs match `^pw:v1:(?P<session>[0-9a-f-]+):(?P<rev>\d+):(?P<action>[a-z_]+)$`.
   The interaction's guild/user and durable session authorize an action; an ID is
   never permission. M1.6 supplies routing; until then clicks get a private reopen response.
+  A separate grammar is the stateless readme page ID `^pw:readme:v1:(?P<page>\d+)$`;
+  it never reaches the Walker router and authorizes nothing beyond showing a help page.
 - Intents are exactly guilds, guild_messages and message_content. Message caching
   is disabled. Commands are guild-only, replies ephemeral, with runtime permission
   rechecks. Later command rows define their permissions and handlers.

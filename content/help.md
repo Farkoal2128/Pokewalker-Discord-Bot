@@ -13,6 +13,8 @@
 
 **Catching.** Open `/walker` to see your encounters. Pick a ball and a berry, then **Throw**. Better balls and berries raise your chances; Pinap Berries give extra Candy instead. Pokémon can run away after a miss, but shinies and Legendaries never do. **Run** skips an encounter.
 
+<!-- page -->
+
 **Your companion.** Your starter walks with you and earns 1 Candy for its family every 150 steps. Change your companion any time from Storage.
 
 **Growing stronger.** Candy and Stardust power up your Pokémon. Send spare Pokémon for research to get Candy back. Favorites, shinies and Legendaries are protected from bulk sending, and your companion can never be sent.
@@ -21,7 +23,7 @@ Open a Pokémon's details to Evolve; use Expand storage in Storage for 50 more s
 
 **Routes.** Pick a route from `/walker`; each favors different Pokémon types. Refreshing Field and Noisy Forest are free; unlock more with lifetime steps in this server.
 
-**Finds and check-ins.** Walking also finds items now and then. Use `/checkin` once an hour for a Poké Ball, a bonus item and a wild encounter (if your queue has room).
+**Finds and check-ins.** Walking also finds items now and then. Use `/checkin` once an hour, 60 minutes after your last one. It always gives a Poké Ball plus one bonus item: a Great Ball, a Razz Berry, 2 Poké Balls or a Pinap Berry; an item that doesn't fit in your bag becomes 10 Stardust. It also queues one wild encounter if your queue has room; otherwise the reply says your queue is full. You can't check in while you're paused.
 
 **Milestones.** Filling your Pokédex and catching special Pokémon earns reward bundles. Claim them from your inbox; see every milestone in the Pokédex.
 
@@ -30,20 +32,46 @@ Buy evolution items in Bag for 500 Stardust each, or use Buy & evolve on a missi
 **Shiny Lure.** Activate one from your bag for 4× shiny odds on your next 10 encounters.
 **Star Piece.** Activate one from Bag for 1.5× Stardust on your next 10 catch or find Stardust rewards.
 
-**Your privacy.** The bot reads message text only to count words and never stores it. `/walker-account privacy` explains more; `/walker-account opt-out` stops the bot reading your messages.
-
-**Server gyms.** Members with Manage Server can create, remove and list gyms with `/walker-admin gyms`; gym defenders return automatically after 8 hours.
+<!-- page -->
 
 **Gym defenders.** Deploy an eligible Pokémon, Recall it, or use Rewards to add unpaid full hours to your Inbox; recalling forfeits the survivor roll.
 
 **Gym battles.** Pick up to three attackers in order, choose Clear only or a claiming defender, then Start; results and Battle log are private.
 
+**Defender time.** Gym defenders return automatically after 8 hours.
+
+**World Legendary Ticket.** Use one from Bag and confirm to spawn a World Legendary here for 60 minutes; the ticket cannot be refunded.
+
+**Join a World Legendary.** Use `/raid` while one is active here to join once; use it again to reopen your saved encounter.
+
+**Trading.** In a trade channel, use `/trade member` to invite someone; they're pinged and join by using `/trade` with you as the member. Each of you offers one Pokémon, then both confirm. Favorites, your companion and gym defenders can't be traded. You can trade once per day, and Pokémon you receive count for your Pokédex.
+
+**Your privacy.** The bot reads message text only to count words and never stores it. `/walker-account privacy` explains more; `/walker-account opt-out` stops the bot reading your messages.
+
+Use `/readme` to see this again.
+
+<!-- page -->
+
+# Server setup (admins and moderators)
+
+**Server gyms.** Members with Manage Server can create, remove and list gyms with `/walker-admin gyms`.
+
 **Gym moderation.** Members with Moderate Members can use `/walker-mod gym-recall gym reason`; completed hours are paid, while exclusion forfeits unpaid hours.
 
 **Server raids.** Manage Server can enable World Legendary spawns with `/walker-admin raids on` and a text channel, or disable them with `off`; raids start off.
 
-**World Legendary Ticket.** Use one from Bag and confirm to spawn a World Legendary here for 60 minutes; the ticket cannot be refunded.
+**`/walker-admin`** (needs Manage Server)
+- `channels add|add-all|remove|list`: choose the walking channels where words count.
+- `trade-channels add|add-all|remove|list`: choose the channels where members can trade.
+- `gyms create|remove|list`: manage this server's gyms.
+- `raids on|off <channel>`: turn World Legendary spawns on in a text channel, or off.
+- `sharing on|off`: allow or block Share buttons in this server.
+- `reset <member> <reason>`: permanently reset a member's game data in this server.
 
-Use `/readme` to see this again.
-
-**Join a World Legendary.** Use `/raid` while one is active here to join once; use it again to reopen your saved encounter.
+**`/walker-mod`** (needs Moderate Members)
+- `pause`, `resume`: pause a member's earning, or lift the pause.
+- `exclude`, `include`: block a member from this server's game, or reverse it.
+- `share-ban`, `share-unban`: disable or restore a member's Share buttons.
+- `gym-recall`: return a gym defender and pay its completed hours.
+- `status`: show a member's game and moderation summary.
+- `log`: show the last 25 moderation actions.

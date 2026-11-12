@@ -38,7 +38,8 @@ class AccountTests(unittest.IsolatedAsyncioTestCase):
         self.content = json.loads(Path("content/artifact/content.json").read_text(encoding="utf-8"))
         self.bot = SimpleNamespace(writer=self.writer, content=self.content,
                                    settings=SimpleNamespace(marker_log_path=self.path),
-                                   privacy_text=self.owner_text, help_text='Approved help', reactions=SimpleNamespace(
+                                   privacy_text=self.owner_text,
+                                   help_page=lambda index: {'embed': None, 'view': None}, reactions=SimpleNamespace(
                                        reconcile_reaction=AsyncMock(), reconcile_message=AsyncMock(),
                                        remove_own=AsyncMock()))
         await self.conn.execute("INSERT INTO guilds(guild_id,enabled) VALUES ('123',1),('999',1)")

@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 from pathlib import Path
+import re
 import signal
 import time
 
@@ -26,7 +27,7 @@ from pokewalker.services import gyms, raids, research, trading
 from pokewalker.services.reactions import ReactionService
 from pokewalker.services.deletion import replay_markers
 from pokewalker.bot import admin, messages
-from pokewalker.bot.walker import CUSTOM_ID, Walker, command
+from pokewalker.bot.walker import CUSTOM_ID, Walker, _forget, command
 
 
 class _StartupStopped(RuntimeError):
@@ -35,6 +36,7 @@ class _StartupStopped(RuntimeError):
 
 LOG = logging.getLogger(__name__)
 HELP_PATH = Path(__file__).resolve().parents[2] / 'content' / 'help.md'
+README_ID = r'^pw:readme:v1:(?P<page>\d+)$'
 
 
 def load_help():
@@ -42,9 +44,10 @@ def load_help():
         text = HELP_PATH.read_text(encoding='utf-8')
     except (OSError, UnicodeError) as error:
         raise ValueError(f'Cannot read help text at {HELP_PATH}') from error
-    if not text.strip() or len(text.encode('utf-16-le')) // 2 > 4096:
-        raise ValueError('Help text must be nonempty and at most 4096 characters')
-    return text
+    pages = [page.strip() for page in re.split(r'(?m)^<!-- page -->$', text)]
+    if len(pages) < 2 or any(not page or len(page.encode('utf-16-le')) // 2 > 4096 for page in pages):
+        raise ValueError('Help text needs at least 2 pages, each nonempty and at most 4096 UTF-16 units')
+    return pages
 
 
 def readme_command(bot):
@@ -54,8 +57,9 @@ def readme_command(bot):
         if interaction.guild_id is None:
             await interaction.response.send_message('Use /readme in a server.', ephemeral=True)
             return
-        await interaction.response.send_message(embed=discord.Embed(description=bot.help_text), ephemeral=True,
-                                                allowed_mentions=discord.AllowedMentions.none())
+        page = bot.help_page(0)
+        await interaction.response.send_message(**page, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+        _forget(page)
     return readme
 
 
@@ -66,6 +70,23 @@ class WalkerItem(discord.ui.DynamicItem[discord.ui.Item], template=CUSTOM_ID):
 
     async def callback(self, interaction):
         await interaction.client.walker.route(interaction, self.custom_id)
+
+
+class ReadmeItem(discord.ui.DynamicItem[discord.ui.Item], template=README_ID):
+    """Stateless help page buttons: no writer, profile, session or restriction lookup."""
+
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match):
+        return cls(item)
+
+    async def callback(self, interaction):
+        page = int(self.template.match(self.custom_id)['page'])
+        if page >= len(interaction.client.help_pages):
+            await interaction.response.send_message('Run /readme again.', ephemeral=True)
+            return
+        rendered = interaction.client.help_page(page)
+        await interaction.response.edit_message(**rendered, allowed_mentions=discord.AllowedMentions.none())
+        _forget(rendered)
 
 
 def load_content(path):
@@ -125,7 +146,7 @@ class WalkerBot(discord.Client):
         if self.admin is not None:
             self.admin.attach_errors()
         self.privacy_text = load_privacy(self.settings)
-        self.help_text = load_help()
+        self.help_pages = load_help()
         self.content = load_content(self.settings.content_path)
         conn = await open_db(self.settings.db_path,
                              allow_unpatched=self.settings.allow_unpatched_sqlite)
@@ -136,8 +157,17 @@ class WalkerBot(discord.Client):
         self.writer = Writer(conn)
         await replay_markers(self.writer, self.settings.marker_log_path)
         self.reactions = ReactionService(self)
-        self.add_dynamic_items(WalkerItem)
+        self.add_dynamic_items(WalkerItem, ReadmeItem)
         self.admitting = True
+
+    def help_page(self, index):
+        count = len(self.help_pages)
+        view = discord.ui.View(timeout=None)
+        for label, target, disabled in (('Prev', max(index - 1, 0), index == 0),
+                                        ('Next', min(index + 1, count - 1), index == count - 1)):
+            view.add_item(discord.ui.Button(label=label, custom_id=f'pw:readme:v1:{target}', disabled=disabled))
+        embed = discord.Embed(title=f'Pok\u00e9walker help ({index + 1}/{count})', description=self.help_pages[index])
+        return {'embed': embed, 'view': view}
 
     async def on_ready(self):
         if not self._stopping and self.writer is not None:

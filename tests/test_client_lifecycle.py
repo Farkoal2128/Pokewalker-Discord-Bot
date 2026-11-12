@@ -138,7 +138,7 @@ class ClientLifecycleTests(unittest.IsolatedAsyncioTestCase):
             await self.bot.setup_hook()
         opening.assert_awaited_once_with(self.settings.db_path, allow_unpatched=False)
         factory.assert_called_once_with(conn)
-        register.assert_called_once_with(self.client.WalkerItem)
+        register.assert_called_once_with(self.client.WalkerItem, self.client.ReadmeItem)
         sync.assert_not_awaited()
         self.assertEqual(self.bot.content, {"schema_version": 1})
         self.assertTrue(self.bot.admitting)

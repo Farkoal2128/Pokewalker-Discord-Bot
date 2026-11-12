@@ -8,10 +8,12 @@ from pathlib import Path
 import random
 from types import SimpleNamespace
 import unittest
+from functools import partial
 from unittest.mock import AsyncMock, patch
 
 import discord
 
+from pokewalker.bot.client import WalkerBot, load_help
 from pokewalker.db import Writer, open_db
 from pokewalker.services import profiles
 from pokewalker.services.reactions import ReactionService
@@ -31,7 +33,8 @@ class WalkerTests(unittest.IsolatedAsyncioTestCase):
         self.bot = FakeDiscord(self.conn)
         self.bot.writer = self.writer
         self.bot.content = json.loads(Path("content/artifact/content.json").read_text(encoding="utf-8"))
-        self.bot.help_text = "Approved help"
+        self.bot.help_pages = load_help()
+        self.bot.help_page = partial(WalkerBot.help_page, self.bot)
         self.bot.reactions = ReactionService(self.bot)
         self.walker = self.module.Walker(self.bot, clock=lambda: 1000, rng=random.Random(8))
         self.bot.walker = self.walker
@@ -132,13 +135,25 @@ class WalkerTests(unittest.IsolatedAsyncioTestCase):
         interaction = await self.click(session, "onboard_confirm")
         interaction.followup.send.assert_awaited_once()
         self.assertTrue(interaction.followup.send.await_args.kwargs['ephemeral'])
-        self.assertEqual(interaction.followup.send.await_args.kwargs['embed'].description, self.bot.help_text)
+        self.assertEqual(interaction.followup.send.await_args.kwargs['embed'].description, self.bot.help_pages[0])
         reopened, _ = await self.open()
         reopened.followup.send.assert_not_awaited()
         stale = await self.click(session, "onboard_confirm")
         stale.followup.send.assert_not_awaited()
 
-    async def test_readme_works_before_enrollment_and_for_excluded_member(self):
+    async def test_post_starter_send_is_page_one(self):
+        session = await self.select_starter()
+        interaction = await self.click(session, "onboard_confirm")
+        args = interaction.followup.send.await_args.kwargs
+        self.assertTrue(args['ephemeral'])
+        self.assertEqual(args['embed'].title, f"Pok\u00e9walker help (1/{len(self.bot.help_pages)})")
+        self.assertEqual(args['embed'].description, self.bot.help_pages[0])
+        self.assertEqual([(item.label, item.custom_id, item.disabled) for item in args['view'].children],
+                         [('Prev', 'pw:readme:v1:0', True), ('Next', 'pw:readme:v1:1', False)])
+        self.assertTrue(args['view'].is_finished())
+        self.assertIn("1/3", interaction.edit_original_response.await_args.kwargs["embed"].description)
+
+    async def test_readme_page_one_for_unenrolled_and_excluded(self):
         from pokewalker.bot.client import readme_command
         command = readme_command(self.bot)
         await self.writer.run(lambda conn: conn.execute("INSERT INTO guilds(guild_id,created_at) VALUES ('123',0)"))
@@ -149,7 +164,10 @@ class WalkerTests(unittest.IsolatedAsyncioTestCase):
             await command.callback(interaction)
             response = interaction.response.send_message.await_args.kwargs
             self.assertTrue(response['ephemeral'])
-            self.assertEqual(response['embed'].description, self.bot.help_text)
+            self.assertEqual(response['embed'].title, f"Pok\u00e9walker help (1/{len(self.bot.help_pages)})")
+            self.assertEqual(response['embed'].description, self.bot.help_pages[0])
+            self.assertEqual([item.custom_id for item in response['view'].children],
+                             ['pw:readme:v1:0', 'pw:readme:v1:1'])
         self.assertEqual(await self.rows('SELECT * FROM profiles'), [])
 
     async def test_confirm_twice_is_one_enrollment(self):

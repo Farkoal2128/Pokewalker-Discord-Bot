@@ -190,8 +190,10 @@ class Walker:
             await interaction.edit_original_response(**rendered, allowed_mentions=discord.AllowedMentions.none())
             _forget(rendered)
             if action == 'onboard_confirm':
-                await interaction.followup.send(embed=discord.Embed(description=self.bot.help_text), ephemeral=True,
+                page = self.bot.help_page(0)
+                await interaction.followup.send(**page, ephemeral=True,
                                                 allowed_mentions=discord.AllowedMentions.none())
+                _forget(page)
 
     async def refuse(self, interaction, text):
         await interaction.followup.send(text, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
