@@ -1299,3 +1299,33 @@ refuse without consuming. Existing owner/guild, exclusion, revision and expiry
 guards apply. The Bag stays within Discord's 5 buttons per row and 25 components.
 Rendering stays free of I/O; no slash command or ID grammar change. Tests:
 tests/test_companion_mirror.py, tests/test_capacity.py.
+
+## Owner amendment: admin force raid (2026-11-12)
+The owner asked for a server administrator command that, on a 24-hour cooldown,
+forces a World Legendary raid. `/walker-admin force-raid <reason>` is a direct
+subcommand of the existing `/walker-admin` root, so it inherits the guild-only and
+Manage Server defaults; it is attached in `WalkerAdmin` on the local tree without
+synchronizing. The handler defers privately before any writer wait, rechecks Manage
+Server and actor exclusion through `WalkerAdmin.authorize`, and refuses a
+stripped-empty reason with "A reason is required.". One writer job rechecks Manage
+Server and exclusion (`check_actor`, the same refusals as `raids`), reads the
+configured raid_channel_id and resolves it exactly as M8.2b ticket use does
+(`interaction.guild.get_channel`; a missing or foreign channel, or missing
+EMBED_LINKS or SEND_MESSAGES for guild.me, passes None, otherwise the checked channel
+ID), then calls C3 `raids.force_spawn` with walker.clock (UTC epoch) and walker.rng.
+Refusals write nothing, consume nothing and do not start the cooldown: "Force raid is
+on cooldown in this server. Try again in Xh Ym." (time until the next allowed force,
+whole minutes rounded up, X hours and Y remaining minutes), then the M8.2b texts
+"Raids are turned off in this server.", "No raid channel is configured.", "Missing
+raid channel permission: EMBED_LINKS and SEND_MESSAGES are required.", "The raid
+channel changed; try again." and "A World Legendary is already active in this
+server.". After the job commits, the handler awaits M8.2a `raids.announce` for the new
+spawn and then replies "Spawned <species> in <#channel_id> until <YYYY-MM-DD HH:MM:SS
+UTC>."; a failed commit neither announces nor reports success. A spawn left pending is
+recovered by the existing startup `resume_pending`. Every reply is private and
+suppresses mentions. The readme admin page lists the subcommand. Producer:
+WalkerAdmin; consumers: administrators and raid channel members (`/raid`). The command
+manifest changes: after delivery one `sync-commands --global --yes` follows (the
+deploy installer runs it automatically). The ticket path, existing commands and
+persisted formats remain compatible. Tests: tests/test_admin_force_raid.py;
+test_raids, test_admin_channels and test_readme stay green.

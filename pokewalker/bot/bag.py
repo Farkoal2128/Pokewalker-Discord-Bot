@@ -11,6 +11,14 @@ from pokewalker.bot.screens_catch import custom_id
 from pokewalker.services import capacity, items, raids, stepping
 
 
+# M8.2b spawn refusals, shared by ticket use and /walker-admin force-raid.
+RAID_REFUSALS = {'raids_off': 'Raids are turned off in this server.',
+                 'no_channel': 'No raid channel is configured.',
+                 'no_permission': 'Missing raid channel permission: EMBED_LINKS and SEND_MESSAGES are required.',
+                 'channel_changed': 'The raid channel changed; try again.',
+                 'active': 'A World Legendary is already active in this server.'}
+
+
 def name(item, content=None):
     for kind in (content or {}).get('evolution_items', []):
         if kind['id'] == item:
@@ -327,18 +335,10 @@ def handlers(walker):
             raise _Refused('Preview the World Legendary Ticket before confirming.')
         async with conn.execute('SELECT raid_channel_id FROM guilds WHERE guild_id=?', (session['guild_id'],)) as cursor:
             guild = await cursor.fetchone()
-        channel = interaction.guild.get_channel(int(guild['raid_channel_id'])) if guild and guild['raid_channel_id'] else None
-        if channel is not None and str(channel.guild.id) != session['guild_id']:
-            channel = None
-        permissions = channel.permissions_for(interaction.guild.me) if channel is not None else None
-        checked = channel.id if permissions and permissions.embed_links and permissions.send_messages else None
+        checked = raids.checked_channel(interaction.guild, session['guild_id'], guild and guild['raid_channel_id'])
         result = await raids.spawn(conn, session, walker.clock(), walker.rng, walker.bot.content, checked)
         if result['status'] != 'spawned':
-            raise _Refused({'raids_off': 'Raids are turned off in this server.',
-                            'no_channel': 'No raid channel is configured.',
-                            'no_permission': 'Missing raid channel permission: EMBED_LINKS and SEND_MESSAGES are required.',
-                            'channel_changed': 'The raid channel changed; try again.',
-                            'active': 'A World Legendary is already active in this server.',
+            raise _Refused({**RAID_REFUSALS,
                             'missing': 'No World Legendary Ticket is available to use.'}.get(result['status'], REOPEN))
         spawn = result['spawn']
         identity = next(i for i in walker.bot.content['identities'] if i['identity_id'] == spawn['identity_id'])
