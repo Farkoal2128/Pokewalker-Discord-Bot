@@ -321,3 +321,77 @@ class PowerupTests(unittest.IsolatedAsyncioTestCase):
         before = await self.snapshot()
         self.assertEqual((await self.confirm(session))["status"], "insufficient")
         self.assertEqual(await self.snapshot(), before)
+
+    async def rare(self, quantity):
+        await self.writer.run(lambda conn: conn.execute(
+            "INSERT INTO inventory VALUES (?,'rare_candy',?) ON CONFLICT(profile_id,item_id) DO UPDATE SET quantity=excluded.quantity",
+            (self.profile["profile_id"], quantity)))
+
+    async def rare_snapshot(self):
+        return {**await self.snapshot(), "inventory": await self.rows("SELECT * FROM inventory ORDER BY item_id")}
+
+    async def rare_confirm(self, session, revision=0):
+        return await self.writer.run(lambda conn: self.service().power_up(
+            conn, session, self.uid, revision, self.bot.content, self.walker.multipliers, use_rare_candy=True))
+
+    async def test_rare_candy_powers_up_one_step_without_candy_or_stardust(self):
+        session = await self.prepared()
+        await self.rare(2)
+        before = await self.pokemon()
+        result = await self.rare_confirm(session)
+        self.assertEqual(result["status"], "powered_up")
+        self.assertEqual(await self.pokemon(), {**before, "level_x2": before["level_x2"] + 1, "revision": 1})
+        self.assertEqual(await self.rows("SELECT quantity FROM inventory WHERE item_id='rare_candy'"), [{"quantity": 1}])
+        self.assertEqual(await self.service().balances(self.conn, self.profile["profile_id"]),
+                         {"stardust": 0, "candy": {}})
+        lines = await self.rows("SELECT * FROM resource_ledger WHERE reason='powerup'")
+        self.assertEqual([(r["resource"], r["resource_id"], r["delta"]) for r in lines], [("item", "rare_candy", -1)])
+
+    async def test_rare_candy_quote_and_refusals(self):
+        session = await self.prepared()
+        quote = await self.quote()
+        self.assertEqual((quote["rare_candy_have"], quote["rare_affordable"]), (0, False))
+        before = await self.rare_snapshot()
+        self.assertEqual((await self.rare_confirm(session))["status"], "insufficient")
+        self.assertEqual(await self.rare_snapshot(), before)
+        await self.rare(1)
+        quote = await self.quote()
+        self.assertEqual((quote["rare_candy_have"], quote["rare_affordable"]), (1, True))
+        await self.writer.run(lambda conn: conn.execute("UPDATE pokemon SET level_x2=80"))
+        quote = await self.quote()
+        self.assertFalse(quote["rare_affordable"])
+        before = await self.rare_snapshot()
+        self.assertEqual((await self.rare_confirm(session))["status"], "at_cap")
+        self.assertEqual(await self.rare_snapshot(), before)
+
+    async def test_rare_candy_deployed_stale_and_replay_spend_once(self):
+        session = await self.prepared()
+        await self.rare(3)
+        first = await self.rare_confirm(session)
+        self.assertEqual(first["status"], "powered_up")
+        before = await self.rare_snapshot()
+        self.assertEqual(await self.rare_confirm(session), first)
+        self.assertEqual(await self.rare_snapshot(), before)
+        self.assertEqual((await self.rare_confirm(session, 5))["status"], "stale")
+        await self.deploy(session)
+        before = await self.rare_snapshot()
+        self.assertEqual((await self.rare_confirm(session, (await self.pokemon())["revision"]))["status"], "stale")
+        self.assertEqual(await self.rare_snapshot(), before)
+
+    async def test_rare_candy_button_powers_up_from_quote_screen(self):
+        session = await self.prepared()
+        _, session = await self.details(session)
+        rendered, session = await self.screen(session)
+        self.assertIn("Rare Candy (have 0)", rendered["embed"].description)
+        self.assertTrue(self.buttons(rendered)["Use Rare Candy"].disabled)
+        await self.rare(1)
+        rendered, session = await self.screen(session)
+        self.assertIn("Rare Candy (have 1)", rendered["embed"].description)
+        self.assertTrue(self.buttons(rendered)["Confirm"].disabled)
+        self.assertFalse(self.buttons(rendered)["Use Rare Candy"].disabled)
+        before = await self.pokemon()
+        rendered, session = await self.screen(session, "power_up_rare")
+        self.assertEqual(rendered["embed"].title, "Pokémon details")
+        self.assertEqual((await self.pokemon())["level_x2"], before["level_x2"] + 1)
+        self.assertEqual(json.loads(session["selection"])["pokemon_revision"], 1)
+        self.assertEqual(await self.rows("SELECT quantity FROM inventory WHERE item_id='rare_candy'"), [{"quantity": 0}])

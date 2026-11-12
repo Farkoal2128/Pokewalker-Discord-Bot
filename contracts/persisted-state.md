@@ -1166,3 +1166,16 @@ returns None on a session refusal (stale or excluded) as well as when there is
 no joined open trade. Producers: trading service; consumers: trade screens,
 /trade and the sweep (T6-T7). No schema change. Tests: test_trading,
 test_milestones, test_pokedex.
+
+## Owner amendment: Rare Candy power-up (2026-11-12)
+The owner directed that one Rare Candy powers up a Pokemon one step. `quote` also
+returns `rare_candy_have` (the profile's `rare_candy` inventory quantity) and
+`rare_affordable` (not at cap and at least one held). `power_up(...,
+use_rare_candy=False)` keeps every existing guard; with `use_rare_candy=True` the
+affordability check is `rare_affordable` instead of Candy and Stardust, and refusals
+are the same statuses (`insufficient` when none is held). Success increments hidden
+level and revision by one exactly like an ordinary step, removes one `rare_candy`
+inventory unit, leaves family Candy and Stardust unchanged and writes one
+`item`/`rare_candy` ledger line of -1 with reason powerup. It shares the
+`powerup:<uid>:<expected_revision>` receipt, so one Pokemon revision can be powered
+up once by either method. No schema change. Tests: tests/test_powerup.py.

@@ -1272,3 +1272,11 @@ trade screens. No schema or ID grammar change. The global command manifest chang
 delivery needs one `sync-commands --global --yes`. Tests:
 `tests/test_trade_command.py`; `tests/test_client_lifecycle.py`,
 `tests/test_trade_screens.py` and `tests/test_share.py` stay green.
+
+## Owner amendment: Rare Candy power-up button (2026-11-12)
+The power-up quote also shows "Rare Candy (have N)" and a `Use Rare Candy` button
+(`power_up_rare`) beside Confirm and Back. It is disabled at cap or when no Rare
+Candy is held. Pressing it applies one power-up step paid with one Rare Candy instead
+of Candy and Stardust, through the same saved Pokemon revision, guards and receipt as
+Confirm, and returns the updated details. Refusals privately request reopening.
+Rendering stays free of I/O. Tests: tests/test_powerup.py.
