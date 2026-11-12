@@ -16,7 +16,7 @@ from content.balance import load_table
 from pokewalker.bot import screens, storage
 from pokewalker.bot import research, powerup, pokedex
 from pokewalker.bot import evolve, gyms
-from pokewalker.bot import milestones, bag, route, share
+from pokewalker.bot import milestones, bag, route, share, trade
 from pokewalker.services.milestones import pending_count
 from pokewalker.services.items import recent_finds
 from pokewalker.db import with_receipt
@@ -29,6 +29,9 @@ EXCLUDED = "You are excluded here. Only /walker-account privacy, /walker-account
 REOPEN = "That option changed since this screen opened. Please reopen /walker to refresh."
 TIMED_OUT = "This window timed out. Please reopen /walker for a fresh one."
 OUTDATED = "This screen is out of date. Please reopen /walker to refresh."
+TRADE_TIMED_OUT = "This window timed out. Please reopen /trade for a fresh one."
+TRADE_OUTDATED = "This screen is out of date. Please reopen /trade to refresh."
+TRADE_REOPEN = "That option changed since this screen opened. Please reopen /trade to refresh."
 IDLE_SECONDS = 900
 DOUBLE_PRESS_SECONDS = 10
 
@@ -70,6 +73,7 @@ class Walker:
         self.handlers.update(route.handlers(self))
         self.handlers.update(share.handlers(self))
         self.handlers.update(gyms.handlers(self))
+        self.handlers.update(trade.handlers(self))
         self.before_home = self.recover_terminal
         self._locks = WeakValueDictionary()
 
@@ -176,7 +180,10 @@ class Walker:
             except _Outdated:
                 return
             except _Refused as error:
-                await self.refuse(interaction, str(error))
+                text = str(error)
+                if action.startswith("trade_"):
+                    text = {TIMED_OUT: TRADE_TIMED_OUT, OUTDATED: TRADE_OUTDATED, REOPEN: TRADE_REOPEN}.get(text, text)
+                await self.refuse(interaction, text)
                 return
             if after_commit := rendered.pop('after_commit', None):
                 rendered = await after_commit()

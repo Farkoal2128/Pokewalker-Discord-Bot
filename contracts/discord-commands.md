@@ -1162,3 +1162,54 @@ Producers: `bot.admin_trade_channels`; consumers: Discord moderators and the lat
 Registration stays local; after delivery the owner runs one
 `sync-commands --global --yes`. Tests: `tests/test_admin_trade_channels.py`;
 `tests/test_admin_channels.py` and `tests/test_client_lifecycle.py` stay green.
+
+## Private trade screens (additive)
+Pokemon-trading T6 (OD1, OD6, P5, P12) adds `pokewalker.bot.trade`: pure renderers
+`render_trade`, `render_picker` and `render_result` over the detached `trading.view`
+state plus the session (no I/O), and `handlers(walker)` registering seven actions on
+the shared `pw:v1:` router: `trade_pick`, `trade_offer`, `trade_confirm`,
+`trade_refresh`, `trade_cancel`, `trade_prev` and `trade_next`. Every handler needs
+`selection.trade_id` and saves `{trade_id, trade_revision, phase, offset}` (phase
+`trade`, `pick` or `result`); the offer select and paging work only from a picker
+(`phase=pick`), and an offered value must be on the eligible page at the saved
+offset. Time is `Walker.clock()`. The service refuses non-participants, and the
+router's session owner check runs first ("This screen is not yours. Open /walker
+for your own screen."). Buttons never check `trade_channels`, so they keep working
+after a channel is removed (P11).
+The trade screen reads "Trade with <@partner>", "Waiting for them to join: they run
+/trade member:@you" until the partner joins, "You offer: …" and "They offer: …"
+(name · kind · CP · appraisal stars, or "nothing yet"), a "Special trade: your X
+(Shiny, Legendary, Mythical, starter) · their Y (…). A trade can't be undone." line
+when either offer has a flag (OD6), "You: confirmed|not confirmed · Them: …",
+"Expires 15 min after the last join, offer or confirm (now <expiry, UTC>)." and an
+optional notice, with the partner's offered Pokémon's sprite. Buttons: Choose
+Pokémon (`trade_pick`), Confirm (`trade_confirm`, disabled unless both sides joined
+and offered and the viewer has not confirmed this revision), Refresh
+(`trade_refresh`) and Cancel trade (`trade_cancel`). Confirm passes the screen's
+`trade_revision` and `walker.bot.content` (P5). The picker reads "N tradable of M
+owned · favorites, your companion and gym defenders can't be traded" with a
+`trade_offer` select of at most 10 options "#n Name · CP x" and Prev
+(`trade_prev`), Next (`trade_next`) and Back (`trade_refresh`).
+Notices: `changed` "The offer changed — review it and confirm again.";
+`ineligible`/`offer_invalid` "That Pokémon can't be traded: <reason>." (it is a
+favorite, it is a companion, it is defending a gym, it is no longer in storage, it
+changed after it was offered); `capped` "You can trade again in Xh Ym." (minutes
+rounded up); `partner_capped` "They can't trade again yet."; `partner_unavailable`
+"They can't trade right now."; `waiting` "Confirmed. Waiting for them." A trade that
+is no longer open shows the result screen, chosen by its `state` alone (completion
+clears both confirmations): completed → "You received <name> (CP x). It counts for
+your Pokédex. Open /walker → Storage to see it." (or "Trade complete. It counts for
+your Pokédex. Open /walker → Storage to see it." when the received Pokémon is no
+longer found); cancelled or expired → "This trade ended. Use /trade member to start
+again." The result has no buttons; no trade screen has a Home or `/walker` button,
+and Home has no trade entry (OD1).
+Router outcomes for `trade_*` actions: an expired or unknown session → "This window
+timed out. Please reopen /trade for a fresh one."; an outdated revision more than 10
+seconds after the last committed action → "This screen is out of date. Please reopen
+/trade to refresh."; a handler refusal (missing or foreign trade, wrong phase, value
+not shown, unknown status) → "That option changed since this screen opened. Please
+reopen /trade to refresh."; a double press within 10 seconds → no message. Other
+actions keep the `/walker` texts. Producers: `bot.trade`, `bot.walker`; consumers:
+trade participants and the later `/trade` command. No schema, ID grammar or
+manifest change. Tests: `tests/test_trade_screens.py`; `tests/test_walker_router.py`
+and `tests/test_screens.py` stay green.
