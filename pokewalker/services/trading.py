@@ -3,7 +3,7 @@
 import math
 from uuid import uuid4
 
-from pokewalker.services import profiles, research, storage
+from pokewalker.services import milestones, profiles, research, storage
 
 TRADE_SECONDS = 900
 CAP_SECONDS = 86400
@@ -202,8 +202,8 @@ async def _recheck(conn, sides, owners, content):
     return rows, None
 
 
-async def _swap(conn, trade_id, sides, pokemon, now):
-    """Steps 7.1-7.4; any guard miss raises so the writer rolls back the whole job."""
+async def _swap(conn, trade_id, sides, pokemon, now, content):
+    """Steps 7.1-7.4 plus Pokedex credit (OD5); any guard miss raises so the writer rolls back the whole job."""
     async with conn.execute('UPDATE profiles SET last_trade_at=? WHERE profile_id IN (?,?) '
                             'AND (last_trade_at IS NULL OR last_trade_at<=?)',
                             (now, sides[0]['profile_id'], sides[1]['profile_id'], now - CAP_SECONDS)) as cursor:
@@ -220,6 +220,13 @@ async def _swap(conn, trade_id, sides, pokemon, now):
                 raise RuntimeError('Trade owner guard refused the swap')
         await conn.execute('UPDATE encounters SET acknowledged_at=? WHERE encounter_id=? AND acknowledged_at IS NULL',
                            (now, row['source_encounter_id']))
+    receivers = [sides[1 - side['side']]['profile_id'] for side in sides]
+    for receiver, row in zip(receivers, pokemon):
+        await conn.execute('INSERT INTO pokedex(profile_id,pokemon_id,seen_at,caught_at) VALUES (?,?,?,?) '
+                           'ON CONFLICT(profile_id,pokemon_id) DO UPDATE SET caught_at=COALESCE(caught_at,excluded.caught_at)',
+                           (receiver, storage.identify(content, row)[0]['species_id'], now, now))
+    for receiver in receivers:
+        await milestones.check_and_award(conn, receiver, content, now)
     await conn.execute("UPDATE trades SET state='completed',ended_at=?,revision=revision+1 WHERE trade_id=?",
                        (now, trade_id))
 
@@ -257,5 +264,53 @@ async def confirm(conn, session, trade_id, seen_revision, now, content):
         await conn.execute('UPDATE trade_sides SET confirmed_revision=NULL WHERE trade_id=?', (trade_id,))
         await conn.execute('UPDATE trades SET revision=revision+1 WHERE trade_id=?', (trade_id,))
         return {'status': 'offer_invalid', **invalid}
-    await _swap(conn, trade_id, sides, pokemon, now)
+    await _swap(conn, trade_id, sides, pokemon, now, content)
     return {'status': 'completed', 'trade_id': trade_id}
+
+
+def _offer(content, pokemon, multipliers):
+    if pokemon is None:
+        return None
+    shown = storage.stats(content, dict(pokemon), multipliers)
+    identity = shown['identity']
+    return {**shown, 'special': {'shiny': bool(pokemon['shiny']), 'legendary': bool(identity['is_legendary']),
+                                 'mythical': bool(identity['is_mythical']), 'starter': pokemon['origin'] == 'starter'}}
+
+
+async def _pinned(conn, uid):
+    async with conn.execute('SELECT * FROM pokemon WHERE pokemon_uid=?', (uid,)) as cursor:
+        return await cursor.fetchone()
+
+
+async def view(conn, session, trade_id, now, content, multipliers):
+    """Read-only detached snapshot for a joined participant, else None."""
+    me, refusal = await profiles.session_owner(conn, session)
+    if refusal:
+        return None
+    async with conn.execute('SELECT * FROM trades WHERE trade_id=? AND guild_id=?',
+                            (trade_id, session['guild_id'])) as cursor:
+        trade = await cursor.fetchone()
+    sides = await _sides(conn, trade_id) if trade is not None else []
+    mine = next((side for side in sides if side['profile_id'] == me['profile_id']), None)
+    if mine is None or mine['joined_at'] is None:
+        return None
+    other = sides[1 - mine['side']]
+    async with conn.execute('SELECT user_id FROM profiles WHERE profile_id=?', (other['profile_id'],)) as cursor:
+        partner_user_id = (await cursor.fetchone())[0]
+    offers = [_offer(content, await _pinned(conn, side['pokemon_uid']), multipliers) for side in (mine, other)]
+    state = 'expired' if trade['state'] == 'open' and trade['expires_at'] <= now else trade['state']
+    received = None
+    if state == 'completed' and offers[1] is not None:
+        received = {'name': offers[1]['identity']['name_en'], 'cp': offers[1]['cp']}
+    return {'trade_id': trade_id, 'state': state, 'revision': trade['revision'], 'expires_at': trade['expires_at'],
+            'my_side': mine['side'], 'partner_user_id': partner_user_id,
+            'partner_joined': other['joined_at'] is not None, 'mine': offers[0], 'theirs': offers[1],
+            'my_confirmed': mine['confirmed_revision'] == trade['revision'],
+            'partner_confirmed': other['confirmed_revision'] == trade['revision'], 'received': received}
+
+
+async def prune(conn, now):
+    """Sweep: expire idle open trades, then delete trades ended at least a day ago (last_trade_at is kept)."""
+    _writer(conn)
+    await conn.execute("UPDATE trades SET state='expired',ended_at=? WHERE state='open' AND expires_at<=?", (now, now))
+    await conn.execute("DELETE FROM trades WHERE state<>'open' AND ended_at<=?", (now - CAP_SECONDS,))

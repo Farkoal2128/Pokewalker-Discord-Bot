@@ -632,5 +632,223 @@ class TradingTests(unittest.IsolatedAsyncioTestCase):
             lambda conn: storage.set_favorite(conn, self.ids['v'], 'mon', 1, 1)))['favorite'], 1)
 
 
+    # T3 review: an offer refusal keeps its reason when the Pokemon is also special (OD6).
+
+    async def test_offer_refuses_shiny_favorite_and_legendary_companion(self):
+        await self.pokemon('shinyfav', shiny=1, favorite=1)
+        await self.pokemon('legend', pokemon_id=144)
+        await self.conn.execute("UPDATE profiles SET companion_uid='legend' WHERE user_id='u'")
+        for uid, reason in (('shinyfav', 'favorite'), ('legend', 'companion')):
+            with self.subTest(uid=uid):
+                await self.conn.execute('DELETE FROM trades')
+                await self.refused_offer(reason, uid)
+
+    # T5: Pokedex and milestone credit on receipt, view and prune.
+
+    async def dex(self, user):
+        return {row['pokemon_id']: (row['seen_at'], row['caught_at'])
+                for row in await self.rows('SELECT * FROM pokedex WHERE profile_id=?', (self.ids[user],))}
+
+    async def credit(self):
+        return {table: await self.rows(f'SELECT * FROM {table} ORDER BY 1,2')
+                for table in ('pokedex', 'milestone_awards', 'inbox_items')}
+
+    async def swap(self, a, b, mine, theirs, now=1000):
+        """A completed trade where a gives mine and b gives theirs; it completes at now+200."""
+        trade_id = (await self.open(a, b, now=now))['trade_id']
+        self.assertEqual((await self.open(b, a, now=now + 50))['status'], 'joined')
+        self.assertEqual((await self.offer(a, trade_id, mine, now=now + 100))['status'], 'offered')
+        revision = (await self.offer(b, trade_id, theirs, now=now + 100))['revision']
+        self.assertEqual((await self.confirm(a, trade_id, revision, now=now + 200))['status'], 'waiting')
+        self.assertEqual((await self.confirm(b, trade_id, revision, now=now + 200))['status'], 'completed')
+        return trade_id
+
+    def bundle_lines(self, user, milestone_id, category, now):
+        bundle = CONTENT['milestones']['bundles'][CONTENT['milestones'][category]['bundle']]
+        return sorted((self.ids[user], milestone_id, 'stardust' if item == 'stardust' else 'item',
+                       None if item == 'stardust' else item, quantity, now) for item, quantity in bundle.items())
+
+    async def inbox(self):
+        return sorted((row['profile_id'], row['milestone_id'], row['resource'], row['resource_id'],
+                       row['remaining'], row['created_at'])
+                      for row in await self.rows('SELECT * FROM inbox_items'))
+
+    async def test_receiver_registers_species_caught(self):
+        await self.pokemon('theirs', user='v', pokemon_id=4)
+        await self.swap('u', 'v', 'mon', 'theirs')
+        self.assertEqual(await self.dex('u'), {4: (1200, 1200)})
+        self.assertEqual(await self.dex('v'), {1: (1200, 1200)})
+
+    async def test_existing_seen_gains_caught_and_keeps_seen_at(self):
+        await self.conn.execute('INSERT INTO pokedex(profile_id,pokemon_id,seen_at) VALUES (?,4,50)', (self.ids['u'],))
+        await self.pokemon('theirs', user='v', pokemon_id=4)
+        await self.swap('u', 'v', 'mon', 'theirs')
+        self.assertEqual(await self.dex('u'), {4: (50, 1200)})
+
+    async def test_existing_caught_at_unchanged(self):
+        await self.conn.execute('INSERT INTO pokedex VALUES (?,4,50,60)', (self.ids['u'],))
+        await self.pokemon('theirs', user='v', pokemon_id=4)
+        await self.swap('u', 'v', 'mon', 'theirs')
+        self.assertEqual(await self.dex('u'), {4: (50, 60)})
+
+    async def test_form_folds_to_species(self):
+        await self.pokemon('alolan', user='v', pokemon_id=10091, form_id=10193)
+        await self.swap('u', 'v', 'mon', 'alolan')
+        self.assertEqual(await self.dex('u'), {19: (1200, 1200)})
+
+    async def test_completing_milestone_awards_once_to_inbox_in_same_commit(self):
+        milestones = importlib.import_module('pokewalker.services.milestones')
+        await self.conn.execute("UPDATE pokemon SET pokemon_id=144 WHERE pokemon_uid='mon'")
+        trade_id = await self.ready()
+        await self.conn.execute("UPDATE pokemon SET pokemon_id=151 WHERE pokemon_uid='theirs'")
+        self.assertEqual((await self.confirm('u', trade_id, 2))['status'], 'waiting')
+        real = milestones.check_and_award
+
+        async def award_then_fail(conn, profile_id, content, now):
+            await real(conn, profile_id, content, now)
+            raise RuntimeError('award failed after writing')
+
+        before = {**await self.state(), **await self.credit()}
+        with patch.object(milestones, 'check_and_award', award_then_fail), self.assertRaises(RuntimeError):
+            await self.confirm('v', trade_id, 2, now=1300)
+        self.assertEqual({**await self.state(), **await self.credit()}, before, 'credit and swap share one job')
+        self.assertEqual(await self.confirm('v', trade_id, 2, now=1300), {'status': 'completed', 'trade_id': trade_id})
+        self.assertEqual(sorted(tuple(row.values()) for row in await self.rows('SELECT * FROM milestone_awards')),
+                         sorted([(self.ids['v'], 'first_legendary:first', 1300),
+                                 (self.ids['u'], 'first_mythical:first', 1300)]))
+        self.assertEqual(await self.inbox(), sorted(
+            self.bundle_lines('v', 'first_legendary:first', 'first_legendary', 1300)
+            + self.bundle_lines('u', 'first_mythical:first', 'first_mythical', 1300)))
+        after = await self.credit()
+        self.assertEqual(await self.confirm('v', trade_id, 2, now=1400), {'status': 'completed', 'trade_id': trade_id})
+        self.assertEqual(await self.credit(), after)
+
+    async def test_giver_pokedex_entry_never_removed(self):
+        await self.conn.execute('INSERT INTO pokedex VALUES (?,1,10,20)', (self.ids['u'],))
+        await self.conn.execute('INSERT INTO pokedex VALUES (?,4,30,40)', (self.ids['v'],))
+        await self.pokemon('theirs', user='v', pokemon_id=4)
+        await self.swap('u', 'v', 'mon', 'theirs')
+        self.assertEqual(await self.dex('u'), {1: (10, 20), 4: (1200, 1200)})
+        self.assertEqual(await self.dex('v'), {1: (1200, 1200), 4: (30, 40)})
+
+    async def test_ping_pong_awards_each_profile_at_most_once(self):
+        await self.pokemon('legend', pokemon_id=144)
+        await self.pokemon('plain', user='v')
+        await self.swap('u', 'v', 'legend', 'plain', now=1000)
+        await self.swap('v', 'u', 'legend', 'plain', now=1200 + 86400)
+        await self.swap('u', 'v', 'legend', 'plain', now=1400 + 2 * 86400)
+        self.assertEqual((await self.rows("SELECT profile_id FROM pokemon WHERE pokemon_uid='legend'"))[0]['profile_id'],
+                         self.ids['v'])
+        self.assertEqual(sorted(tuple(row.values()) for row in await self.rows('SELECT * FROM milestone_awards')),
+                         sorted([(self.ids['v'], 'first_legendary:first', 1200),
+                                 (self.ids['u'], 'first_legendary:first', 87800)]))
+        self.assertEqual(await self.inbox(), sorted(
+            self.bundle_lines('v', 'first_legendary:first', 'first_legendary', 1200)
+            + self.bundle_lines('u', 'first_legendary:first', 'first_legendary', 87800)))
+
+    async def test_refused_execution_writes_no_pokedex_or_awards(self):
+        svc = self.svc()
+        await self.conn.execute("UPDATE pokemon SET pokemon_id=144 WHERE pokemon_uid='mon'")
+        trade_id = await self.ready()
+        empty = {'pokedex': [], 'milestone_awards': [], 'inbox_items': []}
+        self.assertEqual((await self.confirm('u', trade_id, 2))['status'], 'waiting')
+        self.assertEqual(await self.credit(), empty)
+        await self.conn.execute("UPDATE pokemon SET favorite=1 WHERE pokemon_uid='theirs'")
+        self.assertEqual(await self.confirm('v', trade_id, 2), {'status': 'offer_invalid', 'side': 1,
+                                                                 'reason': 'favorite'})
+        self.assertEqual(await self.credit(), empty)
+        await self.conn.execute("UPDATE pokemon SET favorite=0 WHERE pokemon_uid='theirs'")
+        revision = (await self.offer('v', trade_id, 'theirs'))['revision']
+        self.assertEqual((await self.confirm('u', trade_id, revision))['status'], 'waiting')
+        await self.conn.execute("UPDATE profiles SET last_trade_at=1150 WHERE user_id='v'")
+        with patch.object(svc, 'cap_left', return_value=0), self.assertRaises(RuntimeError):
+            await self.confirm('v', trade_id, revision)
+        self.assertEqual(await self.credit(), empty)
+        self.assertEqual((await self.confirm('v', trade_id, revision))['status'], 'capped')
+        self.assertEqual(await self.credit(), empty)
+
+    async def view(self, user, trade_id, now=1150, session=None):
+        multipliers = importlib.import_module('content.balance').load_table('cpm')['multipliers']
+        return await self.writer.run(lambda conn: self.svc().view(
+            conn, session or self.session(user), trade_id, now, CONTENT, multipliers))
+
+    async def offered(self, uid):
+        storage = importlib.import_module('pokewalker.services.storage')
+        multipliers = importlib.import_module('content.balance').load_table('cpm')['multipliers']
+        row = (await self.rows('SELECT * FROM pokemon WHERE pokemon_uid=?', (uid,)))[0]
+        return storage.stats(CONTENT, row, multipliers)
+
+    async def test_view_snapshot_detached_participant_only_with_special_flags(self):
+        await self.pokemon('legend', pokemon_id=144, shiny=1)
+        await self.pokemon('starter', user='v', pokemon_id=4)
+        await self.conn.execute("UPDATE pokemon SET origin='starter' WHERE pokemon_uid='starter'")
+        trade_id = (await self.open('u', 'v'))['trade_id']
+        self.assertEqual(await self.view('u', trade_id), {
+            'trade_id': trade_id, 'state': 'open', 'revision': 0, 'expires_at': 1900, 'my_side': 0,
+            'partner_user_id': 'v', 'partner_joined': False, 'mine': None, 'theirs': None,
+            'my_confirmed': False, 'partner_confirmed': False, 'received': None})
+        stale = {**self.session('u'), 'profile_id': self.ids['v']}
+        for user, session in (('v', None), ('w', None), ('x', None), ('u', stale)):
+            with self.subTest(user=user, stale=session is not None):
+                self.assertIsNone(await self.view(user, trade_id, session=session))
+        await self.open('v', 'u', now=1050)
+        await self.offer('u', trade_id, 'legend')
+        await self.offer('v', trade_id, 'starter')
+        await self.confirm('u', trade_id, 2, now=1150)
+        legend, starter = await self.offered('legend'), await self.offered('starter')
+        mine = await self.view('u', trade_id)
+        self.assertEqual(json.loads(json.dumps(mine)), mine, 'plain values only')
+        self.assertEqual(mine, {
+            'trade_id': trade_id, 'state': 'open', 'revision': 2, 'expires_at': 2050, 'my_side': 0,
+            'partner_user_id': 'v', 'partner_joined': True,
+            'mine': {**legend, 'special': {'shiny': True, 'legendary': True, 'mythical': False, 'starter': False}},
+            'theirs': {**starter, 'special': {'shiny': False, 'legendary': False, 'mythical': False,
+                                              'starter': True}},
+            'my_confirmed': True, 'partner_confirmed': False, 'received': None})
+        theirs = await self.view('v', trade_id)
+        self.assertEqual((theirs['my_side'], theirs['partner_user_id'], theirs['mine']['pokemon']['pokemon_uid'],
+                          theirs['my_confirmed'], theirs['partner_confirmed']), (1, 'u', 'starter', False, True))
+        await self.conn.execute("UPDATE pokemon SET level_x2=40 WHERE pokemon_uid='legend'")
+        self.assertEqual(mine['mine']['pokemon']['level_x2'], 20, 'a snapshot is detached from the database')
+        self.assertEqual((await self.view('u', trade_id, now=2050))['state'], 'expired')
+        self.assertEqual((await self.trade(trade_id))['state'], 'open', 'view writes nothing')
+        await self.conn.execute("UPDATE pokemon SET level_x2=20 WHERE pokemon_uid='legend'")
+        self.assertEqual((await self.confirm('v', trade_id, 2, now=1300))['status'], 'completed')
+        done = {user: await self.view(user, trade_id, now=1400) for user in ('u', 'v')}
+        self.assertEqual((done['u']['state'], done['u']['received']),
+                         ('completed', {'name': 'Charmander', 'cp': starter['cp']}))
+        self.assertEqual(done['v']['received'], {'name': 'Articuno', 'cp': legend['cp']})
+        self.assertIsNone(await self.view('w', trade_id, now=1400))
+
+    async def prune(self, now):
+        return await self.writer.run(lambda conn: self.svc().prune(conn, now))
+
+    async def test_prune_expires_stale_and_deletes_ended_after_a_day_keeps_cap(self):
+        with self.assertRaises(RuntimeError):
+            await self.svc().prune(self.conn, 1000)
+        await self.pokemon('theirs', user='v')
+        done = await self.swap('u', 'v', 'mon', 'theirs')
+        idle = (await self.open('w', 'y', now=1000))['trade_id']
+        states = lambda: self.rows('SELECT trade_id,state,ended_at FROM trades ORDER BY created_at,trade_id')
+        await self.prune(1899)
+        self.assertEqual({row['trade_id']: (row['state'], row['ended_at']) for row in await states()},
+                         {done: ('completed', 1200), idle: ('open', None)})
+        await self.prune(1900)
+        self.assertEqual({row['trade_id']: (row['state'], row['ended_at']) for row in await states()},
+                         {done: ('completed', 1200), idle: ('expired', 1900)})
+        self.assertEqual([side['open'] for side in await self.sides(idle)], [0, 0])
+        await self.prune(1200 + 86399)
+        self.assertEqual(len(await states()), 2)
+        await self.prune(1200 + 86400)
+        self.assertEqual([row['trade_id'] for row in await states()], [idle])
+        self.assertEqual(await self.scalar('SELECT count(*) FROM trade_sides WHERE trade_id=?', (done,)), 0)
+        self.assertEqual(await self.last_trade(), {'u': 1200, 'v': 1200, 'w': None, 'y': None, 'x': None})
+        self.assertEqual(await self.open('w', 'u', now=1200 + 86399), {'status': 'partner_capped'})
+        await self.prune(1900 + 86400)
+        self.assertEqual(await states(), [])
+        self.assertEqual(await self.scalar('SELECT count(*) FROM trade_sides'), 0)
+        self.assertEqual((await self.last_trade())['u'], 1200)
+
+
 if __name__ == '__main__':
     unittest.main()

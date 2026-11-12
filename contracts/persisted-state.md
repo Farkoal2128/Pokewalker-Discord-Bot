@@ -1099,7 +1099,8 @@ or moved Pokemon not_owned). Set companion bumps no revision, so the companion
 check is explicit. The first failing side gets
 {status: offer_invalid, side, reason}: that offer is cleared, both
 confirmations are cleared and the trade revision is bumped, and only that
-cleanup commits.
+cleanup, together with the confirm's activity extension, commits; nothing
+moves.
 
 The swap then, in the same job: sets last_trade_at=now on both profiles where
 it is NULL or <=now-86400 and requires exactly two rows; moves each offered
@@ -1122,3 +1123,46 @@ deletion, with source_encounter_id set to NULL, and the receiver's
 last_trade_at survives. Producers: trading service; consumers: trade screens
 and /trade (T6-T7). No schema change. Tests: test_trading, test_deletion,
 test_trading_schema.
+
+## Trade Pokédex credit, view and prune (additive)
+docs/features/pokemon-trading/PLAN.md OD5/OD6 and P6/P8 (D15 amended by owner
+decision 2026-11-12: receiving a Pokemon in a trade counts as seen and caught)
+extend pokewalker/services/trading.py. Inside confirm's swap job, after both
+owner UPDATEs, each receiver gets the received Pokemon's species from
+storage.identify (regional and other forms fold to their species) through the
+catch upsert: INSERT INTO pokedex(profile_id,pokemon_id,seen_at,caught_at)
+VALUES (receiver,species,now,now) ON CONFLICT(profile_id,pokemon_id) DO UPDATE
+SET caught_at=COALESCE(caught_at,excluded.caught_at), which keeps seen_at and
+any earlier caught_at. check_and_award then runs for both receivers in the same
+job, so newly completed milestones are awarded to milestone_awards and the
+inbox in the trade's commit, or not at all when the job rolls back. The giver's
+Pokedex entries are never touched. Milestones pay once per profile, so one
+Pokemon passed around pays each profile at most once (owner-accepted). A
+refused confirm (waiting, offer_invalid, any refusal or a rolled-back swap)
+writes no Pokedex entry and no award.
+
+view(conn,session,trade_id,now,content,multipliers) is read-only and
+participant-only: after session_owner, a caller who is not a joined side of the
+trade in the session's guild gets None. Otherwise it returns a detached dict
+(plain values, no rows): trade_id, state (an open trade with expires_at<=now
+reads expired; view itself writes nothing), revision, expires_at, my_side,
+partner_user_id, partner_joined, mine and theirs (each None without an offer,
+else storage.stats of the pinned Pokemon plus special flags shiny, legendary,
+mythical and starter for origin starter, OD6), my_confirmed and
+partner_confirmed (confirmed_revision equals the trade revision), and received
+({name, cp} of the partner's Pokemon once completed, else None).
+
+prune(conn,now) runs in the writer: it marks every open trade with
+expires_at<=now expired with ended_at=now, then deletes every trade that is
+not open and ended at or before now-86400 (sides cascade). Ended trades are
+thus deleted a day after they end; profiles.last_trade_at is untouched, so the
+24 h cap survives pruning. The 60 s sweep calls it (T7).
+
+Return shapes clarified for the trading service above: both busy outcomes of
+open_or_join (new trade, or an invited caller joined elsewhere) carry the
+caller's own current trade partner as partner_user_id; offer returns
+{status: offered, trade_id, revision} with the new trade revision; current
+returns None on a session refusal (stale or excluded) as well as when there is
+no joined open trade. Producers: trading service; consumers: trade screens,
+/trade and the sweep (T6-T7). No schema change. Tests: test_trading,
+test_milestones, test_pokedex.
