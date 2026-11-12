@@ -1179,3 +1179,28 @@ inventory unit, leaves family Candy and Stardust unchanged and writes one
 `item`/`rare_candy` ledger line of -1 with reason powerup. It shares the
 `powerup:<uid>:<expected_revision>` receipt, so one Pokemon revision can be powered
 up once by either method. No schema change. Tests: tests/test_powerup.py.
+
+## Owner amendment: admin force raid (2026-11-12)
+`raids.force_spawn(conn,guild_id,actor_user_id,reason,now,rng,content,
+checked_channel_id)` runs within an active writer transaction and shares `spawn`'s
+guards and insert. It first applies the per-server cooldown: it reads the newest
+mod_audit row with this guild_id and action force_raid; while now is less than that
+row's created_at+86400 it returns `{status: cooldown, remaining}` (seconds until the
+next allowed force) before any other read or write. Exactly 86400 seconds later is
+allowed. The cooldown is shared by every administrator of the server, is independent
+per server and starts only at a successful force. Then, like `spawn`, it expires the
+guild's overdue spawn and refuses raids_off (also when the guild has no row),
+no_channel, no_permission, channel_changed and active in that order; a refusal
+inserts no spawn and no audit. Success selects one Legendary identity, excluding
+Mythicals and ignoring routes, exactly as `spawn` does, inserts one pending
+world_spawns row with the checked channel, content version, now+3600 expiry and
+spawned_by_profile_id NULL, and in the same transaction one mod_audit row (target_kind
+guild, target_id the guild ID, actor_id, action force_raid, the caller's stripped
+reason, created_at now). It consumes no item and writes no ledger line or action
+receipt, returning `{status: spawned, spawn}`. Rollback removes both rows. The ticket
+path's receipt, guards, order and effects are unchanged. No schema change: mod_audit
+already admits target_kind guild and has no action constraint. mod_audit rows survive
+member reset, account deletion and opt-out; only deleting the guilds row cascades
+them, and no application path deletes it, so those paths cannot bypass the cooldown.
+Producers: raids service and WalkerAdmin; consumers: `/walker-mod log`, announce and
+resume_pending, raid join. Tests: tests/test_admin_force_raid.py and test_raids.

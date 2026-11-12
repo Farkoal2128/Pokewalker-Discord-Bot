@@ -1,11 +1,14 @@
 """C5 guild channel policy commands; all mutations use the single writer."""
 
+import math
 import time
+from datetime import datetime, timezone
 
 import discord
 from discord import app_commands
 
-from pokewalker.services import deletion, gyms as gym_service, profiles
+from pokewalker.bot.bag import RAID_REFUSALS
+from pokewalker.services import deletion, gyms as gym_service, profiles, raids as raid_service
 from pokewalker.services.profiles import restrictions
 
 
@@ -281,6 +284,43 @@ class WalkerAdmin(app_commands.Group):
             if not permissions.embed_links or not permissions.send_messages:
                 message += " Missing channel permission: EMBED_LINKS and SEND_MESSAGES are required for announcements."
         await self.reply(interaction, message)
+
+    @app_commands.command(name="force-raid", description="Spawn a World Legendary in the raid channel now (24-hour cooldown)")
+    async def force_raid(self, interaction: discord.Interaction, reason: str):
+        await interaction.response.defer(ephemeral=True)
+        if not await self.authorize(interaction):
+            return
+        reason = reason.strip()
+        if not reason:
+            await self.reply(interaction, "A reason is required.")
+            return
+
+        async def job(conn):
+            await self.check_actor(conn, interaction)
+            guild_id = str(interaction.guild_id)
+            async with conn.execute("SELECT raid_channel_id FROM guilds WHERE guild_id=?", (guild_id,)) as cursor:
+                guild = await cursor.fetchone()
+            checked = raid_service.checked_channel(interaction.guild, guild_id, guild and guild["raid_channel_id"])
+            return await raid_service.force_spawn(conn, guild_id, interaction.user.id, reason, self.bot.walker.clock(),
+                                                  self.bot.walker.rng, self.bot.content, checked)
+
+        try:
+            result = await self.bot.writer.run(job)
+        except _Refused as error:
+            await self.reply(interaction, str(error))
+            return
+        if result["status"] == "cooldown":
+            hours, minutes = divmod(math.ceil(result["remaining"] / 60), 60)
+            await self.reply(interaction, f"Force raid is on cooldown in this server. Try again in {hours}h {minutes}m.")
+            return
+        if result["status"] != "spawned":
+            await self.reply(interaction, RAID_REFUSALS[result["status"]])
+            return
+        spawn = result["spawn"]
+        await raid_service.announce(self.bot, spawn)
+        identity = next(i for i in self.bot.content["identities"] if i["identity_id"] == spawn["identity_id"])
+        until = datetime.fromtimestamp(spawn["expires_at"], timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        await self.reply(interaction, f"Spawned {identity['name_en']} in <#{spawn['channel_id']}> until {until}.")
 
     async def gym_command(self, interaction, action, name=None, reason=None):
         await interaction.response.defer(ephemeral=True)

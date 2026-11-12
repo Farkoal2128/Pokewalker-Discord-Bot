@@ -65,6 +65,7 @@ Use `/readme` to see this again.
 - `trade-channels add|add-all|remove|list`: choose the channels where members can trade.
 - `gyms create|remove|list`: manage this server's gyms.
 - `raids on|off <channel>`: turn World Legendary spawns on in a text channel, or off.
+- `force-raid <reason>`: spawn a World Legendary in the raid channel now (once per 24 hours per server).
 - `sharing on|off`: allow or block Share buttons in this server.
 - `reset <member> <reason>`: permanently reset a member's game data in this server.
 
