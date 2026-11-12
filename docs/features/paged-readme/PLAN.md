@@ -1,6 +1,6 @@
 # Plan: paged-readme — private paged `/readme` with an admin setup page
 
-**Status:** awaiting plan approval
+**Status:** approved (G-A ✅ 2026-11-12); implementing
 **Review:** none yet. This plan was split from pokemon-trading on 2026-11-12 (that plan's round-3 SHOULD 1). Its content was reviewed there as T8 in rounds 1–2; see the git history of `docs/features/pokemon-trading/PLAN.md`.
 **Home:** none assigned. Proposed: `feature/paged-readme · none`, cut from pokemon-trading's accepted candidate (or from `main` once that candidate is integrated), only after pokemon-trading reaches G-F (owner decision at G-A).
 **Inputs:** owner decision OD1 (2026-11-12, relayed by the coordinator) · [pokemon-trading plan](../pokemon-trading/PLAN.md) (`trade-channels`, `/trade`) · C5 discord-commands.md:32-38 (readme amendment), :122 (component IDs) · [PIPELINE.md](../../../PIPELINE.md)
@@ -105,7 +105,7 @@ R1 is `seam`: ≤ 2 production files (client.py, walker.py) and ≤ 300 producti
 
 | Step | Ticket(s) | Kind | Tier | Effort | Status |
 |---|---|---|---|---|---|
-| 1 | G-A plan approval, Home, scope; starts after pokemon-trading G-F | 🚦 | — | — | pending |
+| 1 | G-A plan approval, Home, scope; starts after pokemon-trading G-F | 🚦 | — | — | ✅ owner 2026-11-12 ("implement the plan"); Home `feature/paged-readme` cut from trading candidate 5b9d6f0 (tree 74bcfafb… test_cmd PASS, integration GO; trading command set final, owner-only G-F items pending); local-only |
 | 2 | [R1](tickets/R1.md) paged `/readme`, admin page, corrected check-in text; C5 | impl | seam | M | pending |
 | 3 | G-F final: independent GO, exact-tree full `test_cmd`, owner wording approval and smoke, delivery per G-A | 🚦 | — | — | pending |
 
