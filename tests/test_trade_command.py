@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock
 import discord
 
 from pokewalker.db import Writer, open_db
-from pokewalker.services import profiles
+from pokewalker.services import profiles, trading
 from test_reactions import FakeDiscord, http_error
 
 CONTENT = json.loads(Path("content/artifact/content.json").read_text(encoding="utf-8"))
@@ -152,7 +152,7 @@ class TradeCommandTests(unittest.IsolatedAsyncioTestCase):
         session = await self.latest_session(456)
         self.assertEqual((session["revision"], session["expires_at"], session["guild_id"]),
                          (0, self.now + self.walker_module.IDLE_SECONDS, "123"))
-        self.assertEqual(json.loads(session["selection"]), {"trade_id": trade["trade_id"], "trade_revision": 0})
+        self.assertEqual(json.loads(session["selection"]), {"trade_id": trade["trade_id"], "trade_revision": 0, "phase": "trade"})
         description = self.screen(interaction)
         self.assertIn("Trade with <@789>", description)
         self.assertIn(PINGED, description)
@@ -183,6 +183,27 @@ class TradeCommandTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Trade with <@789>", self.screen(reopened))
         self.assertNotIn(PINGED, self.screen(reopened))
         self.assertEqual(len(await self.rows("SELECT * FROM trades")), 1)
+
+    async def test_confirm_works_from_fresh_trade_screen(self):
+        await self.trade(456, 789)
+        await self.trade(789, 456)
+        for user, uid, species in ((456, "mine", 16), (789, "theirs", 19)):
+            await self.sql("INSERT INTO pokemon(pokemon_uid,profile_id,pokemon_id,level_x2,iv_attack,iv_defense,"
+                           "iv_stamina,gender,shiny,origin,favorite,content_version,caught_at) "
+                           "SELECT ?,profile_id,?,20,15,15,15,'male',0,'catch',0,'test',100 FROM profiles "
+                           "WHERE user_id=?", (uid, species, str(user)))
+            session = await self.latest_session(user)
+            [trade] = await self.rows("SELECT trade_id FROM trades")
+            await self.writer.run(lambda conn: trading.offer(conn, session, trade["trade_id"], uid, self.now))
+        fresh = await self.trade(456)
+        session = await self.latest_session(456)
+        press = SimpleNamespace(user=SimpleNamespace(id=456), guild_id=123, client=self.bot, data={},
+                                response=SimpleNamespace(defer=AsyncMock(), send_message=AsyncMock()),
+                                followup=SimpleNamespace(send=AsyncMock()), edit_original_response=AsyncMock())
+        self.assertIn("Trade with <@789>", self.screen(fresh))
+        await self.walker.route(press, f"pw:v1:{session['session_id']}:0:trade_confirm")
+        press.followup.send.assert_not_awaited()
+        self.assertIn("Confirmed. Waiting for them.", press.edit_original_response.await_args.kwargs["embed"].description)
 
     async def test_second_open_within_10_minutes_not_pinged_opener_told(self):
         await self.trade(456, 789)
@@ -258,7 +279,7 @@ class TradeCommandTests(unittest.IsolatedAsyncioTestCase):
         bare.channel.send.assert_not_awaited()
         self.assertIn("Trade with <@789>", self.screen(bare))
         session = await self.latest_session(456)
-        self.assertEqual(json.loads(session["selection"]), {"trade_id": trade["trade_id"], "trade_revision": 0})
+        self.assertEqual(json.loads(session["selection"]), {"trade_id": trade["trade_id"], "trade_revision": 0, "phase": "trade"})
         self.assertEqual(session["expires_at"], self.now + self.walker_module.IDLE_SECONDS)
         # The invitee has not joined, so a bare /trade does not open the trade for them.
         await self.refused(789, None, "Use /trade member:@someone to start or join a trade.")

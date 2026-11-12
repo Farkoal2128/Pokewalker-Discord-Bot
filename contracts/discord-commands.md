@@ -1170,7 +1170,8 @@ state plus the session (no I/O), and `handlers(walker)` registering seven action
 the shared `pw:v1:` router: `trade_pick`, `trade_offer`, `trade_confirm`,
 `trade_refresh`, `trade_cancel`, `trade_prev` and `trade_next`. Every handler needs
 `selection.trade_id` and saves `{trade_id, trade_revision, phase, offset}` (phase
-`trade`, `pick` or `result`); the offer select and paging work only from a picker
+`trade`, `pick` or `result`); Confirm works only from a trade screen (phase `trade`), and
+the offer select and paging work only from a picker
 (`phase=pick`), and an offered value must be on the eligible page at the saved
 offset. Time is `Walker.clock()`. The service refuses non-participants, and the
 router's session owner check runs first ("This screen is not yours. Open /walker
@@ -1191,9 +1192,11 @@ owned · favorites, your companion and gym defenders can't be traded" with a
 `trade_offer` select of at most 10 options "#n Name · CP x" and Prev
 (`trade_prev`), Next (`trade_next`) and Back (`trade_refresh`).
 Notices: `changed` "The offer changed — review it and confirm again.";
-`ineligible`/`offer_invalid` "That Pokémon can't be traded: <reason>." (it is a
-favorite, it is a companion, it is defending a gym, it is no longer in storage, it
-changed after it was offered); `capped` "You can trade again in Xh Ym." (minutes
+`ineligible` "That Pokémon can't be traded: <reason>."; `offer_invalid` "Your
+Pokémon can't be traded: <reason>." when the refused side is the viewer's, else
+"Their Pokémon can't be traded: <reason>." (reasons: it is a favorite, it is a
+companion, it is defending a gym, it is no longer in storage, it changed after it
+was offered); `capped` "You can trade again in Xh Ym." (minutes
 rounded up); `partner_capped` "They can't trade again yet."; `partner_unavailable`
 "They can't trade right now."; `waiting` "Confirmed. Waiting for them." A trade that
 is no longer open shows the result screen, chosen by its `state` alone (completion
@@ -1238,7 +1241,7 @@ interaction channel. One writer job, using Walker.clock(), applies in order:
    in Xh Ym." (minutes rounded up); `partner_capped` "They can't trade again yet.".
 A refusal leaves no session. Success (opened, joined, reopened, or a bare reopen)
 persists a normal Walker session (revision 0, expiry now + `IDLE_SECONDS`, selection
-`{trade_id, trade_revision}`) and shows `render_trade` over `trading.view`, all
+`{trade_id, trade_revision, phase: trade}`) and shows `render_trade` over `trading.view`, all
 replies under `AllowedMentions.none()`.
 
 Only `opened` with ping `reserved` posts, after commit and outside the writer job, one

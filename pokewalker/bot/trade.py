@@ -123,7 +123,7 @@ def handlers(walker):
             save(session, trade_id, state["revision"], "result")
             return render_result(state)
         save(session, trade_id, state["revision"], "trade")
-        return render_trade({**state, "notice": notice})
+        return render_trade({**state, "notice": notice(state) if callable(notice) else notice})
 
     async def picker(conn, session, trade_id, offset):
         state = await snapshot(conn, session, trade_id)
@@ -166,7 +166,7 @@ def handlers(walker):
             "offered": None, "ineligible": f"That Pokémon can't be traded: {REASONS.get(result.get('reason'), result.get('reason'))}."})
 
     async def trade_confirm(conn, session, interaction):
-        selection = selected(session)
+        selection = selected(session, "trade")
         result = await trading.confirm(conn, session, selection["trade_id"], selection.get("trade_revision"),
                                        walker.clock(), walker.bot.content)
         return await ended(conn, session, selection["trade_id"], result, {
@@ -175,7 +175,8 @@ def handlers(walker):
             "capped": _capped(result.get("seconds_left", 0)),
             "partner_capped": "They can't trade again yet.",
             "partner_unavailable": "They can't trade right now.",
-            "offer_invalid": f"That Pokémon can't be traded: {REASONS.get(result.get('reason'), result.get('reason'))}."})
+            "offer_invalid": lambda state: f"{'Your' if result.get('side') == state['my_side'] else 'Their'} Pokémon "
+                                           f"can't be traded: {REASONS.get(result.get('reason'), result.get('reason'))}."})
 
     async def trade_cancel(conn, session, interaction):
         selection = selected(session)
@@ -247,7 +248,8 @@ def command(bot):
                     "partner_capped": "They can't trade again yet.",
                     "excluded": EXCLUDED}.get(result["status"], "Use /trade member:@someone to start or join a trade.")}
             state = await trading.view(conn, session, result["trade_id"], now, bot.content, bot.walker.multipliers)
-            session["selection"] = json.dumps({"trade_id": result["trade_id"], "trade_revision": state["revision"]})
+            session["selection"] = json.dumps({"trade_id": result["trade_id"], "trade_revision": state["revision"],
+                                               "phase": "trade"})
             await conn.execute("UPDATE sessions SET selection=? WHERE session_id=?",
                                (session["selection"], session["session_id"]))
             return {"state": {**state, "session": session}, "ping": result.get("ping"),

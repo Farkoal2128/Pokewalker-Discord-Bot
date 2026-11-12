@@ -85,7 +85,7 @@ class TradeScreenTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(result["status"], ("opened", "joined"))
         await self.writer.run(lambda conn: conn.execute(
             "UPDATE sessions SET selection=? WHERE session_id=?",
-            (json.dumps({"trade_id": result["trade_id"], "trade_revision": 0}), self.sids[user])))
+            (json.dumps({"trade_id": result["trade_id"], "trade_revision": 0, "phase": "trade"}), self.sids[user])))
         return result["trade_id"]
 
     async def pair(self):
@@ -302,6 +302,45 @@ class TradeScreenTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([side["confirmed_revision"] for side in sides], [None, None])
         text, _ = self.shown(await self.press(456, "trade_confirm"))
         self.assertIn("Confirmed. Waiting for them.", text)
+
+    async def test_confirm_refused_from_picker_phase(self):
+        trade_id = await self.pair()
+        await self.mon(456, "mine")
+        await self.mon(789, "theirs", pokemon_id=19)
+        await self.offer(456, "mine")
+        await self.offer(789, "theirs")
+        await self.press(456, "trade_refresh")
+        await self.press(456, "trade_pick")
+        session = await self.session(456)
+        self.assertEqual(json.loads(session["selection"])["phase"], "pick")
+        self.assertEqual(self.refused(await self.press(456, "trade_confirm")), TRADE_REOPEN)
+        self.assertEqual(await self.session(456), session)
+        _, sides = await self.trade_state(trade_id)
+        self.assertEqual([side["confirmed_revision"] for side in sides], [None, None])
+        await self.press(456, "trade_refresh")
+        text, _ = self.shown(await self.press(456, "trade_confirm"))
+        self.assertIn("Confirmed. Waiting for them.", text)
+
+    async def test_offer_invalid_notice_names_whose_pokemon(self):
+        await self.pair()
+        await self.mon(456, "mine")
+        await self.mon(789, "theirs", pokemon_id=19)
+        await self.mon(789, "spare", pokemon_id=25)
+        await self.offer(456, "mine")
+        await self.offer(789, "theirs")
+        await self.press(456, "trade_refresh")
+        await self.press(456, "trade_confirm")
+        await self.writer.run(lambda conn: conn.execute("UPDATE pokemon SET favorite=1 WHERE pokemon_uid='theirs'"))
+        await self.press(789, "trade_refresh")
+        text, _ = self.shown(await self.press(789, "trade_confirm"))
+        self.assertIn("Your Pokémon can't be traded: it is a favorite.", text)
+        await self.offer(789, "spare")
+        await self.press(456, "trade_refresh")
+        await self.press(456, "trade_confirm")
+        await self.writer.run(lambda conn: conn.execute("UPDATE pokemon SET favorite=1 WHERE pokemon_uid='mine'"))
+        await self.press(789, "trade_refresh")
+        text, _ = self.shown(await self.press(789, "trade_confirm"))
+        self.assertIn("Their Pokémon can't be traded: it is a favorite.", text)
 
     async def test_capped_notice_shows_wait_only_for_self(self):
         trade_id = await self.pair()
