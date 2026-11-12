@@ -332,3 +332,8 @@ decision 2026-11-12). Its effect and storage are C3. Each changed table has
   from the survivor roll. The artifact payload is unchanged; the manifest's
   balance hashes are re-recorded. Tests: tests/test_balance_tables.py and
   tests/test_content_integrity.py.
+
+## Owner amendment: raid boss minimum level (2026-11-12)
+`catch.json` (version 3, checked 2026-11-12) adds `raid_level_range: [20, 25]`, the
+whole-level range for World Legendary raid participants. `wild_level_range` stays
+[1, 20] for every other wild encounter.

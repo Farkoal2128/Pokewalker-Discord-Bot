@@ -148,6 +148,14 @@ class EncounterTests(unittest.TestCase):
         self.assertEqual({level for level, _ in rolls}, {20})
         self.assertEqual({v for _, ivs in rolls for v in ivs}, set(range(10, 16)))
 
+    def test_raid_level_range_is_20_to_25_while_wild_stays_1_to_20(self):
+        rng = random.Random(4)
+        raid = {self.domain.roll_level_ivs(rng, rules=self.rules, level_range="raid_level_range")[0]
+                for _ in range(600)}
+        self.assertEqual(raid, set(range(40, 51, 2)))
+        wild = {self.domain.roll_level_ivs(rng, rules=self.rules)[0] for _ in range(2000)}
+        self.assertEqual(wild, set(range(2, 41, 2)))
+
     def test_tables_are_injected(self):
         rules = dict(self.rules, shiny_probability=1, wild_level_range=[7, 7],
                      wild_iv_range=[9, 9], starter_level=3, starter_iv_range=[12, 12])

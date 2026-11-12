@@ -1247,3 +1247,11 @@ member reset, account deletion and opt-out; only deleting the guilds row cascade
 them, and no application path deletes it, so those paths cannot bypass the cooldown.
 Producers: raids service and WalkerAdmin; consumers: `/walker-mod log`, announce and
 resume_pending, raid join. Tests: tests/test_admin_force_raid.py and test_raids.
+
+## Owner amendment: raid boss minimum level (2026-11-12)
+The owner found sub-100 CP World Legendaries underwhelming and set a hidden minimum
+of level 20 (half the level-40 cap, roughly half of maximum CP). `raids.join` rolls
+each participant's level from catch rule `raid_level_range` [20, 25] (whole levels,
+stored as `level_x2` 40-50) instead of `wild_level_range`; IVs, gender and shiny roll
+as before, and no level is displayed. Existing raid encounters keep their rolls.
+Ordinary wild encounters are unchanged. Tests: tests/test_raids.py, tests/test_encounters.py.

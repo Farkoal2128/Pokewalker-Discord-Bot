@@ -1027,7 +1027,7 @@ class RaidJoinTests(unittest.IsolatedAsyncioTestCase):
         await self.active()
         rolls = Mock()
         rolls.random.return_value = .5
-        rolls.randint.side_effect = [7, 2, 3, 4]
+        rolls.randint.side_effect = [22, 2, 3, 4]
         first = await self.join(rng=rolls)
         self.assertEqual(first['status'], 'new')
         before = await self.snapshot()
@@ -1044,7 +1044,8 @@ class RaidJoinTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((row['profile_id'], row['state'], row['tier'], row['route_id']),
                          (self.pid, 'revealed', 'Legendary/Mythical', profile['route_id']))
         self.assertEqual((row['level_x2'], row['iv_attack'], row['iv_defense'], row['iv_stamina'],
-                          row['gender'], row['shiny']), (14, 2, 3, 4, 'genderless', 0))
+                          row['gender'], row['shiny']), (44, 2, 3, 4, 'genderless', 0))
+        self.assertEqual(rolls.randint.call_args_list[0].args, (20, 25))
         self.assertEqual(row['content_version'], profiles.content_facts(self.content)[0])
         self.assertEqual((await self.rows('SELECT * FROM pokedex'))[0],
                          {'profile_id': self.pid, 'pokemon_id': 144, 'seen_at': 1000, 'caught_at': None})

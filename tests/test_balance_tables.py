@@ -282,7 +282,7 @@ class BalanceTableTests(unittest.TestCase):
                 self.assertTrue(table["source"])
                 date.fromisoformat(table["checked"])
                 versions = {"find_table": 2, "conversion_rates": 3, "capacities": 3, "routes": 2,
-                            "survivor_table": 2, "catch": 2}
+                            "survivor_table": 2, "catch": 3}
                 self.assertEqual(table["version"], versions.get(name, 1))
                 mirror = {"survivor_table", "conversion_rates", "catch"}
                 if name in mirror:
@@ -309,7 +309,7 @@ class BalanceTableTests(unittest.TestCase):
             "flee_probability": .1, "shiny_flee_probability": 0, "legendary_flee_probability": 0,
             "shiny_probability": 1 / 256, "lure_probability_multiplier": 4, "lure_encounters": 10,
             "mirror_encounters": 10, "mirror_probability": .2,
-            "wild_level_range": [1, 20], "wild_iv_range": [0, 15], "starter_level": 10, "starter_iv_range": [10, 15],
+            "wild_level_range": [1, 20], "raid_level_range": [20, 25], "wild_iv_range": [0, 15], "starter_level": 10, "starter_iv_range": [10, 15],
         })
         self.assertEqual(self.load("capacities")["limits"], {
             "storage": 250, "bag_units": 250,

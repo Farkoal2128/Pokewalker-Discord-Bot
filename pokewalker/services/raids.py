@@ -50,7 +50,7 @@ async def join(conn, guild_id, user_id, now, rng, content):
         rules = load_table('catch')['rules']
         gender, variety = encounters.roll_gender(identity, rng)
         shiny = encounters.roll_shiny(rng, lure_id is not None, rules=rules)
-        level_x2, ivs = encounters.roll_level_ivs(rng, rules=rules)
+        level_x2, ivs = encounters.roll_level_ivs(rng, rules=rules, level_range='raid_level_range')
         version, _ = profiles.content_facts(content)
         eid = str(uuid4())
         await conn.execute(
