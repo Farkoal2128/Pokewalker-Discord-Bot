@@ -1,8 +1,8 @@
 # Plan: pokemon-trading — player-to-player Pokémon trading (`/trade`)
 
-**Status:** awaiting plan approval
+**Status:** approved (G-A ✅ 2026-11-12); implementing
 **Review:** Review rounds 1–2 applied; see git history of this file. Round 3 (2026-11-12) has also been applied.
-**Home:** none assigned. Proposed `feature/pokemon-trading · none`, cut from `main` at or after **8face5b** (router idle timeout), with these planning docs carried over from `docs/pokemon-trading-plan` (owner decision at G-A).
+**Home:** `feature/pokemon-trading · none` (assigned at G-A), cut from `main` at or after **8face5b** (router idle timeout), with these planning docs carried over from `docs/pokemon-trading-plan` (owner decision at G-A).
 **Inputs:** owner requirement (§2) · owner decisions OD1–OD9 (2026-11-12, relayed by the coordinator) · [requirements D1–D61](../pokewalker-bot/README.md) (owner-only) · [v1.1/v2 plan](../pokewalker-v1.1-v2/PLAN.md) (conventions) · [PIPELINE.md](../../../PIPELINE.md)
 
 ## 0. Owner decisions (2026-11-12) — no product question is open
@@ -123,7 +123,7 @@ Every row is `seam` (PIPELINE.md:13): ≤ 2 production files, ≤ 300 production
 
 | Step | Ticket(s) | Kind | Tier | Effort | Status |
 |---|---|---|---|---|---|
-| 1 | G-A plan approval, Home, delivery scope | 🚦 | — | — | pending |
+| 1 | G-A plan approval, Home, delivery scope | 🚦 | — | — | ✅ owner 2026-11-12: "once that's done, implement the plan" after review loop clean (round 5, ce45a05); Home `feature/pokemon-trading` at a3f9d8e ⊇ 8face5b; delivery local-only, owner deploys |
 | 2 | [T1](tickets/T1.md) migration `0018_trades.sql` + test fallout; C3 | impl | seam | S | pending |
 | 3 | [T2](tickets/T2.md) `/walker-admin trade-channels`; C5 | impl | seam | M | pending |
 | 4 | [T3](tickets/T3.md) `services/trading.py`: eligibility, open/join/reopen, cap + ping window, offer, cancel; C3 | impl | seam | M | pending |
