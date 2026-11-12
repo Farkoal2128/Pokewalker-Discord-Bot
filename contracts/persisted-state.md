@@ -1028,3 +1028,50 @@ admin commands, sweep and deletion. No existing writer changes pokemon.profile_i
 Older binaries refuse schema 18; rollback requires a compatible backup, never
 lowering user_version. Tests: test_trading_schema plus the receipt-owner,
 companion, capacity, database, form, route-unlock, gym and deletion regressions.
+
+## Trading service (additive)
+docs/features/pokemon-trading/PLAN.md OD4/OD9 and P2/P5-P7/P11/P13 add
+pokewalker/services/trading.py. Every mutator requires the caller's writer
+transaction, checks the Walker session owner (session_owner: stale/excluded)
+before any other guard, and takes one UTC epoch `now` from Walker.clock.
+Constants: TRADE_SECONDS=900, CAP_SECONDS=86400, PING_SECONDS=600. Activity is
+`expires_at=MAX(expires_at,now+900)` (15 minutes idle); join and offer run it.
+Expiry is lazy on touch: an open trade with expires_at<=now becomes expired
+with ended_at=now, and the trade_close_sides trigger frees both members.
+
+tradable_reason(identity,pokemon,profile) returns not_owned for a missing,
+sent or foreign Pokemon, else deployed/favorite/companion from
+research.protected_reason, else None; Shiny and Legendary/Mythical stay
+tradable. eligible_page(conn,profile_id,offset) returns ten tradable owned
+Pokemon ordered caught_at DESC,pokemon_uid (filtered in SQL) with the eligible
+and owned totals. cap_left(profile,now) is the whole seconds left until
+last_trade_at+86400, else 0; cancelled and expired trades never set
+last_trade_at.
+
+open_or_join(conn,session,partner_user_id,now,can_ping) refuses, in order:
+stale/excluded; partner_not_enrolled (no profile in this guild); self;
+partner_unavailable (partner excluded). It then expires either member's due
+trades. If an open trade between the pair exists: a caller already joined gets
+reopened; an invited caller gets capped (with seconds_left), partner_capped,
+busy (joined elsewhere) or joined (joined_at=now, open=1, activity). Otherwise a
+new trade refuses busy (the caller's own trade partner as partner_user_id),
+capped, partner_capped or partner_busy (no partner identity or time revealed),
+and else inserts the trade (expires_at=now+900) with exactly two sides: side 0
+the caller (joined, open=1) and side 1 the named partner (joined_at NULL,
+open=0, so an invitee is never blocked); you can never open a trade with
+yourself. Only opened carries ping: reserved when can_ping and the opener's
+last_trade_ping_at is NULL or <=now-600 (then set to now), else no_permission
+or rate_limited. Joined and reopened never ping.
+
+current(conn,session,now) returns the caller's joined open trade with its
+sides, expiring it first when due, or None. offer(conn,session,trade_id,
+pokemon_uid,now) refuses a non-participant or unjoined caller as stale, an
+expired trade as expired and a completed/cancelled one as ended; a Pokemon
+failing storage.detail or tradable_reason at offer time returns ineligible with
+its reason and writes nothing; otherwise it pins the caller's
+(pokemon_uid,pokemon_revision), clears both confirmed_revision values, bumps
+the trade revision, runs activity and returns offered. cancel(conn,session,
+trade_id,now) lets a joined participant move an open trade to cancelled with
+ended_at=now. No receipts, items or resources are written. Producers: trading
+service; consumers: later trade execution, screens and /trade (T4-T7). No
+schema change. Tests: test_trading and test_trading_schema.
