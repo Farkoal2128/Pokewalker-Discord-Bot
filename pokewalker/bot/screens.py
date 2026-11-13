@@ -3,7 +3,7 @@
 import discord
 
 # Preserve the established renderer exports after the M1.7 size split.
-from pokewalker.bot.screens_catch import custom_id, render_catch, render_run_confirm, render_terminal, render_master_confirm
+from pokewalker.bot.screens_catch import _label as label, custom_id, render_catch, render_run_confirm, render_terminal, render_master_confirm
 
 
 def home(state):

@@ -75,7 +75,7 @@ class CatchingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.status, "revealed")
         bag = {r["item_id"]: r["quantity"] for r in await self.rows("SELECT * FROM inventory")}
         self.assertEqual((bag["poke_ball"], bag["razz_berry"]), (29, 4))
-        self.assertIsNone(json.loads(session["selection"])["berry"])
+        self.assertEqual(json.loads(session["selection"])["berry"], "razz_berry")
         attempt = (await self.rows("SELECT * FROM catch_attempts"))[0]
         self.assertEqual((attempt["ordinal"], attempt["ball"], attempt["berry"]), (0, "poke_ball", "razz_berry"))
         self.assertEqual((await self.encounter_row())["revision"], 1)
@@ -102,6 +102,32 @@ class CatchingTests(unittest.IsolatedAsyncioTestCase):
                 result, _ = await self.throw(self.choose(session, berry=berry), ())
                 self.assertEqual(result.status, "no_berry")
             self.assertEqual(await self.snapshot(), before)
+
+    async def test_berry_selection_sticks_and_running_out_refuses_until_changed(self):
+        # Owner decision 2026-11-12: the berry stays selected like the ball.
+        session = await self.prepared()
+        await self.inventory(razz_berry=1)
+        await self.click(session, "select_berry", ["razz_berry"])
+        session = await self.current(session)
+        self.walker.rng = Mock(random=Mock(side_effect=(0.99, 0.99)))
+        await self.click(session, "throw")
+        session = await self.current(session)
+        self.assertEqual(json.loads(session["selection"])["berry"], "razz_berry")
+        before = await self.snapshot()
+        refused = await self.click(session, "throw")
+        description = refused.edit_original_response.await_args.kwargs["embed"].description
+        self.assertIn("out of Razz Berry", description)
+        self.assertIn("Berry: Razz Berry", description)
+        self.assertEqual(await self.rows("SELECT * FROM catch_attempts WHERE ordinal=1"), [])
+        self.assertEqual(json.loads((await self.current(session))["selection"])["berry"], "razz_berry")
+        self.assertEqual((before["inventory"], before["catch_attempts"]),
+                         ((await self.snapshot())["inventory"], (await self.snapshot())["catch_attempts"]))
+        session = await self.current(session)
+        await self.click(session, "pick_berry", ["none"])
+        session = await self.current(session)
+        self.walker.rng = Mock(random=Mock(side_effect=(0,)))
+        caught = await self.click(session, "throw")
+        self.assertIn("stars", caught.edit_original_response.await_args.kwargs["embed"].description)
 
     async def test_storage_full_spends_nothing(self):
         session = await self.prepared()
@@ -386,7 +412,7 @@ class CatchingTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("broke free", failed.edit_original_response.await_args.kwargs["embed"].description)
         session = await self.current(session)
         selection = json.loads(session["selection"])
-        self.assertEqual((selection["encounter_revision"], selection["berry"]), (1, None))
+        self.assertEqual((selection["encounter_revision"], selection["berry"]), (1, "razz_berry"))
         caught = await self.click(session, "throw")
         rendered = caught.edit_original_response.await_args.kwargs
         self.assertIn("stars", rendered["embed"].description)

@@ -564,7 +564,9 @@ class Walker:
             if state["pending"]:
                 return await self.pending_menu(conn, session, encounter["encounter_id"])
             return screens.render_terminal(state)
-        notices = {"no_ball": "You have none of the selected ball.", "no_berry": "You have none of the selected berry.",
+        berry = screens.label(state["selection"].get("berry"))
+        notices = {"no_ball": "You have none of the selected ball.",
+                   "no_berry": f"You're out of {berry}. Pick another berry or None to throw.",
                    "expired": "The World Legendary left; this encounter expired.",
                    "revealed": "It broke free!" if not session.get("_read_only") else "Encounter updated. Reopen /walker."}
         state["notice"] = notices.get(result.status, result.status)

@@ -141,7 +141,7 @@ async def throw(conn, encounter_id, session, expected_revision, rng, now, *, con
     saved = await with_receipt(conn, key, "throw", compute, profile_id=session["profile_id"])
     await conn.execute("UPDATE catch_attempts SET receipt_key=? WHERE encounter_id=? AND ordinal=?",
                        (key, encounter_id, ordinal))
-    selection.update(berry=None, encounter_revision=saved["encounter"]["revision"])
+    selection.update(encounter_revision=saved["encounter"]["revision"])
     selection.pop("master_confirm", None)
     session["selection"] = json.dumps(selection)
     session["_catch_applied"] = True
