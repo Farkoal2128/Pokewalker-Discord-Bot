@@ -134,7 +134,8 @@ class AdminChannelTests(unittest.IsolatedAsyncioTestCase):
         channels = command.get_command("channels")
         self.assertEqual({c.name for c in channels.commands}, {"add", "add-all", "remove", "list"})
         gyms = command.get_command("gyms")
-        self.assertEqual({c.name for c in gyms.commands}, {"create", "remove", "list"})
+        self.assertEqual({c.name for c in gyms.commands}, {"create", "remove", "list", "legendary"})
+        self.assertEqual({p.name for p in gyms.get_command("legendary").parameters if p.required}, {"on", "reason"})
         for action in ("create", "remove"):
             self.assertEqual({p.name for p in gyms.get_command(action).parameters if p.required}, {"name", "reason"})
 

@@ -83,6 +83,8 @@ class TradingSchemaTests(unittest.IsolatedAsyncioTestCase):
                 after = {table: [dict(row) for row in await upgraded.execute_fetchall(
                     f'SELECT * FROM {table}')] for table in ('guilds', 'profiles', 'pokemon')}
                 profile = after['profiles'][0]
+                # Later migrations may add guild settings; D63's starts off for existing servers.
+                self.assertEqual(after['guilds'][0].pop('gym_legendary_defenders', 0), 0)
                 self.assertEqual((profile.pop('last_trade_at', 'missing'),
                                   profile.pop('last_trade_ping_at', 'missing')), (None, None))
                 self.assertEqual(after, before)

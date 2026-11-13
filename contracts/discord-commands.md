@@ -917,7 +917,7 @@ canonical/battle HP, hours held, weakening, remaining time and holder in text
 (the holder as a `<@user_id>` mention in the embed, which never pings).
 Empty/mine/other views offer Deploy, Recall+Rewards, or Battle respectively,
 plus Back. Battle remains refused until M7.6b registers it; Home entry is M7.5b.
-Deploy pages contain ten owned Pokemon labelled "<name> · CP <cp>", mark companion, Legendary/Mythical and
+Deploy pages contain ten owned Pokemon labelled "<name> · CP <cp>", mark companion, Legendary/Mythical (unless D63 allows) and
 deployed entries ineligible, and revalidate page membership and eligibility in
 the writer job. Confirm passes walker.bot.content explicitly to C3 deploy,
 with the saved Pokemon revision. Stale confirms say "This gym changed. Reopen it."
@@ -951,6 +951,12 @@ uses optional defaults preserving existing literal-state output; renderers do no
 I/O. Producer: bot.storage; consumers: private Walker details and companion action.
 No schema, service signature or component-ID changes. Tests: test_storage,
 test_companion and test_gym_screens. Focused evidence leaves G-F2/native gates open.
+
+## C5: D63 `/walker-admin gyms legendary on|off reason`
+Manage Server, guild only, reason required. Writes `guilds.gym_legendary_defenders` and a
+`gym_legendary_on|off` mod_audit row, replying with the new state. `gyms list` adds a line
+naming the current state. The private gym screens mark Legendary/Mythical Pokémon as unable to
+defend and omit them as claim options only while the setting is off.
 
 ## C5: D62b gym feeding
 The holder's gym view adds **Feed Razz Berry** (`gym_feed`) beside Recall and Rewards and

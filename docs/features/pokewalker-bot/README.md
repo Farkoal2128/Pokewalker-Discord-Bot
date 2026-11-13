@@ -161,7 +161,7 @@ target, action, reason and time. It is deleted with the server's data, and a tar
 - **D40b: Gym start quota (v2).** The researched "5 battle starts per player per UTC day" is
   retired under D9. The cooldown after each completed battle is the only start limit: **5
   minutes** (10 before the owner decision 2026-11-12, D62).
-- **D41: Legendary/Mythical rules (D37):** they cannot defend gyms but can attack, following GO. They
+- **D41: Legendary/Mythical rules (D37):** by default they cannot defend gyms but can attack, following GO; a server can allow them to defend (D63). They
   can be the companion, and they are protected from bulk research send like shinies.
 ### Starter and language (D42–D43, approved by the owner 2026-11-04)
 
@@ -445,6 +445,20 @@ and that only Razz Berries can be fed. The approved design:
   `min(2.0, 2.0 − 0.1 × h + heal)`, where `heal` (0–0.7) is the stored feed total. A feed is
   refused, spending nothing, when the factor is already 2.0×, during the 10-minute wait, or
   with no Razz Berry. Each feed spends exactly one berry once, even on a double press.
+
+### Legendary and Mythical gym defenders setting (D63, owner decision 2026-11-12)
+
+The owner requested: "Create a moderation setting that enables/disables legendary/mythic/etc. in
+gyms. Have it so they're not allowed by default but can be allowed." The approved design:
+
+- **D63: Per-server setting.** Members with Manage Server use
+  `/walker-admin gyms legendary on|off reason` (audited like other gym admin commands).
+  It starts **off**, which keeps D41: Legendary and Mythical Pokémon (the same group the
+  Companion Mirror and research protection treat as rare) cannot be deployed as defenders or
+  chosen to claim a gym after a win. **On** allows both. Attacking is always allowed.
+- Turning it off does not remove a Legendary or Mythical defender already in a gym; it stays
+  until its tenure ends or it is recalled, defeated or sent home by a moderator.
+- `/walker-admin gyms list` shows the current setting.
 
 ## Open questions
 

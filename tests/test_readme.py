@@ -41,7 +41,7 @@ class ReadmeTests(IsolatedAsyncioTestCase):
     def test_approved_text_verbatim(self):
         content = Path('content/help.md').read_bytes()
         self.assertEqual(hashlib.sha256(content).hexdigest(),
-                         '2921bd6c9c295e8748e009bcbc1eba8ac47f2d7ccc2479a7b9fbf0bd45977188')
+                         'bb626b09321f9011e5714ef9b18ff74c733755a06fc81bbea1c192fdf4093963')
 
     def test_page_one_is_current_opening_verbatim(self):
         page = self.pages()[0]
@@ -120,7 +120,7 @@ class ReadmeTests(IsolatedAsyncioTestCase):
         self.assertIn('**`/walker-admin`** (needs Manage Server)', page)
         self.assertIn('**`/walker-mod`** (needs Moderate Members)', page)
         self.assertNotRegex(page, r'(?<![\w-])/admin\b')
-        self.assertEqual(len(documented), 24)
+        self.assertEqual(len(documented), 25)  # D63 added gyms legendary
         listed = {span.split()[0] for line in page.splitlines() if line.startswith('- ')
                   for span in re.findall(r'`([^`]+)`', line)}
         self.assertEqual(listed, children)

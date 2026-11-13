@@ -355,7 +355,9 @@ class WalkerAdmin(app_commands.Group):
             else:
                 rows = await gym_service.list_gyms(conn, guild_id)
                 if action == "list":
-                    return "\n".join(row["name"] for row in rows) or "No gyms configured in this server."
+                    allowed = await gym_service.legendary_defenders_allowed(conn, guild_id)
+                    return (("\n".join(row["name"] for row in rows) or "No gyms configured in this server.")
+                            + f"\nLegendary/Mythical defenders: {'allowed' if allowed else 'not allowed'}")
                 gym = next((row for row in rows if row["name"] == name), None)
                 if gym is None:
                     return "No active gym with that name in this server."
@@ -379,6 +381,40 @@ class WalkerAdmin(app_commands.Group):
     @gyms.command(name="remove", description="Retire a gym and return its defender")
     async def remove_gym(self, interaction: discord.Interaction, name: str, reason: str):
         await self.gym_command(interaction, "remove", name, reason)
+
+    @gyms.command(name="legendary", description="Allow or block Legendary and Mythical gym defenders")
+    @app_commands.choices(on=[app_commands.Choice(name="on", value="on"), app_commands.Choice(name="off", value="off")])
+    async def legendary_defenders(self, interaction: discord.Interaction, on: str, reason: str):
+        """D63: off by default; turning it off leaves current defenders in place."""
+        await interaction.response.defer(ephemeral=True)
+        if not await self.authorize(interaction):
+            return
+        reason = reason.strip()
+        if not reason:
+            await self.reply(interaction, "A reason is required.")
+            return
+        if on not in {"on", "off"}:
+            await self.reply(interaction, "Choose on or off.")
+            return
+
+        async def mutation(conn):
+            await self.check_actor(conn, interaction)
+            guild_id, now = str(interaction.guild_id), self.bot.walker.clock()
+            await conn.execute("INSERT OR IGNORE INTO guilds(guild_id,created_at) VALUES (?,?)", (guild_id, now))
+            await conn.execute("UPDATE guilds SET gym_legendary_defenders=? WHERE guild_id=?",
+                               (int(on == "on"), guild_id))
+            await conn.execute("INSERT INTO mod_audit(guild_id,actor_id,target_kind,target_id,action,reason,created_at) "
+                               "VALUES (?,?,'guild',?,?,?,?)", (guild_id, str(interaction.user.id), guild_id,
+                               "gym_legendary_" + on, reason, now))
+
+        try:
+            await self.bot.writer.run(mutation)
+        except _Refused as error:
+            await self.reply(interaction, str(error))
+            return
+        await self.reply(interaction, "Legendary and Mythical gym defenders are "
+                         + ("now allowed in this server." if on == "on"
+                            else "not allowed in this server. Current defenders stay until they leave."))
 
     @gyms.command(name="list", description="List this server's active gyms")
     async def list_gyms(self, interaction: discord.Interaction):

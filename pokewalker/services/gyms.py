@@ -24,6 +24,17 @@ async def get_gym(conn, guild_id, gym_id):
         return dict(row) if row else None
 
 
+async def legendary_defenders_allowed(conn, guild_id):
+    """D63: whether this server lets Legendary/Mythical Pokemon defend (off unless enabled)."""
+    async with conn.execute('SELECT gym_legendary_defenders FROM guilds WHERE guild_id=?', (guild_id,)) as cursor:
+        row = await cursor.fetchone()
+    return bool(row and row[0])
+
+
+def blocked_defender(identity, allowed):
+    return not allowed and (identity['is_legendary'] or identity['is_mythical'])
+
+
 async def list_gyms(conn, guild_id):
     async with conn.execute('SELECT * FROM gyms WHERE guild_id=? AND retired_at IS NULL ORDER BY name,gym_id',
                             (guild_id,)) as cursor:
@@ -69,7 +80,7 @@ async def deploy(conn, session, gym_id, pokemon_uid, rev, now, content):
     if profile['companion_uid'] == pokemon_uid:
         return {'status': 'companion'}
     identity, _ = storage.identify(content, pokemon)
-    if identity['is_legendary'] or identity['is_mythical']:
+    if blocked_defender(identity, await legendary_defenders_allowed(conn, guild_id)):
         return {'status': 'legendary_or_mythical'}
     async with conn.execute('SELECT 1 FROM gym_deployments WHERE guild_id=? AND ended_at IS NULL '
                             'AND (gym_id=? OR profile_id=? OR pokemon_uid=?)',
@@ -303,7 +314,7 @@ async def battle(conn, session, gym_id, expected_deployment_id, party, nominee_u
         if nominee_uid not in owned:
             return await refuse('invalid')
         identity, _ = storage.identify(content, owned[nominee_uid])
-        if identity['is_legendary'] or identity['is_mythical']:
+        if blocked_defender(identity, await legendary_defenders_allowed(conn, guild_id)):
             return await refuse('invalid')
     pokemon = await storage.detail(conn, deployment['profile_id'], deployment['pokemon_uid'])
     defender, defender_snapshot = _battle_snapshot(pokemon, content, multipliers)

@@ -789,7 +789,7 @@ receipt replay. The key identifies the target gym and Pokemon at its expected
 Pokemon revision, so selecting another revision-0 Pokemon in the same session is
 a new intent; incidental session revisions do not change replay identity. New deploys
 require a current nonretired guild gym, owned Pokemon at revision rev, neither
-companion nor Legendary/Mythical, and no active deployment for gym/profile/Pokemon.
+companion nor Legendary/Mythical (unless D63 allows), and no active deployment for gym/profile/Pokemon.
 Success returns status deployed and its deployment snapshot; failures write no
 receipt or state. Deploy refusals are stale, excluded, companion,
 legendary_or_mythical or occupied. Replay returns the saved result even after
@@ -841,6 +841,11 @@ award or second revision increment. Profile deletion cascades deployments, recei
 and inbox rows, crediting nothing. No existing schema or Claim semantics change.
 Tests: test_gyms, test_milestones and test_screens. Full G-F2 and live gates remain.
 
+## D63 legendary gym defenders setting (migration 0023)
+`guilds` gains `gym_legendary_defenders INTEGER NOT NULL DEFAULT 0` (0 or 1). services.gyms
+`deploy` refuses `legendary_or_mythical` and `battle` refuses such a nominee as `invalid` only
+while it is 0. Existing deployments are never ended by a change.
+
 ## D62b gym defender feeding (migration 0021)
 `gym_deployments` gains `heal_x10 INTEGER NOT NULL DEFAULT 0` (0..7, tenths of the battle-HP factor)
 and nullable `last_fed_at`. `feed(conn,session,gym_id,expected_deployment_id,now,rules)` in
@@ -875,7 +880,7 @@ returns stale; own gym, invalid party or nominee returns invalid; cooldown and
 exclusion return cooldown and excluded. Profile mismatch returns stale. Every
 refusal leaves all state unchanged, including settlement, receipts and cooldown.
 Party has 1..`rules.party_max` (1, D62a) distinct owned Pokemon, none companion or deployed. Legendary and
-Mythical Pokemon may attack but cannot be nominees; a nominee must be in party.
+Mythical Pokemon may attack but cannot be nominees unless D63 allows them; a nominee must be in party.
 
 Combatant snapshots use C7 combat_stats, first-type fast and charged templates,
 canonical CP/HP and frozen full hours held and feed total (heal_x10, D62b) at Start for defender_hp. The receipt

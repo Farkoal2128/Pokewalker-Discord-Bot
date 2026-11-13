@@ -66,7 +66,7 @@ Use `/readme` to see this again.
 **`/walker-admin`** (needs Manage Server)
 - `channels add|add-all|remove|list`: choose the walking channels where words count.
 - `trade-channels add|add-all|remove|list`: choose the channels where members can trade.
-- `gyms create|remove|list`: manage this server's gyms.
+- `gyms create|remove|list|legendary`: manage this server's gyms; legendary on or off allows or blocks Legendary and Mythical defenders (blocked by default).
 - `raids on|off <channel>`: turn World Legendary spawns on in a text channel, or off.
 - `force-raid <reason>`: spawn a World Legendary in the raid channel now (once per 24 hours per server).
 - `sharing on|off`: allow or block Share buttons in this server.
