@@ -80,25 +80,30 @@ Create the two service accounts and the directories:
 sudo useradd --system --home-dir /var/lib/pokewalker --shell /usr/sbin/nologin pokewalker
 sudo useradd --system --home-dir /var/lib/pokewalker-deploy --create-home --shell /usr/sbin/nologin pokewalker-deploy
 sudo install -d -m 0755 -o root -g root /opt/pokewalker
-sudo install -d -m 0755 -o pokewalker-deploy -g pokewalker-deploy /opt/pokewalker/releases /srv/pokewalker
+sudo install -d -m 0755 -o root -g root /opt/pokewalker/releases
+sudo install -d -m 0755 -o pokewalker-deploy -g pokewalker-deploy /srv/pokewalker
 sudo install -d -m 0700 -o root -g root /etc/pokewalker /etc/pokewalker/credentials
 ```
 
 `pokewalker` runs the bot; `pokewalker-deploy` only builds releases and never sees
-`/etc/pokewalker`.
+`/etc/pokewalker`. `pokewalker-deploy` is trusted to build each release from its checkout
+(root later installs that release's units and runs its backup scripts). Once built, root replaces
+the release with its own copy and refuses links leading outside it, so the build user cannot
+change it afterwards.
 
 ### 3. Get the code
 
-```bash
-sudo -u pokewalker-deploy git clone https://github.com/Farkoal2128/Pokewalker-Discord-Bot.git /srv/pokewalker/src
-```
+Clone into your own home directory. Deploys run from this clone; the installer copies it to
+`/srv/pokewalker/src` for `pokewalker-deploy` itself, and refuses to run from that copy.
 
-(If the repository is private, give `pokewalker-deploy` a read-only deploy key.)
+```bash
+git clone https://github.com/Farkoal2128/Pokewalker-Discord-Bot.git ~/Pokewalker-Discord-Bot
+```
 
 ### 4. Write the bot configuration
 
 ```bash
-cd /srv/pokewalker/src
+cd ~/Pokewalker-Discord-Bot
 sudo install -m 0600 deploy/runtime.env.example /etc/pokewalker/runtime.env
 sudo nano /etc/pokewalker/runtime.env
 ```
@@ -122,7 +127,8 @@ a 60-second period and 120-second grace).
 ### 5. Set up Google Drive backups (optional)
 
 Skip this if you don't want off-machine backups. Without it, each update still saves a plain
-copy of the database to `/var/lib/pokewalker-backup/pre-deploy-<sha>.sqlite3` before switching.
+copy of the database to `/var/lib/pokewalker-backup/pre-deploy/<sha>-<time>.sqlite3` before
+switching; a daily cleanup deletes them before they are 28 days old.
 
 Backups run hourly as root. Each is an integrity-checked SQLite snapshot plus the deletion log,
 encrypted by **restic** and stored in Google Drive through **rclone**. Snapshots older than
@@ -229,7 +235,9 @@ without the ❗ reaction). Players start with `/walker`.
 
 - Logs: `journalctl -u pokewalker-bot.service -f`; backups: `journalctl -u pokewalker-backup.service`.
 - Update: repeat step 6 with the new commit.
-- Restore a backup (bot stopped automatically), from your own clone: `sudo env PATH="$PWD/deploy:$PATH" deploy/deploy.sh "$SHA" --restore-db /path/to/snapshot.sqlite3`.
+- Restore a backup into the running release (bot stopped automatically), using that release's
+  root-owned tools: `R=$(readlink -f /opt/pokewalker/current); sudo env PATH="$R/deploy:/opt/pokewalker/bin:$PATH" "$R/deploy/deploy.sh" "${R##*/}" --restore-db /path/to/snapshot.sqlite3`.
+  If the running release predates root-owned releases, run that command from `/srv/pokewalker/src`.
   Retrieve snapshots with `restic -r rclone:gdrive:pokewalker-backups restore latest --target /tmp/restore`
   (same environment variables as step 5b).
 - Before relying on it, rehearse a restore with throwaway data:

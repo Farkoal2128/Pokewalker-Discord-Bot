@@ -115,6 +115,21 @@ class WalkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("restarting", opened.edit_original_response.await_args.kwargs["content"])
         self.assertEqual(await self.rows(), before)
 
+    async def test_open_during_drain_after_session_created_gets_restart_reply(self):
+        # Review fix: the writer can close while open() reconciles this player's reactions.
+        await self.enroll()
+        await self.conn.execute("INSERT INTO reactions(message_id,profile_id,channel_id,desired,created_at) "
+                                "SELECT 'm1',profile_id,'c1','add',0 FROM profiles")
+
+        async def closed(*args):
+            self.bot._stopping = True
+            raise RuntimeError("Writer is closed")
+
+        with patch.object(self.bot.reactions, "reconcile_message", side_effect=closed):
+            opened = self.interaction()
+            await self.walker.open(opened)
+        self.assertIn("restarting", opened.edit_original_response.await_args.kwargs["content"])
+
     async def test_walker_defers_ephemeral_then_edits_original(self):
         interaction, _ = await self.open()
         self.assertEqual([event[0] for event in interaction.events], ["defer", "edit"])

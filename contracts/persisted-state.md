@@ -842,7 +842,7 @@ and inbox rows, crediting nothing. No existing schema or Claim semantics change.
 Tests: test_gyms, test_milestones and test_screens. Full G-F2 and live gates remain.
 
 ## D62b gym defender feeding (migration 0021)
-`gym_deployments` gains `heal_x10 INTEGER NOT NULL DEFAULT 0` (0..7, tenths of canonical HP)
+`gym_deployments` gains `heal_x10 INTEGER NOT NULL DEFAULT 0` (0..7, tenths of the battle-HP factor)
 and nullable `last_fed_at`. `feed(conn,session,gym_id,expected_deployment_id,now,rules)` in
 services.gyms runs in the caller's writer transaction under the owner-bearing
 `gym_feed:<session_id>:<revision>` receipt. Session ownership and exclusion come first. The

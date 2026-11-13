@@ -72,6 +72,12 @@ class StepTests(unittest.TestCase):
                 self.assertEqual(self.steps.eligible_words(f"alpha<{url}>bravo"),
                                  ["alpha", "bravo"])
 
+    def test_word_colon_word_prose_is_not_a_url(self):
+        # Audit fix: only "scheme://", mailto: and data: are links; "Update:the" is ordinary text.
+        self.assertEqual(self.steps.eligible_words("Update:the server is back"),
+                         ["Update:the", "server", "is", "back"])
+        self.assertEqual(self.steps.eligible_words("note:remember ftp://x.org/a mailto:a@b.c"), ["note:remember"])
+
     def test_two_char_minimum(self):
         self.assertEqual(self.steps.eligible_words("a I 1 ab 12 a2 \u00e9\u00e9"),
                          ["ab", "12", "a2", "\u00e9\u00e9"])

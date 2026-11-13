@@ -46,12 +46,31 @@ elif [[ -e $current || -L $current || -e $database || -n $restore ]]; then
     refuse
 fi
 release=$base/releases/$sha
+# releases/ is root-owned; pokewalker-deploy only gets the one directory it builds into.
+# A release root does not own (an interrupted deploy, a pre-hardening build) is rebuilt.
+if [[ ! -f $release/.complete || $(stat -c %u -- "$release" 2>/dev/null) != 0 ]]; then
+    rm -rf -- "$release" "$release.root"
+    install -d -m 0755 -o pokewalker-deploy -g pokewalker-deploy -- "$release" || refuse
+fi
 runuser -u pokewalker-deploy -- env -i PATH="$PATH" HOME=/var/lib/pokewalker-deploy \
     DEPLOY_ROOT="$root" build_release.sh "$sha" >/dev/null 2>&1 || refuse
 [[ -f $release/.complete && -f $release/deploy/pokewalker-bot.service ]] || refuse
-# Root installs this release's units and the backup timer runs its scripts as root,
-# so pokewalker-deploy must not be able to change it after the build.
-chown -R root:root -- "$release" || refuse
+# Root installs this release's units and the backup timer runs its scripts as root, so
+# pokewalker-deploy must not be able to change it after the build: root replaces a build it
+# does not own with its own copy (open write handles then point at deleted files), and no
+# link may lead to a file outside root-owned places.
+if [[ $(stat -c %u -- "$release") != 0 ]]; then
+    rm -rf -- "$release.root"
+    cp -R --preserve=mode,timestamps -- "$release" "$release.root" || refuse
+    rm -rf -- "$release" || refuse
+    mv -T -- "$release.root" "$release" || refuse
+fi
+while IFS= read -r -d '' link; do
+    target=$(readlink -f -- "$link") || refuse
+    [[ $target == "$release/"* || $target == "$base/bin/"* || $target == "$base/python/"* ]] || refuse
+done < <(find "$release" -type l -print0)
+# A rollback reinstalls the previous release's units, which may predate root ownership.
+[[ -z $previous ]] || chown -R root:root -- "$previous" || refuse
 
 as_bot() {
     local directory=$1
@@ -131,12 +150,12 @@ rollback() {
 if [[ -n $previous && ! -f $config/backup.env ]]; then
     # Backups are optional; keep one plain local copy for --restore-db recovery.
     systemctl stop pokewalker-bot.service || exit 30
-    snapshot=$root/var/lib/pokewalker-backup/pre-deploy-$sha.sqlite3
+    # A new name each time, so a --restore-db of an earlier copy is never overwritten.
+    snapshot=$root/var/lib/pokewalker-backup/pre-deploy/$sha-$(date -u +%Y%m%dT%H%M%SZ).sqlite3
     { mkdir -p -- "${snapshot%/*}" && rm -f -- "$snapshot" &&
         sqlite3 -readonly "$database" ".backup \"$snapshot\""; } >/dev/null 2>&1 ||
         { start || true; exit 40; }
-    # D28: plain copies are pruned by age like every other backup.
-    find "${snapshot%/*}" -maxdepth 1 -name 'pre-deploy-*.sqlite3' -mmin +$((28 * 24 * 60)) -delete >/dev/null 2>&1 || true
+    # D28: the installer's tmpfiles rule deletes these copies after 28 days.
     printf 'deploy: backups not configured; local copy: %s\n' "$snapshot" >&2
 elif [[ -n $previous ]]; then
     systemctl stop pokewalker-bot.service || exit 30

@@ -83,6 +83,12 @@ class TradeCommandTests(unittest.IsolatedAsyncioTestCase):
         interaction.response.defer.assert_awaited_once_with(ephemeral=True)
         return interaction
 
+    async def test_trade_while_stopping_gets_restart_reply(self):
+        # Review fix: like /walker and /raid, /trade answers during the shutdown drain.
+        self.bot._stopping = True
+        interaction = await self.trade(456, 789)
+        self.assertIn("restarting", self.reply(interaction)["content"])
+
     def reply(self, interaction):
         return interaction.edit_original_response.await_args.kwargs
 

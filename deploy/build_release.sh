@@ -22,8 +22,9 @@ base=${DEPLOY_ROOT:-}/opt/pokewalker
 release=$base/releases/$sha
 [[ ! -f $release/.complete ]] || exit 0
 
-rm -rf -- "$release"
+# deploy.sh hands us this directory inside root-owned releases/; empty any partial build.
 mkdir -p -- "$release"
+find "$release" -mindepth 1 -delete
 git archive --format=tar "$sha" | tar -xf - -C "$release"
 python3 -m venv "$release/.venv"
 "$release/.venv/bin/pip" install --require-hashes --no-input -r "$release/requirements.lock"

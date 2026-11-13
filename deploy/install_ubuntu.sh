@@ -7,6 +7,10 @@ umask 022
 
 [[ $(id -u) == 0 ]] || { echo "install_ubuntu: run with sudo" >&2; exit 1; }
 checkout=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+# Root runs git and these scripts from this clone, so it must not be one pokewalker-deploy controls.
+if id -u pokewalker-deploy >/dev/null 2>&1 && [[ $(stat -c %U -- "$checkout") == pokewalker-deploy ]]; then
+    echo "install_ubuntu: run this from your own clone, not /srv/pokewalker/src" >&2; exit 1
+fi
 git() { command git -c safe.directory='*' "$@"; }
 sha=$(git -C "$checkout" rev-parse HEAD)
 [[ -z $(git -C "$checkout" status --porcelain --untracked-files=no) ]] ||
@@ -25,7 +29,21 @@ id -u pokewalker >/dev/null 2>&1 ||
     useradd --system --home-dir /var/lib/pokewalker --shell /usr/sbin/nologin pokewalker
 id -u pokewalker-deploy >/dev/null 2>&1 ||
     useradd --system --home-dir /var/lib/pokewalker-deploy --create-home --shell /usr/sbin/nologin pokewalker-deploy
-install -d -m 0755 -o pokewalker-deploy -g pokewalker-deploy /opt/pokewalker/releases /srv/pokewalker
+# releases/ is root-owned so pokewalker-deploy cannot swap a release root runs (deploy.sh
+# hands it one directory per build); /srv/pokewalker holds its checkout.
+install -d -m 0755 -o root -g root /opt/pokewalker/releases
+for built in /opt/pokewalker/releases/*/; do  # releases built under the old deploy-owned layout
+    [[ ! -f $built.complete ]] || chown -R root:root -- "$built"
+done
+install -d -m 0755 -o pokewalker-deploy -g pokewalker-deploy /srv/pokewalker
+# D28: plain pre-deploy database copies (backups not configured) leave within 28 days; the
+# clean timer runs daily, so the age is 27 days.
+printf 'e /var/lib/pokewalker-backup/pre-deploy - - - m:27d\n' > /etc/tmpfiles.d/pokewalker-predeploy.conf
+install -d -m 0700 -o root -g root /var/lib/pokewalker-backup/pre-deploy
+for copy in /var/lib/pokewalker-backup/pre-deploy-*.sqlite3; do  # the old flat layout
+    name=${copy##*/pre-deploy-}
+    [[ ! -f $copy ]] || mv -n -- "$copy" "/var/lib/pokewalker-backup/pre-deploy/${name%.sqlite3}-$(stat -c %Y -- "$copy").sqlite3" || true
+done
 install -d -m 0700 -o root -g root /etc/pokewalker /etc/pokewalker/credentials
 
 echo "== Python with a WAL-fixed SQLite (Ubuntu's 3.45.1 is refused)"

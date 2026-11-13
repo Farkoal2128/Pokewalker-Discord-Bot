@@ -10,6 +10,7 @@ from pokewalker.domain.cp import catch_probability, flees_after_failure
 from pokewalker.services.profiles import restrictions
 from pokewalker.services.milestones import check_and_award
 from pokewalker.services.items import boost
+from pokewalker.services.storage import owned_count
 
 
 @dataclass(frozen=True)
@@ -69,11 +70,9 @@ async def throw(conn, encounter_id, session, expected_revision, rng, now, *, con
             "SELECT 1 FROM world_spawns WHERE spawn_id=? AND guild_id=? AND expires_at<=?", (encounter["raid_spawn_id"], str(session["guild_id"]), now)):
         return _freeze({**current, "status": "expired"})
     selection = json.loads(session["selection"])
-    async with conn.execute("SELECT count(*) FROM pokemon WHERE profile_id=? AND state='owned'",
-                            (session["profile_id"],)) as cursor:
-        if ((await cursor.fetchone())[0] >= owner["storage_limit"]
-                and selection.get("storage_confirm") != expected_revision):
-            return _freeze({**current, "status": "storage_full"})
+    if (await owned_count(conn, session["profile_id"]) >= owner["storage_limit"]
+            and selection.get("storage_confirm") != expected_revision):
+        return _freeze({**current, "status": "storage_full"})
     ball, berry = selection.get("ball"), selection.get("berry")
     rules = load_table("catch")["rules"]
     if (ball not in rules["ball_multipliers"] and ball != "master_ball"

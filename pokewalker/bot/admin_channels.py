@@ -9,6 +9,7 @@ from discord import app_commands
 
 from pokewalker.bot.bag import RAID_REFUSALS
 from pokewalker.services import deletion, gyms as gym_service, profiles, raids as raid_service
+from pokewalker.services import storage as storage_service
 from pokewalker.services.profiles import restrictions
 
 
@@ -199,9 +200,7 @@ class WalkerAdmin(app_commands.Group):
             profile = await profiles.get_profile(conn, interaction.guild_id, member.id)
             if profile is None:
                 raise _Refused("That user is not enrolled in this server.")
-            async with conn.execute("SELECT count(*) FROM pokemon WHERE profile_id=? AND state='owned'",
-                                    (profile["profile_id"],)) as cursor:
-                count = (await cursor.fetchone())[0]
+            count = await storage_service.owned_count(conn, profile["profile_id"])
             return profile, count
 
         try:

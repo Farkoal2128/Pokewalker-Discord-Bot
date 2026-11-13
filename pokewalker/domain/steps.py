@@ -14,7 +14,7 @@ import regex
 _EXCLUDED = regex.compile(
     r"```[\s\S]*?(?:```|\Z)|~~~[\s\S]*?(?:~~~|\Z)"
     r"|^[\t ]*>[^\n]*"
-    r"|[a-z][a-z0-9+.-]*:[^\s<>]+|www\.[^\s<>]+"
+    r"|[a-z][a-z0-9+.-]*://[^\s<>]+|(?:mailto|data):[^\s<>]+|www\.[^\s<>]+"
     r"|<[@#][!&]?\d+>|<a?:[A-Za-z0-9_]+:\d+>"
     r"|[0-9#*]\ufe0f?\u20e3|\p{Regional_Indicator}+"
     r"|[\p{Extended_Pictographic}\p{Emoji_Modifier}\u200d\ufe0f]",

@@ -18,6 +18,9 @@ def command(bot):
         await interaction.response.defer(ephemeral=True)
         if interaction.guild_id is None:
             text = 'Use /checkin in a server.'
+        elif getattr(bot, '_stopping', False):  # the drain closes the writer before the gateway
+            from pokewalker.bot.walker import RESTARTING
+            text = RESTARTING
         else:
             result = await bot.writer.run(lambda conn: items.checkin(
                 conn, interaction.guild_id, interaction.user.id, time.time(), random.SystemRandom(),

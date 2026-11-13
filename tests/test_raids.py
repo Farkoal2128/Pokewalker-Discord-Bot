@@ -1555,6 +1555,14 @@ class RaidCommandTests(unittest.IsolatedAsyncioTestCase):
             'DELETE FROM pokemon WHERE source_encounter_id=?', (encounter_id,)))
         return encounter_id
 
+    async def test_raid_while_stopping_gets_restart_reply(self):
+        # Audit fix: like /walker, /raid must answer during the shutdown drain instead of failing.
+        before = await self.rows()
+        self.bot._stopping = True
+        shown = await self.invoke()
+        self.assertIn('restarting', self.rendered(shown)['content'])
+        self.assertEqual(await self.rows(), before)
+
     async def test_raid_with_pending_catch_opens_menu_without_joining(self):
         encounter_id = await self.pending_ordinary_catch()
         await self.active()

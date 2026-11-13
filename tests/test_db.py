@@ -46,6 +46,14 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         for (text,) in sql:
             self.assertTrue(text.split("BEGIN")[0].rstrip().endswith(f")>={limits()['encounter_queue']}"), text)
 
+    async def test_deletion_cascade_lookups_use_indexes(self):
+        # Audit fix: a delete-data cascade must not scan whole child tables per deleted row.
+        for table, column in (("catch_attempts", "receipt_key"), ("gym_deployments", "pokemon_uid"),
+                              ("resource_ledger", "profile_id")):
+            plan = await self.conn.execute_fetchall(f"EXPLAIN QUERY PLAN SELECT 1 FROM {table} WHERE {column}='x'")
+            with self.subTest(table=table):
+                self.assertIn("USING", " ".join(row[-1] for row in plan))
+
     async def test_owned_pokemon_counts_use_the_profile_index(self):
         # Audit fix: per-throw storage counts must not scan every server's Pokemon.
         plan = await self.conn.execute_fetchall(

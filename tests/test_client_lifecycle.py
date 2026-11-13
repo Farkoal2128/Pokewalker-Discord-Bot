@@ -164,6 +164,23 @@ class ClientLifecycleTests(unittest.IsolatedAsyncioTestCase):
         service.startup_sweep.assert_awaited_once()
         await self.bot.drain()
 
+    async def test_failed_reaction_sweep_still_announces_pending_raids(self):
+        # Audit fix: a network error in the sweep must not skip resume_pending.
+        conn = SimpleNamespace(close=AsyncMock())
+        writer = SimpleNamespace(run=AsyncMock(), close=AsyncMock(), abort=AsyncMock())
+        service = SimpleNamespace(startup_sweep=AsyncMock(side_effect=OSError("connection reset")))
+        resume = AsyncMock()
+        with patch.object(self.client, "open_db", AsyncMock(return_value=conn)), \
+                patch.object(self.client, "Writer", return_value=writer), \
+                patch.object(self.client, "replay_markers", AsyncMock(), create=True), \
+                patch.object(self.client, "ReactionService", return_value=service, create=True), \
+                patch.object(self.client.raids, "resume_pending", resume), \
+                self.assertLogs("pokewalker.bot.client", "ERROR"):
+            await self.bot.setup_hook()
+            await self.bot.on_ready()
+        resume.assert_awaited_once()
+        await self.bot.drain()
+
     async def test_replay_runs_before_admitting(self):
         self.addAsyncCleanup(self.bot.drain)
         from pokewalker.services.deletion import replay_markers

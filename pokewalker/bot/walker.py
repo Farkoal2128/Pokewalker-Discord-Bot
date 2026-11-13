@@ -120,15 +120,20 @@ class Walker:
         except _Refused as error:
             await interaction.edit_original_response(content=str(error))
             return
-        for reaction in pending:
-            if reaction["encounter_id"] is None:
-                await self.bot.reactions.reconcile_message(reaction["message_id"])
-            else:
-                await self.bot.reactions.reconcile_reaction(reaction["encounter_id"])
         try:
+            for reaction in pending:
+                if reaction["encounter_id"] is None:
+                    await self.bot.reactions.reconcile_message(reaction["message_id"])
+                else:
+                    await self.bot.reactions.reconcile_reaction(reaction["encounter_id"])
             rendered = await self.bot.writer.run(lambda conn: self.home(conn, session, interaction))
         except _Refused as error:
             await interaction.edit_original_response(content=str(error))
+            return
+        except RuntimeError:  # the drain closed the writer during the reaction cleanup or home
+            if not getattr(self.bot, "_stopping", False):
+                raise
+            await interaction.edit_original_response(content=RESTARTING)
             return
         await interaction.edit_original_response(**rendered, allowed_mentions=discord.AllowedMentions.none())
         _forget(rendered)
@@ -279,9 +284,7 @@ class Walker:
         state = await self.encounter_state(conn, session, encounter_id)
         state["recovery"] = True
         rendered = screens.render_terminal(state)
-        async with conn.execute("SELECT count(*) FROM pokemon WHERE profile_id=? AND state='owned'",
-                                (session["profile_id"],)) as cursor:
-            owned = (await cursor.fetchone())[0]
+        owned = await storage_service.owned_count(conn, session["profile_id"])
         if owned < quote["current"]:
             if notice:
                 rendered["embed"].description += "\n" + notice
@@ -343,9 +346,7 @@ class Walker:
             raise _Refused(REOPEN)
         if state["pending"]:
             quote = await capacity.quote(conn, session["profile_id"], "storage")
-            async with conn.execute("SELECT count(*) FROM pokemon WHERE profile_id=? AND state='owned'",
-                                    (session["profile_id"],)) as cursor:
-                owned = (await cursor.fetchone())[0]
+            owned = await storage_service.owned_count(conn, session["profile_id"])
             if owned >= quote["current"]:
                 return await self.pending_menu(conn, session, encounter_id, "Nothing was stored.")
             await self.store(conn, session, encounter_id)
@@ -554,9 +555,7 @@ class Walker:
         if result.status == "storage_full":
             selection["storage_confirm"] = encounter["revision"]
             session["selection"] = json.dumps(selection)
-            owned = (await conn.execute_fetchall(
-                "SELECT count(*) FROM pokemon WHERE profile_id=? AND state='owned'",
-                (session["profile_id"],)))[0][0]
+            owned = await storage_service.owned_count(conn, session["profile_id"])
             limit = (await profiles.get_profile(conn, session['guild_id'], session['user_id']))['storage_limit']
             state["notice"] = (f"Storage is full ({owned}/{limit}). "
                                "A catch will wait for Send for research or Upgrade storage.")

@@ -6,7 +6,7 @@ import discord
 from discord import app_commands
 
 from pokewalker.bot import screens
-from pokewalker.bot.walker import EXCLUDED, _forget, new_session
+from pokewalker.bot.walker import EXCLUDED, RESTARTING, _forget, new_session
 from pokewalker.services import profiles, raids
 from pokewalker.services.deletion import opted_out
 
@@ -18,6 +18,9 @@ def command(bot):
         await interaction.response.defer(ephemeral=True)
         if interaction.guild_id is None:
             await interaction.edit_original_response(content='Use /raid in a server.')
+            return
+        if getattr(bot, '_stopping', False):  # the drain closes the writer before the gateway
+            await interaction.edit_original_response(content=RESTARTING)
             return
 
         async def open_raid(conn):

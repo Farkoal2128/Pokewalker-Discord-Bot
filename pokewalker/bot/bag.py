@@ -145,14 +145,16 @@ def render(state):
         text = f"{price} Stardust → 1 × {name(item, content)} · have {state['stardust']} Stardust"
         buttons = [('Confirm', 'buy_confirm', state['stardust'] < price), ('Back', 'bag', False)]
     elif mode == 'lure_confirm':
-        text = '4× shiny odds for the next 10 generated encounters; existing queued encounters are unchanged.'
+        text = (f"{state.get('lure_multiplier', 4)}× shiny odds for the next {state.get('lure_encounters', 10)} "
+                'generated encounters; existing queued encounters are unchanged.')
         buttons = [('Activate', 'lure_activate', False), ('Back', 'bag', False)]
     elif mode == 'mirror_confirm':
         text = mirror_text(state.get('mirror_encounters', 10), state.get('mirror_percent', 20),
                            state.get('mirror_eligible', True))
         buttons = [('Activate', 'mirror_activate', False), ('Back', 'bag', False)]
     elif mode == 'star_piece_confirm':
-        text = '1.5× Stardust on your next 10 catch or find Stardust rewards'
+        text = (f"{state.get('star_piece_multiplier', 1.5):g}× Stardust on your next "
+                f"{state.get('star_piece_rewards', 10)} catch or find Stardust rewards")
         buttons = [('Activate', 'star_piece_activate', False), ('Back', 'bag', False)]
     elif mode == 'wlt_confirm':
         where = f"<#{state['raid_channel_id']}>" if state.get('raid_channel_id') else 'the raid channel'
@@ -195,6 +197,7 @@ def handlers(walker):
             star_active = await cursor.fetchone()
         content = getattr(walker.bot, 'content', None)
         conversion = load_table('conversion_rates')
+        star = load_table('evolution')['star_piece']
         rates = dict(conversion['stardust_per_unit'])
         rules = load_table('catch')['rules']
         for kind in (content or {}).get('evolution_items', []):
@@ -208,6 +211,9 @@ def handlers(walker):
                 'mirror': dict(mirror_active) if mirror_active is not None else None,
                 'mirror_encounters': rules['mirror_encounters'],
                 'mirror_percent': round(rules['mirror_probability'] * 100),
+                'lure_multiplier': rules['lure_probability_multiplier'], 'lure_encounters': rules['lure_encounters'],
+                'star_piece_multiplier': star['multiplier_numerator'] / star['multiplier_denominator'],
+                'star_piece_rewards': star['rewards'],
                 'stardust': profile['stardust'], 'rates': rates, 'notice': notice,
                 'content': content or {}, 'buy_price': load_table('evolution')['item_price_stardust'],
                 'trade_up': conversion['trade_up'], 'vitamin_price': conversion['purchase_stardust']['vitamin']}

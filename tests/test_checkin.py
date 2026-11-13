@@ -139,6 +139,16 @@ class CheckinTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('/walker', interaction.edit_original_response.await_args.kwargs['content'])
         self.assertEqual(await self.snapshot(), before)
 
+    async def test_checkin_while_stopping_gets_restart_reply(self):
+        # Review fix: the drain closes the writer before the gateway; answer instead of failing.
+        before = await self.snapshot()
+        interaction = self.interaction()
+        module = importlib.import_module('pokewalker.bot.checkin')
+        closed = SimpleNamespace(run=AsyncMock(side_effect=RuntimeError('Writer is closed')))
+        await module.command(SimpleNamespace(writer=closed, content=None, _stopping=True)).callback(interaction)
+        self.assertIn('restarting', interaction.edit_original_response.await_args.kwargs['content'])
+        self.assertEqual(await self.snapshot(), before)
+
     async def test_two_commands_same_instant_one_grant(self):
         results = await asyncio.gather(self.checkin(), self.checkin())
         self.assertEqual([r['status'] for r in results], ['granted', 'too_early'])

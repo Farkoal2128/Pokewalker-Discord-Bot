@@ -202,7 +202,8 @@ async def feed(conn, session, gym_id, expected_deployment_id, now, rules):
     async with conn.execute('SELECT * FROM gym_deployments WHERE gym_id=? AND guild_id=? AND ended_at IS NULL',
                             (gym_id, guild_id)) as cursor:
         deployment = await cursor.fetchone()
-    if deployment is None or deployment['deployment_id'] != expected_deployment_id or deployment['profile_id'] != pid:
+    if (deployment is None or deployment['deployment_id'] != expected_deployment_id
+            or deployment['profile_id'] != pid or now >= deployment['ends_at']):  # past tenure: settle sends it home
         return {'status': 'stale'}
     if deployment['last_fed_at'] is not None and now < deployment['last_fed_at'] + feeding['cooldown_seconds']:
         return {'status': 'cooldown', 'remaining': deployment['last_fed_at'] + feeding['cooldown_seconds'] - now}

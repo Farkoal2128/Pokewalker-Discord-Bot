@@ -89,6 +89,10 @@ stat)
             printf '%s\n' "$(< "$root/fixture/lock-directory-stat")"
         else printf '0:700\n'; fi ;;
     "$root/run/pokewalker-deploy/lock") printf '0:600\n' ;;
+    "$root/opt/pokewalker/releases/"*)
+        if [[ -e "$root/fixture/release-owner" ]]; then
+            printf '%s\n' "$(< "$root/fixture/release-owner")"
+        else printf '0\n'; fi ;;
     *) exit 99 ;;
     esac ;;
 flock) [[ ! -e "$root/fixture/locked" ]] ;;
@@ -98,7 +102,14 @@ build_release.sh)
     printf 'build-env|%s|%s|%s|%s|%s|%s\n' "${HOME-unset}" "${DISCORD_TOKEN-unset}" \
         "${CREDENTIALS_DIRECTORY-unset}" "${RESTIC_PASSWORD-unset}" \
         "${BACKUP_MONITOR_URL-unset}" "${OPERATOR_ONLY-unset}" >> "$root/calls"
-    [[ ! -e "$root/fixture/build-fail" ]] ;;
+    [[ ! -e "$root/fixture/build-fail" ]] || exit 1
+    if [[ -e "$root/fixture/build-creates" ]]; then
+        release="$root/opt/pokewalker/releases/$1"
+        /usr/bin/mkdir -p "$release/deploy" "$release/pokewalker/db/migrations"
+        printf built > "$release/deploy/pokewalker-bot.service"
+        : > "$release/pokewalker/db/migrations/0001_initial.sql"
+        : > "$release/.complete"
+    fi ;;
 systemd-run)
     [[ ! -e "$root/fixture/check-fail" ]] || exit 1
     printf 'bot-env|%s|%s\n' "${DISCORD_TOKEN-unset}" "${OPERATOR_ONLY-unset}" >> "$root/calls"
@@ -165,6 +176,8 @@ sqlite3)
         printf 'ok\n'
     fi ;;
 sleep|chown) : ;;
+install) [[ $1 != -d ]] || exec /usr/bin/mkdir -p -- "${!#}"  # owners need real root
+         exec /usr/bin/install "$@" ;;
 ln) MSYS=winsymlinks:nativestrict exec /usr/bin/ln "$@" ;;
 *) exec "/usr/bin/$name" "$@" ;;
 esac
@@ -344,30 +357,59 @@ esac
         (self.root / "etc/pokewalker/backup.env").unlink()
         self.assertEqual(self.run_deploy(), 0, self.output)
         self.assertFalse(self.named("backup.sh"))
-        copy = shell_path(self.root / f"var/lib/pokewalker-backup/pre-deploy-{NEW}.sqlite3")
-        self.assertIn(f'sqlite3|-readonly|{shell_path(self.db)}|.backup "{copy}"', self.calls)
+        backup = next(x for x in self.named("sqlite3") if ".backup" in x)
+        copy = backup.split('.backup "', 1)[1].rstrip('"')
+        self.assertRegex(copy, rf"/var/lib/pokewalker-backup/pre-deploy/{NEW}-\d{{8}}T\d{{6}}Z\.sqlite3$")
+        self.assertEqual(backup, f'sqlite3|-readonly|{shell_path(self.db)}|.backup "{copy}"')
         self.assertIn(f"backups not configured; local copy: {copy}", self.output)
         self.assertEqual(self.current.resolve().name, NEW)
 
-    def test_release_is_root_owned_before_its_units_are_installed(self):
+    def test_release_root_does_not_own_is_rebuilt_then_replaced_by_a_root_copy(self):
+        # An interrupted deploy or pre-hardening build is rebuilt; root then copies the build so
+        # any write handle pokewalker-deploy kept open points at deleted files.
+        self.setting("release-owner", "1000")
+        self.setting("build-creates", "1")
         self.assertEqual(self.run_deploy(), 0, self.output)
-        chown = f"chown|-R|root:root|--|{shell_path(self.release_path(NEW))}"
-        self.assertIn(chown, self.calls)
-        first_install = next(i for i, line in enumerate(self.calls) if line.startswith("install|"))
-        self.assertLess(self.calls.index(chown), first_install)
+        release = shell_path(self.release_path(NEW))
+        self.assertIn(f"rm|-rf|--|{release}|{release}.root", self.calls)
+        copied = self.calls.index(f"mv|-T|--|{release}.root|{release}")
+        self.assertLess(self.calls.index(f"rm|-rf|--|{release}|{release}.root"), copied)
+        first_install = next(i for i, line in enumerate(self.calls) if line.startswith("install|-m|0644"))
+        self.assertLess(copied, first_install)
+        self.assertEqual((self.release_path(NEW) / "deploy/pokewalker-bot.service").read_text(), "built")
+        self.assertFalse(Path(f"{self.release_path(NEW)}.root").exists())
+        # A rollback reinstalls the previous release's units, which may predate root ownership.
+        self.assertIn(f"chown|-R|root:root|--|{shell_path(self.release_path(OLD).resolve())}", self.calls)
 
-    def test_backups_not_configured_prunes_copies_older_than_28_days(self):
+    def test_link_out_of_the_release_is_refused(self):
+        # A link could let pokewalker-deploy change, after the build, what root's units run.
+        outside = self.root / "srv/elsewhere.sh"
+        outside.parent.mkdir(parents=True, exist_ok=True)
+        outside.write_text("#!/bin/bash\n", encoding="utf-8")
+        (self.release_path(NEW) / "deploy/backup.sh").symlink_to(outside)
+        self.assertEqual(self.run_deploy(), 10, self.output)
+        self.assertFalse(any(line.startswith("install|-m|0644") for line in self.calls))
+        self.assertEqual(self.current.resolve().name, OLD)
+
+    def test_deploy_user_gets_only_the_new_release_directory(self):
+        (self.release_path(NEW) / ".complete").unlink()
+        self.run_deploy()
+        handoff = f"install|-d|-m|0755|-o|pokewalker-deploy|-g|pokewalker-deploy|--|{shell_path(self.release_path(NEW))}"
+        self.assertIn(handoff, self.calls)
+        self.assertLess(self.calls.index(handoff), next(i for i, x in enumerate(self.calls) if x.startswith("runuser|")))
+
+    def test_restoring_a_local_copy_never_overwrites_it(self):
+        # Without backups these copies are the only snapshots; restoring one must keep it.
         (self.root / "etc/pokewalker/backup.env").unlink()
-        directory = self.root / "var/lib/pokewalker-backup"
+        directory = self.root / "var/lib/pokewalker-backup/pre-deploy"
         directory.mkdir(parents=True, exist_ok=True)
-        old, recent = directory / f"pre-deploy-{'c' * 40}.sqlite3", directory / f"pre-deploy-{'d' * 40}.sqlite3"
-        for path, days in ((old, 30), (recent, 3)):
-            path.write_text("copy", encoding="utf-8")
-            stamp = time.time() - days * 86400
-            os.utime(path, (stamp, stamp))
-        self.assertEqual(self.run_deploy(), 0, self.output)
-        self.assertFalse(old.exists())
-        self.assertTrue(recent.exists())
+        copy = directory / f"{NEW}-20260101T000000Z.sqlite3"
+        copy.write_text("good copy", encoding="utf-8")
+        stamp = time.time() - 40 * 86400
+        os.utime(copy, (stamp, stamp))
+        self.assertEqual(self.run_deploy(NEW, "--restore-db", shell_path(copy)), 0, self.output)
+        self.assertEqual(copy.read_text(encoding="utf-8"), "good copy")
+        self.assertEqual(self.db.read_text(), "restored")
 
     def test_backups_not_configured_copy_failure_restarts_previous_exit_40(self):
         (self.root / "etc/pokewalker/backup.env").unlink()

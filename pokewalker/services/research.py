@@ -21,8 +21,7 @@ def protected_reason(identity, pokemon, profile):
 async def candidates(conn, profile_id, content, offset):
     async with conn.execute("SELECT * FROM profiles WHERE profile_id=?", (profile_id,)) as cursor:
         profile = await cursor.fetchone()
-    async with conn.execute("SELECT count(*) FROM pokemon WHERE profile_id=? AND state='owned'", (profile_id,)) as cursor:
-        total = (await cursor.fetchone())[0]
+    total = await storage.owned_count(conn, profile_id)
     async with conn.execute("SELECT * FROM pokemon WHERE profile_id=? AND state='owned' "
                             "ORDER BY caught_at DESC,pokemon_uid LIMIT 5 OFFSET ?", (profile_id, offset)) as cursor:
         pokemon = [dict(row) for row in await cursor.fetchall()]

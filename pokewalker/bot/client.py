@@ -177,7 +177,10 @@ class WalkerBot(discord.Client):
                 self._gym_sweep = asyncio.create_task(self._gym_sweep_loop())
         if not self._stopping and self.reactions is not None and self._reaction_sweep is None:
             self._reaction_sweep = asyncio.create_task(self.reactions.startup_sweep())
-            await self._reaction_sweep
+            try:
+                await self._reaction_sweep
+            except Exception:  # a network error must not skip announcing pending raids
+                LOG.exception("Startup reaction sweep failed")
             if not self._stopping:
                 await raids.resume_pending(self)
 

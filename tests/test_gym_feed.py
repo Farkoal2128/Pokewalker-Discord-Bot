@@ -97,6 +97,11 @@ class GymFeedTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.feed(3 * HOUR, deployment_id='old'), {'status': 'stale'})
         self.assertEqual(await self.snapshot(), before)
 
+    async def test_no_feeding_once_tenure_is_over(self):
+        before = await self.snapshot()
+        self.assertEqual(await self.feed(8 * HOUR), {'status': 'stale'})
+        self.assertEqual(await self.snapshot(), before)
+
     async def test_double_press_spends_one_berry(self):
         first = await self.feed(4 * HOUR, revision=5)
         self.assertEqual(await self.feed(4 * HOUR + 5, revision=5), first)

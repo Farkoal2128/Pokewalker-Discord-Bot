@@ -193,7 +193,7 @@ def _capped(seconds):
 
 
 def command(bot):
-    from pokewalker.bot.walker import EXCLUDED, _forget, new_session
+    from pokewalker.bot.walker import EXCLUDED, RESTARTING, _forget, new_session
 
     @app_commands.command(name="trade", description="Trade a Pokémon with a member of this server")
     @app_commands.guild_only()
@@ -201,6 +201,9 @@ def command(bot):
         await interaction.response.defer(ephemeral=True)
         if interaction.guild_id is None:
             await interaction.edit_original_response(content="Use /trade in a server.")
+            return
+        if getattr(bot, "_stopping", False):  # the drain closes the writer before the gateway
+            await interaction.edit_original_response(content=RESTARTING)
             return
         channel = interaction.channel
         permissions = channel.permissions_for(interaction.guild.me) if channel is not None else None

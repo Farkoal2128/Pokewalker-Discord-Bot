@@ -25,6 +25,13 @@ def stats(content, pokemon, multipliers):
             "hp": hp(base, ivs, pokemon["level_x2"], multipliers=multipliers)}
 
 
+async def owned_count(conn, profile_id):
+    """Pokemon that take a storage slot; every storage-full check uses this one rule."""
+    async with conn.execute("SELECT count(*) FROM pokemon WHERE profile_id=? AND state='owned'",
+                            (profile_id,)) as cursor:
+        return (await cursor.fetchone())[0]
+
+
 async def page(conn, profile_id, offset, favorite_only=False):
     where = "profile_id=? AND state='owned'" + (" AND favorite=1" if favorite_only else "")
     async with conn.execute(f"SELECT COUNT(*) FROM pokemon WHERE {where}", (profile_id,)) as cursor:
