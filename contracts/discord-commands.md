@@ -952,10 +952,17 @@ I/O. Producer: bot.storage; consumers: private Walker details and companion acti
 No schema, service signature or component-ID changes. Tests: test_storage,
 test_companion and test_gym_screens. Focused evidence leaves G-F2/native gates open.
 
+## C5: D62b gym feeding
+The holder's gym view adds **Feed Razz Berry** (`gym_feed`) beside Recall and Rewards and
+shows the battle-HP factor including feeding. A press runs C3 `feed` and re-renders the gym
+view with a notice: fed (new factor), full, cooldown (minutes left), missing berry, or the
+changed-gym refusal for stale.
+
 ## C5: M7.6b private gym battle preparation and results (additive)
 Battle opens from another holder's gym view and preserves that view's deployment_id.
-The selection stores gym_id, deployment_id, party (initially [], up to three ordered
-optional uid/revision slots), active slot 1..3, offset and nominee. Slot 1 is required; empty later slots
+The selection stores gym_id, deployment_id, party (initially [], up to `party_max` ordered
+optional uid/revision slots; one since D62a, so no slot buttons are shown), active slot
+1..`party_max`, offset and nominee. Slot 1 is required; empty later slots
 are omitted in order on Start. Ten owned Pokemon per page show CP/types and mark
 companions/deployed Pokemon unavailable; Legendary/Mythical Pokemon may attack.
 Page selections must belong to the current page, remain eligible and be distinct.

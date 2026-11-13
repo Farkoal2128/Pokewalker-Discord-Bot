@@ -61,7 +61,7 @@ These are playtest values. Changing one later is a deliberate requirements chang
 | D29 | **Check-in common item (D12):** one roll, weights out of 100: **Great Ball ×1: 34** (35 before the owner decision 2026-11-12), **Razz Berry ×1: 30**, **Poké Ball ×2: 20**, **Pinap Berry ×1: 15**, **Vitamin ×1: 1** (owner decision 2026-11-12). It never grants rare items. Like passive finds, a pack that doesn't fit in a full bag becomes 10 Stardust. The guaranteed Poké Ball is granted **first**, then the random pack is checked against the space left. Each converts to 10 Stardust on its own if it doesn't fit. A check-in always succeeds and always restarts the 60-minute timer. |
 | D30 | **Companion restrictions (D14):** the current companion cannot defend a gym, be sent for research, or be selected as a gym attacker. A Pokémon deployed to a gym cannot be made the companion. A player with no companion still earns steps; only companion Candy pauses. |
 | D31 | **Moderation tools (D17):** see the list below. |
-| D32 | **Gym defender weakening (D24):** the defender's battle HP is `ceil(canonical_HP × (2.0 − 0.1 × h))`, where `h` is the number of full hours since deployment (0–7). That is 2.0× when placed and 1.3× in its last hour; at 8 hours it goes home. The value is frozen when a battle starts. Stored CP, level, IVs and HP never change. |
+| D32 | **Gym defender weakening (D24):** the defender's battle HP is `ceil(canonical_HP × (2.0 − 0.1 × h))`, where `h` is the number of full hours since deployment (0–7). That is 2.0× when placed and 1.3× in its last hour; at 8 hours it goes home. The value is frozen when a battle starts. Stored CP, level, IVs and HP never change. Feeding Razz Berries (D62b) raises it back toward 2.0×. |
 | D33 | **One step per word (D18).** A word is a Unicode word segment ([UAX #29](https://www.unicode.org/reports/tr29/)) with at least 2 letters or digits, counted after removing URLs, mentions, emoji, code blocks and quoted lines. A message needs at least **4** eligible words, and at most **20** count. The same word, ignoring case, counts at most **3** times per message. **Order:** filter words, apply the repetition cap, check the 4-word minimum, then apply the 20-word message cap, cooldown and rate caps. Example: "hello hello hello hello" leaves 3 eligible words after the cap, so the message is rejected. The duplicate-message window, 15-second cooldown, 30-steps-per-minute cap and every D20 number stay the same: an average English word is about 5 characters, so one word replaces the old 5-character step. |
 | D34 | **Starter choice (D16).** On their first `/walker` in a server, the player picks one starter from the base forms of every main-series generation's starter trio: Generations 1–9, 27 species. They get exactly one starter per server profile. The starter's species and evolution family count as part of the launch roster. |
 | D35 | **Release split:** see the table below. |
@@ -159,7 +159,8 @@ target, action, reason and time. It is deleted with the server's data, and a tar
   Legendary/Mythical species give **10 + 500**. The content import assigns this for every
   identity and checks that none is missing.
 - **D40b: Gym start quota (v2).** The researched "5 battle starts per player per UTC day" is
-  retired under D9. The 10-minute cooldown after each completed battle is the only start limit.
+  retired under D9. The cooldown after each completed battle is the only start limit: **5
+  minutes** (10 before the owner decision 2026-11-12, D62).
 - **D41: Legendary/Mythical rules (D37):** they cannot defend gyms but can attack, following GO. They
   can be the companion, and they are protected from bulk research send like shinies.
 ### Starter and language (D42–D43, approved by the owner 2026-11-04)
@@ -425,6 +426,25 @@ ball, 2 great balls for 1 ultra ball in the bag." The approved design:
 - **Trade up** in the Bag turns 2 Poké Balls into 1 Great Ball, or 2 Great Balls into 1
   Ultra Ball, for a chosen quantity after a preview, in one transaction. Master Balls are never
   traded up.
+
+### One attacker and berry feeding at gyms (D62, owner decision 2026-11-12)
+
+The owner requested: "The three pokemon party from pokemon go is unfair as there is only one
+defending pokemon in gyms in our system. Thus, limit it to 1 pokemon to attack and put a 5
+minute cooldown on gym challenges. Also, allow gym defenders to feed berries to heal their
+defending pokemon once every 10 minutes, restoring .5x to a max of 2x hp." The owner then
+chose that feeding heals only the hourly weakening (battles still leave no lasting damage)
+and that only Razz Berries can be fed. The approved design:
+
+- **D62a: One attacker.** A gym challenge uses exactly one attacking Pokémon (`party_max: 1`).
+  The 5-minute cooldown after each completed battle is D40b.
+- **D62b: Feeding.** The holder of a gym may feed its defender **one Razz Berry** at most once
+  every **10 minutes** per deployment. Each feed raises the defender's battle-HP factor by
+  **0.5×**, never above the **2.0×** it starts with; the extra is lost. It only offsets D32's
+  hourly weakening, which keeps applying afterwards: the factor is
+  `min(2.0, 2.0 − 0.1 × h + heal)`, where `heal` (0–0.7) is the stored feed total. A feed is
+  refused, spending nothing, when the factor is already 2.0×, during the 10-minute wait, or
+  with no Razz Berry. Each feed spends exactly one berry once, even on a double press.
 
 ## Open questions
 

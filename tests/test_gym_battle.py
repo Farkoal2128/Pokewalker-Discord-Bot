@@ -79,15 +79,17 @@ class GymBattleTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(await self.scalar('SELECT last_battle_at FROM profiles WHERE profile_id=?', (self.pid,)))
 
     async def test_cooldown_refused_no_fight(self):
-        await self.conn.execute('UPDATE profiles SET last_battle_at=? WHERE profile_id=?', (self.now - 599, self.pid))
+        # D40b: 5 minutes since the owner decision 2026-11-12 (D62).
+        await self.conn.execute('UPDATE profiles SET last_battle_at=? WHERE profile_id=?', (self.now - 299, self.pid))
         await self.refused('cooldown')
-        await self.conn.execute('UPDATE profiles SET last_battle_at=? WHERE profile_id=?', (self.now - 600, self.pid))
+        await self.conn.execute('UPDATE profiles SET last_battle_at=? WHERE profile_id=?', (self.now - 300, self.pid))
         self.assertEqual((await self.fight())['status'], 'completed')
 
-    async def test_party_1_to_3_distinct_owned_not_companion_not_deployed(self):
+    async def test_party_is_one_owned_attacker_not_companion_not_deployed(self):
+        # D62a: one attacker against the one defender.
         await self.pokemon('foreign', pid=self.other)
-        for party in (None, [('mon',)], [('mon', True)], [], [('mon', 0)] * 2,
-                      [('mon', 0), ('two', 0), ('three', 0), ('four', 0)],
+        for party in (None, [('mon',)], [('mon', True)], [], [('mon', 0)] * 2, [('mon', 0), ('two', 0)],
+                      [('mon', 0), ('two', 0), ('three', 0)],
                       [('foreign', 0)], [('missing', 0)], [('defender', 1)]):
             with self.subTest(party=party):
                 await self.refused('invalid', party=party)
@@ -98,13 +100,19 @@ class GymBattleTests(unittest.IsolatedAsyncioTestCase):
         other_gym = await self.create('Owned')
         await self.deploy(other_gym, 'two')
         await self.refused('invalid', party=[('two', 1)])
-        for count in (1, 2, 3):
-            session = {**self.session, 'revision': count}
-            party = [(uid, 0) for uid in ('mon', 'three', 'four')[:count]]
-            result = await self.fight(session=session, party=party, now=self.now + 600 * count,
-                                      rules={**self.rules, 'tick_limit': 1})
-            self.assertEqual(result['status'], 'completed')
-            self.assertEqual(len(result['snapshot']['party']), count)
+        result = await self.fight(session={**self.session, 'revision': 1}, party=[('three', 0)],
+                                  rules={**self.rules, 'tick_limit': 1})
+        self.assertEqual(result['status'], 'completed')
+        self.assertEqual(len(result['snapshot']['party']), 1)
+
+    async def test_fed_defender_fights_with_healed_battle_hp(self):
+        # D62b: 2 h held is 1.8x; a stored 0.2x feed brings the frozen battle HP back to 2.0x.
+        await self.conn.execute('UPDATE gym_deployments SET heal_x10=2 WHERE deployment_id=?',
+                                (self.dep['deployment_id'],))
+        result = await self.fight(rules={**self.rules, 'tick_limit': 1})
+        hp = result['snapshot']['defender']['combatant']['hp']
+        self.assertEqual(result['snapshot']['defender_battle_hp'], hp * 2)
+        self.assertEqual(result['snapshot']['heal_x10'], 2)
 
     async def test_legendary_attacks_but_cannot_be_nominee(self):
         for key in ('is_legendary', 'is_mythical'):
@@ -117,9 +125,9 @@ class GymBattleTests(unittest.IsolatedAsyncioTestCase):
     async def test_win_ends_deployment_defeated_pays_hours_no_survivor_deploys_nominee(self):
         await self.strong_party()
         # A prechosen fainted member remains eligible; survivors do not select the claim.
-        outcome = engine.Result('win', 'defender_fainted', 3, (1,), ('won',))
+        outcome = engine.Result('win', 'defender_fainted', 3, (0,), ('won',))
         with patch.object(engine, 'simulate', return_value=outcome):
-            result = await self.fight(party=[('mon', 0), ('two', 0)], nominee_uid='mon')
+            result = await self.fight(nominee_uid='mon')
         self.assertTrue(result['claimed'])
         ended = (await self.rows('SELECT * FROM gym_deployments WHERE deployment_id=?', (self.dep['deployment_id'],)))[0]
         self.assertEqual((ended['end_reason'], ended['paid_hours'], ended['survivor_rolled']), ('defeated', 2, 0))
@@ -430,17 +438,28 @@ class GymBattleScreenTests(unittest.IsolatedAsyncioTestCase):
         await self.preview()
         return await self.click('gym_party_pick', ['mon'])
 
-    async def test_party_pick_from_page_3_into_slot_2(self):
+    async def test_party_pick_from_page_3_fills_the_one_attacker(self):
+        # D62a: one attacker, so the party screen has no slot buttons and old ones are refused.
         for i in range(30):
             await self.pokemon(f'a{i:02}')
         await self.preview()
-        await self.click('gym_party_slot_two')
         await self.click('gym_party_next')
         shown = await self.click('gym_party_next')
+        self.assertFalse([item for item in shown['view'].children if 'gym_party_slot_' in item.custom_id])
         option = self.component(shown, 'gym_party_pick').options[0]
         await self.click('gym_party_pick', [option.value])
-        self.assertEqual(self.selection()['party'][1], [option.value, 0])
-        self.assertIsNone(self.selection()['party'][0])
+        self.assertEqual(self.selection()['party'], [[option.value, 0]])
+        with self.assertRaises(_Refused):
+            await self.click('gym_party_slot_two')
+
+    async def test_party_saved_before_one_attacker_rule_is_refused(self):
+        await self.preview()
+        self.session['selection'] = json.dumps({**self.selection(), 'party': [['mon', 0], ['two', 0]], 'slot': 2})
+        before = await self.snapshot()
+        for action in ('gym_party_next', 'gym_battle_start'):
+            with self.subTest(action=action), self.assertRaises(_Refused):
+                await self.click(action)
+        self.assertEqual(await self.snapshot(), before)
 
     async def test_every_select_at_most_25_options_and_view_at_most_5_rows(self):
         for i in range(299):
@@ -475,14 +494,11 @@ class GymBattleScreenTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.component(shown, 'gym_battle_start').disabled)
         with self.assertRaises(_Refused):
             await self.click('gym_battle_start')
-        await self.click('gym_party_slot_two')
         shown = await self.click('gym_party_pick', ['two'])
-        self.assertTrue(self.component(shown, 'gym_battle_start').disabled)
-        await self.click('gym_party_slot_one')
-        shown = await self.click('gym_party_pick', ['mon'])
         self.assertFalse(self.component(shown, 'gym_battle_start').disabled)
-        with self.assertRaises(_Refused):
-            await self.click('gym_party_pick', ['two'])
+        shown = await self.click('gym_party_pick', ['mon'])  # a new pick replaces the one attacker
+        self.assertEqual(self.selection()['party'], [['mon', 0]])
+        self.assertFalse(self.component(shown, 'gym_battle_start').disabled)
 
     async def test_preview_saves_deployment_id_and_start_passes_it(self):
         await self.ready()
@@ -625,7 +641,7 @@ class GymBattleScreenTests(unittest.IsolatedAsyncioTestCase):
         shown = await self.ready()
         await self.conn.execute('INSERT INTO sessions(session_id,guild_id,user_id,profile_id,revision,selection,expires_at) '
                                 'VALUES (?,?,?,?,?,?,?)', ('abc', 'g', 'u', self.pid, 7, self.session['selection'], 999999))
-        for target, values in (('gym_party_slot_two', None), ('gym_party_pick', ['two'])):
+        for target, values in (('gym_party_pick', ['two']),):
             interaction = test_walker_router.WalkerTests.interaction(self, user='u', guild='g', values=values)
             await self.walker.route(interaction, self.component(shown, target).custom_id)
             interaction.followup.send.assert_not_awaited()
@@ -635,9 +651,9 @@ class GymBattleScreenTests(unittest.IsolatedAsyncioTestCase):
         await self.walker.route(interaction, action)
         interaction.followup.send.assert_not_awaited()
         self.assertEqual(interaction.edit_original_response.await_args.kwargs['embed'].title, 'Gym battle result')
-        self.assertEqual(await self.scalar('SELECT revision FROM sessions'), 10)
+        self.assertEqual(await self.scalar('SELECT revision FROM sessions'), 9)
         result = json.loads(await self.scalar('SELECT selection FROM sessions'))['result']
-        self.assertEqual([item['pokemon_uid'] for item in result['snapshot']['party']], ['mon', 'two'])
+        self.assertEqual([item['pokemon_uid'] for item in result['snapshot']['party']], ['two'])
         before = await self.snapshot()
         duplicate = test_walker_router.WalkerTests.interaction(self, user='u', guild='g')
         await self.walker.route(duplicate, action)
@@ -690,7 +706,7 @@ class GymBattleScreenTests(unittest.IsolatedAsyncioTestCase):
     async def test_stale_party_disables_start_no_fight(self):
         await self.ready()
         await self.conn.execute("UPDATE pokemon SET revision=revision+1 WHERE pokemon_uid='mon'")
-        shown = await self.click('gym_party_slot_two')
+        shown = await self.click('gym_party_prev')
         self.assertTrue(self.component(shown, 'gym_battle_start').disabled)
         before = await self.snapshot()
         with self.assertRaises(_Refused):

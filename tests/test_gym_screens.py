@@ -100,7 +100,7 @@ class GymScreenTests(unittest.IsolatedAsyncioTestCase):
     async def test_view_buttons_by_state_empty_mine_other(self):
         self.assertEqual(self.labels(await self.view()), {'Deploy', 'Back'})
         await self.deploy(self.gym)
-        self.assertEqual(self.labels(await self.view()), {'Recall', 'Rewards', 'Back'})
+        self.assertEqual(self.labels(await self.view()), {'Feed Razz Berry', 'Recall', 'Rewards', 'Back'})
         pid = await self.profile('neighbor', 'g')
         self.session.update(profile_id=pid, user_id='neighbor')
         self.assertEqual(self.labels(await self.view()), {'Battle', 'Back'})

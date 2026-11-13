@@ -183,6 +183,50 @@ async def settle(conn, now, rng, content):
         await end_deployment(conn, deployment['guild_id'], deployment['deployment_id'], 'expired', now, rng, content)
 
 
+async def feed(conn, session, gym_id, expected_deployment_id, now, rules):
+    """D62b: the holder spends one berry to raise the defender's battle-HP factor by 0.5x, at most 2.0x."""
+    _writer(conn)
+    guild_id = session['guild_id']
+    profile = await profiles.get_profile(conn, guild_id, session['user_id'])
+    if profile is None or profile['profile_id'] != session['profile_id']:
+        return {'status': 'stale'}
+    if (await profiles.restrictions(conn, guild_id, session['user_id'])).excluded:
+        return {'status': 'excluded'}
+    pid, feeding = profile['profile_id'], rules['defender_feed']
+    key = f"gym_feed:{session['session_id']}:{session['revision']}"
+    async with conn.execute("SELECT profile_id,result FROM action_receipts WHERE key=? AND action='gym_feed'",
+                            (key,)) as cursor:
+        receipt = await cursor.fetchone()
+    if receipt is not None:
+        return json.loads(receipt['result']) if receipt['profile_id'] == pid else {'status': 'stale'}
+    async with conn.execute('SELECT * FROM gym_deployments WHERE gym_id=? AND guild_id=? AND ended_at IS NULL',
+                            (gym_id, guild_id)) as cursor:
+        deployment = await cursor.fetchone()
+    if deployment is None or deployment['deployment_id'] != expected_deployment_id or deployment['profile_id'] != pid:
+        return {'status': 'stale'}
+    if deployment['last_fed_at'] is not None and now < deployment['last_fed_at'] + feeding['cooldown_seconds']:
+        return {'status': 'cooldown', 'remaining': deployment['last_fed_at'] + feeding['cooldown_seconds'] - now}
+    hours = max(0, min(7, int((now - deployment['deployed_at']) // 3600)))
+    if battle_engine.defender_factor_x10(hours, deployment['heal_x10']) >= 20:
+        return {'status': 'full'}
+    async with conn.execute('SELECT quantity FROM inventory WHERE profile_id=? AND item_id=?',
+                            (pid, feeding['item'])) as cursor:
+        held = await cursor.fetchone()
+    if held is None or held['quantity'] < 1:
+        return {'status': 'missing'}
+    heal = min(deployment['heal_x10'] + feeding['heal_x10'], hours)
+
+    async def compute(conn):
+        await conn.execute('UPDATE inventory SET quantity=quantity-1 WHERE profile_id=? AND item_id=?',
+                           (pid, feeding['item']))
+        await conn.execute('UPDATE gym_deployments SET heal_x10=?,last_fed_at=? WHERE deployment_id=?',
+                           (heal, now, deployment['deployment_id']))
+        return {'status': 'fed', 'factor_x10': battle_engine.defender_factor_x10(hours, heal)}, [
+            {'profile_id': pid, 'resource': 'item', 'resource_id': feeding['item'], 'delta': -1, 'reason': 'gym_feed'}]
+
+    return await with_receipt(conn, key, 'gym_feed', compute, profile_id=pid)
+
+
 def _battle_snapshot(pokemon, content, multipliers):
     identity, _ = storage.identify(content, pokemon)
     base = [identity[key] for key in ('base_attack', 'base_defense', 'base_stamina')]
@@ -236,7 +280,7 @@ async def battle(conn, session, gym_id, expected_deployment_id, party, nominee_u
         return await refuse('invalid')
     if profile['last_battle_at'] is not None and profile['last_battle_at'] + rules['cooldown_seconds'] > now:
         return await refuse('cooldown')
-    if (not isinstance(party, (list, tuple)) or not 1 <= len(party) <= 3 or
+    if (not isinstance(party, (list, tuple)) or not 1 <= len(party) <= rules['party_max'] or
             any(not isinstance(slot, (list, tuple)) or len(slot) != 2 or
                 not isinstance(slot[0], str) or type(slot[1]) is not int or slot[1] < 0 for slot in party) or
             len({slot[0] for slot in party}) != len(party)):
@@ -263,9 +307,10 @@ async def battle(conn, session, gym_id, expected_deployment_id, party, nominee_u
     pokemon = await storage.detail(conn, deployment['profile_id'], deployment['pokemon_uid'])
     defender, defender_snapshot = _battle_snapshot(pokemon, content, multipliers)
     hours = int((now - deployment['deployed_at']) // 3600)
-    battle_hp = battle_engine.defender_hp(defender.hp, hours)
+    battle_hp = battle_engine.defender_hp(defender.hp, hours, deployment['heal_x10'])
     snapshot = {'party': snapshots, 'defender': defender_snapshot, 'deployment': deployment,
-                'nominee_uid': nominee_uid, 'hours_held': hours, 'defender_battle_hp': battle_hp,
+                'nominee_uid': nominee_uid, 'hours_held': hours, 'heal_x10': deployment['heal_x10'],
+                'defender_battle_hp': battle_hp,
                 'ruleset_hashes': {
                     'content': profiles.content_facts(content)[0],
                     **{name: hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':'),

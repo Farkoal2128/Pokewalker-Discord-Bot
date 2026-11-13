@@ -7,7 +7,7 @@ import discord
 
 from content.balance import load_table
 from pokewalker.bot.screens_catch import custom_id
-from pokewalker.domain.battle import defender_hp
+from pokewalker.domain.battle import defender_factor_x10, defender_hp
 from pokewalker.services import gyms as service, profiles, storage
 
 
@@ -49,7 +49,8 @@ def render_view(state):
                 + f"\nHP {state['hp']} · battle HP {state['battle_hp']} · held {state['hours']} h"
                 + f"\nWeakening: battle HP ×{state['factor']:.1f} · Time left: {state['left']} h"
                 + f"\nHolder <@{dep['user_id']}>")
-        actions = [('Recall', 'gym_recall'), ('Rewards', 'gym_rewards')] if state['mine'] else [('Battle', 'gym_battle')]
+        actions = ([('Feed Razz Berry', 'gym_feed'), ('Recall', 'gym_recall'), ('Rewards', 'gym_rewards')]
+                   if state['mine'] else [('Battle', 'gym_battle')])
     if state.get('notice'):
         text += '\n' + state['notice']
     embed = discord.Embed(title=state['gym']['name'], description=text)
@@ -88,10 +89,11 @@ def render_recall(state):
 
 
 def render_party(state):
-    selection = state['selection']
-    lines = [f"Page {selection['offset'] // 10 + 1} · Fill slot {selection['slot']}"]
+    selection, slots = state['selection'], len(state['members'])
+    lines = [f"Page {selection['offset'] // 10 + 1} · " + (f"Fill slot {selection['slot']}" if slots > 1 else 'Choose one attacker')]
     for index, item in enumerate(state['members'], 1):
-        lines.append(f"Slot {index}: " + (f"{item['identity']['name_en']} · CP {item['cp']}" if item else 'empty'))
+        lines.append((f"Slot {index}: " if slots > 1 else 'Attacker: ')
+                     + (f"{item['identity']['name_en']} · CP {item['cp']}" if item else 'empty'))
     if state.get('notice'):
         lines.append(state['notice'])
     view = discord.ui.View(timeout=None)
@@ -109,13 +111,14 @@ def render_party(state):
     if options:
         view.add_item(discord.ui.Select(placeholder='Choose attacker', custom_id=custom_id(state, 'gym_party_pick'),
                                        options=options, row=1))
-    for slot in range(1, 4):
+    for slot in range(1, slots + 1 if slots > 1 else 1):  # one attacker since D62a needs no slot buttons
         view.add_item(discord.ui.Button(label=f'Slot {slot}', custom_id=custom_id(state, 'gym_party_slot_' + ('one', 'two', 'three')[slot - 1]), row=2))
     outcomes = [discord.SelectOption(label='Clear only', value='clear', default=selection['nominee'] is None)]
     for slot, item in enumerate(state['members'], 1):
         if item and not item['reason'] and not (item['identity']['is_legendary'] or item['identity']['is_mythical']):
             uid = item['pokemon']['pokemon_uid']
-            outcomes.append(discord.SelectOption(label=f'Claim with slot {slot}', value=uid, default=selection['nominee'] == uid))
+            outcomes.append(discord.SelectOption(label=f'Claim with slot {slot}' if slots > 1 else 'Claim with attacker',
+                                                 value=uid, default=selection['nominee'] == uid))
     view.add_item(discord.ui.Select(placeholder='Win outcome', custom_id=custom_id(state, 'gym_party_outcome'), options=outcomes, row=3))
     view.add_item(discord.ui.Button(label='Start', custom_id=custom_id(state, 'gym_battle_start'), row=4, disabled=not state['valid']))
     return {'embed': discord.Embed(title='Gym battle party', description='\n'.join(lines)), 'view': view}
@@ -188,10 +191,10 @@ def handlers(walker):
         if dep:
             pokemon = await storage.detail(conn, dep['profile_id'], dep['pokemon_uid'])
             hours = max(0, min(7, int((now - dep['deployed_at']) // 3600)))
-            state.update(pokemon_state(pokemon), hours=hours, factor=(20 - hours) / 10,
+            state.update(pokemon_state(pokemon), hours=hours, factor=defender_factor_x10(hours, dep['heal_x10']) / 10,
                          left=f"{max(0, (dep['ends_at'] - now) / 3600):.2f}".rstrip('0').rstrip('.'),
                          mine=dep['profile_id'] == session['profile_id'])
-            state['battle_hp'] = defender_hp(state['hp'], hours)
+            state['battle_hp'] = defender_hp(state['hp'], hours, dep['heal_x10'])
         return state
 
     def reason(pokemon, identity, profile, attacking=False):
@@ -206,7 +209,7 @@ def handlers(walker):
     async def party_state(conn, session, selection, profile, notice=None):
         rows, total = await storage.page(conn, session['profile_id'], selection['offset'])
         members = []
-        for slot in selection['party'] + [None] * (3 - len(selection['party'])):
+        for slot in selection['party'] + [None] * (battle_rules['party_max'] - len(selection['party'])):
             pokemon = await storage.detail(conn, session['profile_id'], slot[0]) if slot else None
             item = pokemon_state(pokemon) if pokemon else None
             if item:
@@ -243,7 +246,8 @@ def handlers(walker):
             selection['log_offset'] = max(0, min(offset, max(0, (len(text) - 1) // 3500 * 3500)))
             session['selection'] = json.dumps(selection)
             return render_log({**state, 'offset': selection['log_offset']})
-        elif selection.get('phase') != 'gym_party':
+        elif (selection.get('phase') != 'gym_party' or len(selection['party']) > battle_rules['party_max']
+              or selection['slot'] > battle_rules['party_max']):  # also a party saved before D62a
             raise _Refused(REOPEN)
         if action != 'gym_battle_start':
             await service.settle(conn, now, walker.rng, walker.bot.content)
@@ -252,6 +256,8 @@ def handlers(walker):
             selection['offset'] = max(0, min(selection['offset'] + (10 if action == 'gym_party_next' else -10), max(0, (total - 1) // 10 * 10)))
         if action.startswith('gym_party_slot_'):
             selection['slot'] = ('one', 'two', 'three').index(action.rsplit('_', 1)[1]) + 1
+            if selection['slot'] > battle_rules['party_max']:  # a slot button from before D62a
+                raise _Refused(REOPEN)
         state = await party_state(conn, session, selection, profile)
         values = interaction.data.get('values', [])
         if action == 'gym_party_pick':
@@ -279,7 +285,8 @@ def handlers(walker):
                 return render_result({'session': session, 'result': result, 'content': walker.bot.content})
             if result['status'] not in ('stale', 'cooldown'):
                 raise _Refused(REOPEN)
-            state['notice'] = CHANGED if result['status'] == 'stale' else 'Battle cooldown: wait 10 minutes after your last completed battle.'
+            minutes = battle_rules['cooldown_seconds'] // 60
+            state['notice'] = CHANGED if result['status'] == 'stale' else f'Battle cooldown: wait {minutes} minutes after your last completed battle.'
         session['selection'] = json.dumps(selection)
         return render_party(await party_state(conn, session, selection, profile, state.get('notice')))
 
@@ -301,7 +308,7 @@ def handlers(walker):
             gym = await service.get_gym(conn, guild, gym_id)
             if gym is None or gym['retired_at'] is not None:
                 raise _Refused(CHANGED if action == 'gym_deploy_confirm' else REOPEN)
-            if action in ('gym_recall', 'gym_recall_confirm', 'gym_rewards'):
+            if action in ('gym_recall', 'gym_recall_confirm', 'gym_rewards', 'gym_feed'):
                 holder(session, selection, await deployment(conn, session, gym))
         if action == 'gym_battle' or action.startswith(('gym_party_', 'gym_battle_', 'gym_log_')):
             return await battle_dispatch(action, conn, session, interaction, selection, profile, gym, now)
@@ -358,6 +365,17 @@ def handlers(walker):
                 if selection.get('phase') != 'gym_recall':
                     raise _Refused(CHANGED)
                 await service.end_deployment(conn, guild, dep['deployment_id'], 'recalled', now, walker.rng, walker.bot.content)
+            elif action == 'gym_feed':
+                result = await service.feed(conn, session, gym['gym_id'], dep['deployment_id'], now, battle_rules)
+                wait = battle_rules['defender_feed']['cooldown_seconds'] // 60
+                notice = {'fed': lambda: f"Fed a Razz Berry: battle HP ×{result['factor_x10'] / 10:.1f}",
+                          'full': lambda: 'Your defender is already at full battle HP (×2.0).',
+                          'cooldown': lambda: f"You can feed once every {wait} minutes; "
+                                              f"next in {-(-result['remaining'] // 60):.0f} min.",
+                          'missing': lambda: 'You have no Razz Berry.'}.get(result['status'])
+                if notice is None:
+                    raise _Refused(CHANGED)
+                notice = notice()
             elif action == 'gym_rewards':
                 result = await service.pay_hours(conn, guild, dep['deployment_id'], now, walker.rng, walker.bot.content)
                 notice = f"{result['paid_hours'] - dep['paid_hours']} hours of gym income added to your Inbox"
@@ -368,7 +386,7 @@ def handlers(walker):
 
     return {action: partial(dispatch, action) for action in
             ('gyms', 'gym_view', 'gym_deploy', 'gym_deploy_prev', 'gym_deploy_next', 'gym_deploy_select',
-             'gym_deploy_confirm', 'gym_recall', 'gym_recall_confirm', 'gym_rewards', 'gym_battle',
+             'gym_deploy_confirm', 'gym_recall', 'gym_recall_confirm', 'gym_rewards', 'gym_feed', 'gym_battle',
              'gym_party_prev', 'gym_party_next', 'gym_party_pick', 'gym_party_slot_one', 'gym_party_slot_two',
              'gym_party_slot_three', 'gym_party_outcome', 'gym_battle_start', 'gym_battle_log', 'gym_battle_result',
              'gym_log_prev', 'gym_log_next')}

@@ -80,7 +80,9 @@ class BalanceTableTests(unittest.TestCase):
             "stab": 1.2, "energy_cap": 100, "tick_limit": 120,
             "damage": "floor(0.5 * power * attack / defense * stab * effectiveness) + 1",
             "defender_hp": {"base_factor_x10": 20, "per_hour_x10": 1, "rounding": "ceil"},
-            "party_max": 3, "cooldown_seconds": 600,
+            # D62 (owner decision 2026-11-12): one attacker, 5-minute cooldown, Razz Berry feeding.
+            "party_max": 1, "cooldown_seconds": 300,
+            "defender_feed": {"item": "razz_berry", "heal_x10": 5, "cooldown_seconds": 600},
             "type_factors": {"super": 1.6, "neutral": 1.0, "resisted": 0.625, "immune": 0.390625},
         })
 
@@ -298,7 +300,8 @@ class BalanceTableTests(unittest.TestCase):
                 self.assertTrue(table["source"])
                 date.fromisoformat(table["checked"])
                 versions = {"find_table": 2, "conversion_rates": 4, "capacities": 3, "routes": 2,
-                            "survivor_table": 3, "catch": 3, "gym_income_table": 2, "checkin_table": 2}
+                            "survivor_table": 3, "catch": 3, "gym_income_table": 2, "checkin_table": 2,
+                            "battle": 2}
                 self.assertEqual(table["version"], versions.get(name, 1))
                 amended = {"survivor_table", "conversion_rates", "catch", "gym_income_table", "checkin_table"}
                 if name in amended:
@@ -306,7 +309,10 @@ class BalanceTableTests(unittest.TestCase):
                     if name != "catch":
                         self.assertIn("owner amendment Bottlecap and Vitamin (owner decision 2026-11-12)",
                                       table["source"])
-                elif name in versions.keys() | {"evolution", "battle"}:
+                elif name == "battle":
+                    self.assertEqual(table["checked"], "2026-11-12")
+                    self.assertIn("D62 (owner decision 2026-11-12)", table["source"])
+                elif name in versions.keys() | {"evolution"}:
                     self.assertEqual(table["checked"], "2026-11-05")
         root = Path(__file__).parents[1] / "content" / "balance"
         self.assertEqual({p.stem for p in root.glob("*.json")}, set(TABLES))

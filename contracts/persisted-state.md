@@ -841,6 +841,18 @@ award or second revision increment. Profile deletion cascades deployments, recei
 and inbox rows, crediting nothing. No existing schema or Claim semantics change.
 Tests: test_gyms, test_milestones and test_screens. Full G-F2 and live gates remain.
 
+## D62b gym defender feeding (migration 0021)
+`gym_deployments` gains `heal_x10 INTEGER NOT NULL DEFAULT 0` (0..7, tenths of canonical HP)
+and nullable `last_fed_at`. `feed(conn,session,gym_id,expected_deployment_id,now,rules)` in
+services.gyms runs in the caller's writer transaction under the owner-bearing
+`gym_feed:<session_id>:<revision>` receipt. Session ownership and exclusion come first. The
+exact active expected deployment held by the session's profile is required (else stale);
+`now < last_fed_at + rules.defender_feed.cooldown_seconds` returns cooldown with remaining
+seconds; a factor already at `base_factor_x10` returns full; no `rules.defender_feed.item`
+returns missing. Otherwise one berry is spent with a `gym_feed` ledger line, `heal_x10`
+becomes `min(heal_x10 + rules.defender_feed.heal_x10, min(7, full hours held))`,
+`last_fed_at=now`, and the result is fed with the new factor. Refusals change nothing.
+
 ## M7.6a gym battle settlement (additive)
 D10/D23/D30/D32/D40b/D41 and PLAN Q6/Q7 add
 `battle(conn,session,gym_id,expected_deployment_id,party,nominee_uid,now,rng,content,
@@ -856,17 +868,17 @@ including after defeat, replacement, cooldown, changed Pokemon or restart.
 
 For a new intention, settle expired deployments, then require a nonretired gym
 in the session guild, the exact active expected deployment, another holder,
-and at least 600 seconds since the challenger's last completed battle. Missing
+and at least `rules.cooldown_seconds` (300, D40b) since the challenger's last completed battle. Missing
 and foreign gym IDs are indistinguishable (status invalid), with no cross-guild
 existence lookup. A replaced/ended/absent deployment or changed Pokemon revision
 returns stale; own gym, invalid party or nominee returns invalid; cooldown and
 exclusion return cooldown and excluded. Profile mismatch returns stale. Every
 refusal leaves all state unchanged, including settlement, receipts and cooldown.
-Party has 1..3 distinct owned Pokemon, none companion or deployed. Legendary and
+Party has 1..`rules.party_max` (1, D62a) distinct owned Pokemon, none companion or deployed. Legendary and
 Mythical Pokemon may attack but cannot be nominees; a nominee must be in party.
 
 Combatant snapshots use C7 combat_stats, first-type fast and charged templates,
-canonical CP/HP and frozen full hours held at Start for defender_hp. The receipt
+canonical CP/HP and frozen full hours held and feed total (heal_x10, D62b) at Start for defender_hp. The receipt
 retains ordered Pokemon IDs/form_id/revisions/content versions, combatants, deployment,
 nominee, frozen HP and hashes of configured content, multipliers, rules and chart.
 PLAN Q15 snapshots carry nullable form_id for each attacker and defender so result

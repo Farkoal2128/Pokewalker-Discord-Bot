@@ -289,7 +289,9 @@ increases to `version: 3`. Each has nonempty `source` and `checked: "2026-11-05"
 
 - `battle.json` has `rules`: `fast: {power: 6, energy: 10, ticks: 1}`,
   `charged: {power: 60, energy_cost: 50, ticks: 2}`, `stab: 1.2`,
-  `energy_cap: 100`, `tick_limit: 120`, `party_max: 3`, `cooldown_seconds: 600`,
+  `energy_cap: 100`, `tick_limit: 120`, `party_max: 1`, `cooldown_seconds: 300`
+  (3 and 600 before `version: 2`, owner decision 2026-11-12, D62),
+  `defender_feed: {item: "razz_berry", heal_x10: 5, cooldown_seconds: 600}` (D62b),
   and `damage: "floor(0.5 * power * attack / defense * stab * effectiveness) + 1"`.
   `defender_hp: {base_factor_x10: 20, per_hour_x10: 1, rounding: "ceil"}` encodes
   `ceil(canonical_HP * (20 - h) / 10)` for full hours `h` from 0 through 7.

@@ -1,7 +1,7 @@
 {
-  "source": "docs/research/gyms/battle-system.md section 3; docs/features/pokewalker-bot/README.md D32/D40b; docs/features/pokewalker-v1.1-v2/PLAN.md Q6/Q7 (owner decision 2026-11-05)",
-  "checked": "2026-11-05",
-  "version": 1,
+  "source": "docs/research/gyms/battle-system.md section 3; docs/features/pokewalker-bot/README.md D32/D40b; docs/features/pokewalker-v1.1-v2/PLAN.md Q6/Q7 (owner decision 2026-11-05); D62 (owner decision 2026-11-12) one attacker, 5-minute cooldown, Razz Berry feeding",
+  "checked": "2026-11-12",
+  "version": 2,
   "rules": {
     "fast": {
       "power": 6,
@@ -22,8 +22,13 @@
       "per_hour_x10": 1,
       "rounding": "ceil"
     },
-    "party_max": 3,
-    "cooldown_seconds": 600,
+    "party_max": 1,
+    "cooldown_seconds": 300,
+    "defender_feed": {
+      "item": "razz_berry",
+      "heal_x10": 5,
+      "cooldown_seconds": 600
+    },
     "type_factors": {
       "super": 1.6,
       "neutral": 1.0,

@@ -37,9 +37,9 @@ Buy evolution items in Bag for 500 Stardust each, or use Buy & evolve on a missi
 
 <!-- page -->
 
-**Gym defenders.** Deploy an eligible Pokémon, Recall it, or use Rewards to add unpaid full hours to your Inbox; recalling forfeits the survivor roll.
+**Gym defenders.** Deploy an eligible Pokémon, Recall it, or use Rewards to add unpaid full hours to your Inbox; recalling forfeits the survivor roll. A defender loses 0.1× battle HP each hour; Feed Razz Berry restores 0.5×, up to 2.0×, once every 10 minutes.
 
-**Gym battles.** Pick up to three attackers in order, choose Clear only or a claiming defender, then Start; results and Battle log are private.
+**Gym battles.** Pick one attacker, choose Clear only or claiming the gym with it, then Start; results and Battle log are private. You can battle again 5 minutes after your last battle.
 
 **Defender time.** Gym defenders return automatically after 8 hours.
 

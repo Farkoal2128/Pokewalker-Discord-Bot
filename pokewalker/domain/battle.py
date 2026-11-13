@@ -62,12 +62,18 @@ def combat_stats(base: Sequence[int], ivs: Sequence[int], level_x2: int,
             (base[1] + ivs[1]) * multiplier, canonical_hp)
 
 
-def defender_hp(canonical_hp: int, hours_held: int) -> int:
+def defender_factor_x10(hours_held: int, heal_x10: int = 0) -> int:
+    """D32 weakening (2.0x less 0.1x per full hour, 0-7) offset by D62b feeding, capped at 2.0x."""
+    if type(hours_held) is not int or type(heal_x10) is not int or heal_x10 < 0:
+        raise ValueError("hours_held and heal_x10 must be integers")
+    return min(20, 20 - min(7, max(0, hours_held)) + heal_x10)
+
+
+def defender_hp(canonical_hp: int, hours_held: int, heal_x10: int = 0) -> int:
     _positive(canonical_hp, "canonical_hp", integer=True)
     if type(hours_held) is not int:
         raise ValueError("hours_held must be integer full hours")
-    hours = min(7, max(0, hours_held))
-    return -(-canonical_hp * (20 - hours) // 10)
+    return -(-canonical_hp * defender_factor_x10(hours_held, heal_x10) // 10)
 
 
 def effectiveness(move_type: str, defender_types: Sequence[str], chart: Mapping) -> float:
@@ -89,7 +95,7 @@ def damage(power: float, attack: float, defense: float, stab: float, eff: float)
 
 def simulate(party: Sequence[Combatant], defender: Combatant, defender_battle_hp: int,
              *, rules: Mapping, chart: Mapping) -> Result:
-    if not 1 <= len(party) <= min(3, rules["party_max"]):
+    if not 1 <= len(party) <= 3:  # the engine fights 1..3; the gym service applies rules["party_max"]
         raise ValueError("party must contain one to three combatants")
     _positive(defender_battle_hp, "defender_battle_hp", integer=True)
     for user in (*party, defender):
