@@ -68,20 +68,8 @@ class TradeChannels(app_commands.Group):
 
     @app_commands.command(name="add-all", description="Allow trading in all channels the bot can post in")
     async def add_all(self, interaction: discord.Interaction, reason: str):
-        await interaction.response.defer(ephemeral=True)
-        if not await self.admin.authorize(interaction):
-            return
-        reason = reason.strip()
-        if not reason:
-            await self.admin.reply(interaction, "A reason is required.")
-            return
-        try:
-            member = await interaction.guild.fetch_member(interaction.user.id)
-        except discord.HTTPException:
-            await self.admin.reply(interaction, "Could not confirm your Manage Server permission. Nothing was changed.")
-            return
-        if not member.guild_permissions.manage_guild:
-            await self.admin.reply(interaction, "Manage Server permission is required.")
+        reason = await self.admin.add_all_reason(interaction, reason)
+        if reason is None:
             return
 
         async def mutation(conn):
@@ -131,10 +119,4 @@ class TradeChannels(app_commands.Group):
         if not lines:
             await self.admin.reply(interaction, "No trade channels configured.")
             return
-        # Sixty snowflake mentions (at most 24 characters each) stay below Discord's 2000-character limit.
-        for start in range(0, len(lines), 60):
-            text = "\n".join(lines[start:start + 60])
-            if start == 0:
-                await self.admin.reply(interaction, text)
-            else:
-                await interaction.followup.send(text, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+        await self.admin.send_lines(interaction, lines, 60)  # sixty mentions of at most 24 characters

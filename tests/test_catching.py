@@ -365,6 +365,28 @@ class CatchingTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Confirm Master Ball", [item.label for item in controls])
         self.walker.rng.random.assert_not_called()
 
+    async def master_ball_with_berry(self, berry, held):
+        session = await self.prepared()
+        await self.inventory(master_ball=1, **{berry: held})
+        session = self.choose(session, berry=berry, ball="master_ball")
+        await self.writer.run(lambda conn: conn.execute(
+            "UPDATE sessions SET selection=? WHERE session_id=?", (session["selection"], session["session_id"])))
+        await self.click(await self.current(session), "throw")
+        await self.click(await self.current(session), "master_confirm")
+        self.assertEqual((await self.encounter_row())["state"], "caught")
+        bag = {r["item_id"]: r["quantity"] for r in await self.rows("SELECT * FROM inventory")}
+        return bag.get(berry, 0), (await self.rows("SELECT * FROM catch_attempts"))[0]["berry"]
+
+    async def test_master_ball_neither_spends_nor_requires_a_catch_rate_berry(self):
+        # Audit fix: a carried-over Razz Berry cannot help a guaranteed catch.
+        self.assertEqual(await self.master_ball_with_berry("razz_berry", 5), (5, None))
+
+    async def test_master_ball_with_carried_berry_out_of_stock_still_throws(self):
+        self.assertEqual(await self.master_ball_with_berry("razz_berry", 0), (0, None))
+
+    async def test_master_ball_still_spends_pinap_for_its_candy_bonus(self):
+        self.assertEqual(await self.master_ball_with_berry("pinap_berry", 2), (1, "pinap_berry"))
+
     async def test_master_ball_consumed_once_on_double_confirm(self):
         session = self.choose(await self.prepared(), ball="master_ball")
         await self.inventory(master_ball=1)

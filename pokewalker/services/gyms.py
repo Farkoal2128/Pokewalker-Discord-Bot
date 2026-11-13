@@ -102,8 +102,10 @@ async def pay_hours(conn, guild_id, deployment_id, now, rng, content):
         return {'status': 'stale'}
     if deployment['ended_at'] is not None:
         return {'status': 'ended', 'paid_hours': deployment['paid_hours']}
-    completed = min(8, int((min(now, deployment['ends_at']) - deployment['deployed_at']) // 3600))
-    rows = load_table('gym_income_table')['rows']
+    table = load_table('gym_income_table')
+    completed = min(table['tenure_seconds'] // 3600,
+                    int((min(now, deployment['ends_at']) - deployment['deployed_at']) // 3600))
+    rows = table['rows']
     for hour in range(1, completed + 1):
         async def compute(conn):
             selected = rng.choices(rows, weights=[row['weight'] for row in rows], k=1)[0]
@@ -232,7 +234,7 @@ async def battle(conn, session, gym_id, expected_deployment_id, party, nominee_u
     deployment = dict(row)
     if deployment['profile_id'] == profile['profile_id']:
         return await refuse('invalid')
-    if profile['last_battle_at'] is not None and profile['last_battle_at'] + 600 > now:
+    if profile['last_battle_at'] is not None and profile['last_battle_at'] + rules['cooldown_seconds'] > now:
         return await refuse('cooldown')
     if (not isinstance(party, (list, tuple)) or not 1 <= len(party) <= 3 or
             any(not isinstance(slot, (list, tuple)) or len(slot) != 2 or

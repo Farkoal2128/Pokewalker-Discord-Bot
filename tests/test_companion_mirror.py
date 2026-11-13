@@ -455,7 +455,8 @@ class CompanionMirrorTests(unittest.IsolatedAsyncioTestCase):
                 indexes = {row['name'] for row in await upgraded.execute_fetchall('PRAGMA index_list(active_effects)')}
                 self.assertTrue({'active_effects_profile_remaining', 'active_effects_one_active',
                                  'active_effects_one_star_piece'} <= indexes)
-                self.assertEqual((await upgraded.execute_fetchall('PRAGMA user_version'))[0][0], 19)
+                self.assertEqual((await upgraded.execute_fetchall('PRAGMA user_version'))[0][0],
+                                 len(list(db.MIGRATIONS.glob('[0-9][0-9][0-9][0-9]_*.sql'))))
                 insert = ('INSERT INTO active_effects(effect_id,profile_id,kind,starts_at,receipt_key,'
                           'remaining_encounters,remaining_rewards) VALUES (?,?,?,2,?,?,?)')
                 for values in (('m1', 'a', 'companion_mirror', 'k1', 5, 0),

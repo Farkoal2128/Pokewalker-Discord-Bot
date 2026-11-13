@@ -49,6 +49,9 @@ release=$base/releases/$sha
 runuser -u pokewalker-deploy -- env -i PATH="$PATH" HOME=/var/lib/pokewalker-deploy \
     DEPLOY_ROOT="$root" build_release.sh "$sha" >/dev/null 2>&1 || refuse
 [[ -f $release/.complete && -f $release/deploy/pokewalker-bot.service ]] || refuse
+# Root installs this release's units and the backup timer runs its scripts as root,
+# so pokewalker-deploy must not be able to change it after the build.
+chown -R root:root -- "$release" || refuse
 
 as_bot() {
     local directory=$1
@@ -132,6 +135,8 @@ if [[ -n $previous && ! -f $config/backup.env ]]; then
     { mkdir -p -- "${snapshot%/*}" && rm -f -- "$snapshot" &&
         sqlite3 -readonly "$database" ".backup \"$snapshot\""; } >/dev/null 2>&1 ||
         { start || true; exit 40; }
+    # D28: plain copies are pruned by age like every other backup.
+    find "${snapshot%/*}" -maxdepth 1 -name 'pre-deploy-*.sqlite3' -mmin +$((28 * 24 * 60)) -delete >/dev/null 2>&1 || true
     printf 'deploy: backups not configured; local copy: %s\n' "$snapshot" >&2
 elif [[ -n $previous ]]; then
     systemctl stop pokewalker-bot.service || exit 30

@@ -66,7 +66,8 @@ channel), or EMBED_LINKS plus SEND_MESSAGES_IN_THREADS (thread), explains privat
 without writing. The component interaction carries the originating /walker channel.
 Each accepted fresh reservation posts one public embed there with AllowedMentions.none().
 Its title is '<name> caught|shares <Name>'; text includes name, form, gender, shiny
-state, CP, catcher and UTC catch date. The image uses the pinned artifact's exact
+state, CP, catcher ("Trainer", the current owner, for a Storage share, since a
+traded Pokémon's owner may not be its catcher) and UTC catch date. The image uses the pinned artifact's exact
 form/gender/shiny sprite, or none, with complete text in either case (D48).
 Success reports Shared. HTTP/transport/rate-limit failure reports unconfirmed delivery, that
 a message may already exist, and that the minute remains spent; it never retries.

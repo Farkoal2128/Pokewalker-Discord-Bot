@@ -28,7 +28,9 @@ def embed_for(walker, pokemon, interaction, caught):
     embed = discord.Embed(title=f"{name} {'caught' if caught else 'shares'} {identity['name_en']}",
                           description=f"{identity['name_en']} · {identity['kind']} · {pokemon['gender']}"
                           f"\nShiny: {'Yes' if pokemon['shiny'] else 'No'} · CP {power}"
-                          f"\nCatcher: {name} ({interaction.user.id})\nCaught: {date}")
+                          # A Storage share may be of a traded Pokemon, so it names the owner.
+                          f"\n{'Catcher' if caught else 'Trainer'}: {name} ({interaction.user.id})"
+                          f"\nCaught: {date}")
     if sprite is not None:
         embed.set_image(url=sprite)
     return embed

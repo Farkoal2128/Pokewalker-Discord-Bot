@@ -188,17 +188,15 @@ BACKUP_MONITOR_URL=https://hc-ping.com/<your-check-uuid>
 
 ### 6. Deploy
 
-Deploys run from the source checkout as root. They build the release as `pokewalker-deploy`,
-check the configuration as the bot user, take a backup when upgrading, switch the `current`
-link, and wait for the bot to report ready, rolling back if it doesn't:
+Deploys run as root from **your own clone** (never from `/srv/pokewalker/src`, which
+`pokewalker-deploy` can change). They build the release as `pokewalker-deploy`, make it
+root-owned, check the configuration as the bot user, take a backup when upgrading, switch the
+`current` link, and wait for the bot to report ready, rolling back if it doesn't. The simplest
+way is to re-run the installer, which deploys your clone's `HEAD`:
 
 ```bash
-cd /srv/pokewalker/src
-sudo -u pokewalker-deploy git fetch origin
-SHA=$(sudo -u pokewalker-deploy git rev-parse origin/main)
-sudo sed -i "s/^POKEWALKER_RELEASE=.*/POKEWALKER_RELEASE=$SHA/" /etc/pokewalker/runtime.env
-sudo env PATH="$PWD/deploy:/opt/pokewalker/bin:$PATH" deploy/deploy.sh "$SHA"
-sudo systemctl enable --now pokewalker-bot.service pokewalker-backup.timer
+git pull
+sudo deploy/install_ubuntu.sh
 ```
 
 Exit codes: `0` deployed · `10` preflight refused (configuration, build or check-config failed;
@@ -231,7 +229,7 @@ without the ❗ reaction). Players start with `/walker`.
 
 - Logs: `journalctl -u pokewalker-bot.service -f`; backups: `journalctl -u pokewalker-backup.service`.
 - Update: repeat step 6 with the new commit.
-- Restore a backup (bot stopped automatically): `sudo env PATH="$PWD/deploy:$PATH" deploy/deploy.sh "$SHA" --restore-db /path/to/snapshot.sqlite3`.
+- Restore a backup (bot stopped automatically), from your own clone: `sudo env PATH="$PWD/deploy:$PATH" deploy/deploy.sh "$SHA" --restore-db /path/to/snapshot.sqlite3`.
   Retrieve snapshots with `restic -r rclone:gdrive:pokewalker-backups restore latest --target /tmp/restore`
   (same environment variables as step 5b).
 - Before relying on it, rehearse a restore with throwaway data:

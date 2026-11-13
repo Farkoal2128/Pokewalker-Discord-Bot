@@ -1,13 +1,12 @@
 """D60 private raid entry using the existing Walker session and screens."""
 
 import json
-from uuid import uuid4
 
 import discord
 from discord import app_commands
 
 from pokewalker.bot import screens
-from pokewalker.bot.walker import EXCLUDED, _forget
+from pokewalker.bot.walker import EXCLUDED, _forget, new_session
 from pokewalker.services import profiles, raids
 from pokewalker.services.deletion import opted_out
 
@@ -28,12 +27,7 @@ def command(bot):
             now = bot.walker.clock()
 
             async def create_session(profile_id, selection):
-                session = {'session_id': str(uuid4()), 'guild_id': guild_id, 'user_id': user_id,
-                           'profile_id': profile_id, 'revision': 0,
-                           'expires_at': now + 900, 'selection': json.dumps(selection)}
-                await conn.execute('INSERT INTO sessions(session_id,guild_id,user_id,profile_id,revision,'
-                                   'expires_at,selection) VALUES (?,?,?,?,?,?,?)', tuple(session.values()))
-                return session
+                return await new_session(conn, guild_id, user_id, profile_id, now, json.dumps(selection))
 
             profile = await profiles.get_profile(conn, guild_id, user_id)
             if profile is not None:

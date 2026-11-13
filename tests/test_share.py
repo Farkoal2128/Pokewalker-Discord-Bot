@@ -12,6 +12,7 @@ import aiohttp
 import discord
 
 import test_catching as catching
+from pokewalker.bot import share
 from pokewalker.bot import screens
 
 
@@ -186,6 +187,17 @@ class ShareTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(embed.image.url)
         for text in ('Pikachu', identity['kind'], 'female', 'Shiny', 'CP ', '456', '1970-01-01'):
             self.assertIn(text, embed.description)
+
+    async def test_storage_share_names_the_trainer_not_the_catcher(self):
+        # Audit fix: since trading, the owner who shares from Storage may not be the catcher.
+        _, session = await self.caught()
+        pokemon = (await self.rows("SELECT * FROM pokemon WHERE origin='catch'"))[0]
+        interaction = self.interaction()
+        stored = share.embed_for(self.walker, pokemon, interaction, False).description
+        caught = share.embed_for(self.walker, pokemon, interaction, True).description
+        self.assertIn('Trainer: ', stored)
+        self.assertNotIn('Catcher', stored)
+        self.assertIn('Catcher: ', caught)
 
     async def test_embed_image_exact_form_gender_shiny_sprite(self):
         _, session = await self.caught()

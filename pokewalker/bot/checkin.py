@@ -7,6 +7,7 @@ import time
 import discord
 from discord import app_commands
 
+from pokewalker.bot.bag import name
 from pokewalker.services import items
 
 
@@ -23,11 +24,9 @@ def command(bot):
                 content=bot.content))
             status = result['status']
             if status == 'granted':
-                names = {'poke_ball': 'Poké Ball', 'great_ball': 'Great Ball',
-                         'razz_berry': 'Razz Berry', 'pinap_berry': 'Pinap Berry', 'vitamin': 'Vitamin'}
                 lines = []
                 for entry in result['outcomes']:
-                    line = f"{names[entry['item']]} ×{entry['quantity']}"
+                    line = f"{name(entry['item'])} ×{entry['quantity']}"
                     if entry['outcome'] == 'overflow':
                         line += ' — bag full, +10 Stardust'
                     lines.append(line)

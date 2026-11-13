@@ -37,6 +37,21 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
             (profile_id, guild, user))
         return profile_id
 
+    async def test_queue_triggers_match_the_configured_encounter_queue(self):
+        # Audit fix: stepping, check-in and the home screen read the cap; SQL triggers cannot.
+        from content.balance import limits
+        sql = await self.conn.execute_fetchall(
+            "SELECT sql FROM sqlite_master WHERE type='trigger' AND name LIKE 'encounter_queue_%'")
+        self.assertEqual(len(sql), 2)
+        for (text,) in sql:
+            self.assertTrue(text.split("BEGIN")[0].rstrip().endswith(f")>={limits()['encounter_queue']}"), text)
+
+    async def test_owned_pokemon_counts_use_the_profile_index(self):
+        # Audit fix: per-throw storage counts must not scan every server's Pokemon.
+        plan = await self.conn.execute_fetchall(
+            "EXPLAIN QUERY PLAN SELECT count(*) FROM pokemon WHERE profile_id='p' AND state='owned'")
+        self.assertIn("pokemon_profile_state", " ".join(row[-1] for row in plan))
+
     async def test_version_check_table(self):
         for version, expected in [
             ((3, 44, 5), False), ((3, 44, 6), True), ((3, 44, 99), True),

@@ -279,8 +279,8 @@ async def active_mirror(conn, profile_id):
     return await _active_encounter_effect(conn, profile_id, 'companion_mirror')
 
 
-async def _activate_encounter_effect(conn, session, now, *, kind, action, label, encounters_rule):
-    """One encounter booster (Shiny Lure or Companion Mirror) at a time, per profile."""
+async def _activate_effect(conn, session, now, *, kind, action, label, active, remaining):
+    """Spend one `kind` to start an effect unless `active(conn, pid)` says one is already running."""
     if not conn.in_transaction:
         raise RuntimeError(f'{label} activation requires an active writer transaction')
     _, refusal = await session_owner(conn, session)
@@ -289,10 +289,8 @@ async def _activate_encounter_effect(conn, session, now, *, kind, action, label,
     pid, key = session['profile_id'], f"{action}:{session['session_id']}:{session['revision']}"
 
     async def compute(conn):
-        async with conn.execute('SELECT 1 FROM active_effects WHERE profile_id=? AND remaining_encounters>0',
-                                (pid,)) as cursor:
-            if await cursor.fetchone() is not None:
-                return {'status': 'already_active'}, []
+        if await active(conn, pid):
+            return {'status': 'already_active'}, []
         async with conn.execute('SELECT quantity FROM inventory WHERE profile_id=? AND item_id=?',
                                 (pid, kind)) as cursor:
             held = await cursor.fetchone()
@@ -300,7 +298,7 @@ async def _activate_encounter_effect(conn, session, now, *, kind, action, label,
             return {'status': 'missing'}, []
         effect = {'effect_id': str(uuid4()), 'profile_id': pid, 'kind': kind,
                   'starts_at': now, 'expires_at': None, 'receipt_key': key,
-                  'remaining_encounters': load_table('catch')['rules'][encounters_rule], 'remaining_rewards': 0}
+                  'remaining_encounters': 0, 'remaining_rewards': 0, **remaining}
         await conn.execute('UPDATE inventory SET quantity=quantity-1 WHERE profile_id=? AND item_id=?', (pid, kind))
         await conn.execute('INSERT INTO active_effects(effect_id,profile_id,kind,starts_at,expires_at,receipt_key,'
                            'remaining_encounters,remaining_rewards) VALUES (?,?,?,?,?,?,?,?)', tuple(effect.values()))
@@ -310,14 +308,23 @@ async def _activate_encounter_effect(conn, session, now, *, kind, action, label,
     return await with_receipt(conn, key, action, compute, profile_id=pid)
 
 
+async def _encounter_effect_active(conn, pid):
+    """One encounter booster (Shiny Lure or Companion Mirror) at a time, per profile."""
+    async with conn.execute('SELECT 1 FROM active_effects WHERE profile_id=? AND remaining_encounters>0',
+                            (pid,)) as cursor:
+        return await cursor.fetchone() is not None
+
+
 async def activate_lure(conn, session, now):
-    return await _activate_encounter_effect(conn, session, now, kind='shiny_lure', action='lure',
-                                            label='Lure', encounters_rule='lure_encounters')
+    return await _activate_effect(conn, session, now, kind='shiny_lure', action='lure', label='Lure',
+                                  active=_encounter_effect_active,
+                                  remaining={'remaining_encounters': load_table('catch')['rules']['lure_encounters']})
 
 
 async def activate_mirror(conn, session, now):
-    return await _activate_encounter_effect(conn, session, now, kind='companion_mirror', action='mirror',
-                                            label='Companion Mirror', encounters_rule='mirror_encounters')
+    return await _activate_effect(conn, session, now, kind='companion_mirror', action='mirror',
+                                  label='Companion Mirror', active=_encounter_effect_active,
+                                  remaining={'remaining_encounters': load_table('catch')['rules']['mirror_encounters']})
 
 
 async def active_star_piece(conn, profile_id):
@@ -328,32 +335,12 @@ async def active_star_piece(conn, profile_id):
 
 
 async def activate_star_piece(conn, session, now):
-    if not conn.in_transaction:
-        raise RuntimeError('Star Piece activation requires an active writer transaction')
-    _, refusal = await session_owner(conn, session)
-    if refusal is not None:
-        return refusal
-    pid, key = session['profile_id'], f"star_piece:{session['session_id']}:{session['revision']}"
+    async def active(conn, pid):
+        return await active_star_piece(conn, pid) is not None
 
-    async def compute(conn):
-        if await active_star_piece(conn, pid) is not None:
-            return {'status': 'already_active'}, []
-        async with conn.execute("SELECT quantity FROM inventory WHERE profile_id=? AND item_id='star_piece'",
-                                (pid,)) as cursor:
-            held = await cursor.fetchone()
-        if held is None or held['quantity'] < 1:
-            return {'status': 'missing'}, []
-        effect = {'effect_id': str(uuid4()), 'profile_id': pid, 'kind': 'star_piece',
-                  'starts_at': now, 'expires_at': None, 'receipt_key': key,
-                  'remaining_encounters': 0, 'remaining_rewards': load_table('evolution')['star_piece']['rewards']}
-        await conn.execute("UPDATE inventory SET quantity=quantity-1 WHERE profile_id=? AND item_id='star_piece'",
-                           (pid,))
-        await conn.execute('INSERT INTO active_effects(effect_id,profile_id,kind,starts_at,expires_at,receipt_key,'
-                           'remaining_encounters,remaining_rewards) VALUES (?,?,?,?,?,?,?,?)', tuple(effect.values()))
-        return effect, [{'profile_id': pid, 'resource': 'item', 'resource_id': 'star_piece',
-                         'delta': -1, 'reason': 'star_piece_activate'}]
-
-    return await with_receipt(conn, key, 'star_piece', compute, profile_id=pid)
+    return await _activate_effect(conn, session, now, kind='star_piece', action='star_piece', label='Star Piece',
+                                  active=active,
+                                  remaining={'remaining_rewards': load_table('evolution')['star_piece']['rewards']})
 
 
 async def boost(conn, profile_id, amount):
@@ -364,4 +351,5 @@ async def boost(conn, profile_id, amount):
         return amount
     await conn.execute('UPDATE active_effects SET remaining_rewards=remaining_rewards-1 WHERE effect_id=?',
                        (effect_id,))
-    return amount * 3 // 2
+    star_piece = load_table('evolution')['star_piece']
+    return amount * star_piece['multiplier_numerator'] // star_piece['multiplier_denominator']

@@ -4,7 +4,6 @@ from datetime import datetime, timezone
 from functools import partial
 import json
 import math
-from uuid import uuid4
 
 import aiohttp
 import discord
@@ -194,7 +193,7 @@ def _capped(seconds):
 
 
 def command(bot):
-    from pokewalker.bot.walker import EXCLUDED, IDLE_SECONDS, _forget
+    from pokewalker.bot.walker import EXCLUDED, _forget, new_session
 
     @app_commands.command(name="trade", description="Trade a Pokémon with a member of this server")
     @app_commands.guild_only()
@@ -224,11 +223,7 @@ def command(bot):
             if member is not None and member.bot:
                 return {"content": "You can't trade with a bot."}
             now = bot.walker.clock()
-            session = {"session_id": str(uuid4()), "guild_id": guild_id, "user_id": user_id,
-                       "profile_id": profile["profile_id"], "revision": 0, "expires_at": now + IDLE_SECONDS,
-                       "selection": "{}"}
-            await conn.execute("INSERT INTO sessions(session_id,guild_id,user_id,profile_id,revision,expires_at,"
-                               "selection) VALUES (?,?,?,?,?,?,?)", tuple(session.values()))
+            session = await new_session(conn, guild_id, user_id, profile["profile_id"], now)
             if member is None:
                 current = await trading.current(conn, session, now)
                 result = {"status": "reopened", "trade_id": current["trade_id"]} if current else {"status": "none"}

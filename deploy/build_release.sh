@@ -14,6 +14,8 @@ done < <(compgen -e)
 
 [[ $# == 1 && $1 =~ ^[0-9a-fA-F]{40}$ ]] || refuse
 sha=$1
+# The deploy user's checkout, whatever directory root started deploy.sh from.
+cd -- "${DEPLOY_ROOT:-}/srv/pokewalker/src" || refuse
 git cat-file -e "${sha}^{commit}" || refuse
 
 base=${DEPLOY_ROOT:-}/opt/pokewalker

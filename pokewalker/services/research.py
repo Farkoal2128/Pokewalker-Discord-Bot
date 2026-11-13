@@ -34,25 +34,34 @@ async def candidates(conn, profile_id, content, offset):
     return rows, total
 
 
-async def send(conn, session, picks, preview, now, content):
+async def _checked(conn, session, picks, preview, now):
+    """Shared send checks: (profile, saved selection, receipt key) or (None, result to return, None)."""
     if not conn.in_transaction:
         raise RuntimeError("Research requires an active writer transaction")
     changed = {"status": "changed"}
     profile = await profiles.get_profile(conn, session["guild_id"], session["user_id"])
     if (profile is None or profile["profile_id"] != session["profile_id"]
             or (await profiles.restrictions(conn, session["guild_id"], session["user_id"])).excluded):
-        return changed
+        return None, changed, None
     saved = json.loads(session["selection"])
     if (not preview or saved.get("preview") != preview or saved.get("picks") != picks
             or not 1 <= len(picks) <= 20 or len({pick[0] for pick in picks}) != len(picks)):
-        return changed
+        return None, changed, None
     key = f"research:{preview['id']}"
     async with conn.execute("SELECT profile_id,result FROM action_receipts WHERE key=? AND action='research'", (key,)) as cursor:
         receipt = await cursor.fetchone()
     if receipt is not None:
-        return json.loads(receipt["result"]) if receipt["profile_id"] == profile["profile_id"] else changed
+        return None, json.loads(receipt["result"]) if receipt["profile_id"] == profile["profile_id"] else changed, None
     if preview["expires_at"] <= now:
-        return changed
+        return None, changed, None
+    return profile, saved, key
+
+
+async def send(conn, session, picks, preview, now, content):
+    profile, saved, key = await _checked(conn, session, picks, preview, now)
+    if profile is None:
+        return saved
+    changed = {"status": "changed"}
     rows = []
     for uid, revision in picks:
         pokemon = await storage.detail(conn, profile["profile_id"], uid)
@@ -125,24 +134,10 @@ async def auto_send(conn, now, content):
 
 
 async def send_pending_reviewed(conn, session, picks, preview, now, content):
-    if not conn.in_transaction:
-        raise RuntimeError("Research requires an active writer transaction")
+    profile, saved, key = await _checked(conn, session, picks, preview, now)
+    if profile is None:
+        return saved
     changed = {"status": "changed"}
-    profile = await profiles.get_profile(conn, session["guild_id"], session["user_id"])
-    if (profile is None or profile["profile_id"] != session["profile_id"]
-            or (await profiles.restrictions(conn, session["guild_id"], session["user_id"])).excluded):
-        return changed
-    saved = json.loads(session["selection"])
-    if (not preview or saved.get("preview") != preview or saved.get("picks") != picks
-            or not 1 <= len(picks) <= 20 or len({pick[0] for pick in picks}) != len(picks)):
-        return changed
-    key = f"research:{preview['id']}"
-    async with conn.execute("SELECT profile_id,result FROM action_receipts WHERE key=? AND action='research'", (key,)) as cursor:
-        receipt = await cursor.fetchone()
-    if receipt is not None:
-        return json.loads(receipt["result"]) if receipt["profile_id"] == profile["profile_id"] else changed
-    if preview["expires_at"] <= now:
-        return changed
     if len(picks) != 1 or not picks[0][0].startswith("pending:"):
         return changed
     async with conn.execute("SELECT * FROM encounters WHERE encounter_id=? AND profile_id=? AND state='caught' "

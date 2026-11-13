@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 
@@ -163,14 +164,14 @@ sqlite3)
     elif [[ ${!#} == 'PRAGMA integrity_check;' ]]; then
         printf 'ok\n'
     fi ;;
-sleep) : ;;
+sleep|chown) : ;;
 ln) MSYS=winsymlinks:nativestrict exec /usr/bin/ln "$@" ;;
 *) exec "/usr/bin/$name" "$@" ;;
 esac
 '''
         for name in ("env", "id", "stat", "flock", "runuser", "build_release.sh", "systemd-run",
                      "systemctl", "backup.sh", "sqlite3", "sleep", "readlink", "install",
-                     "ln", "mv", "rm", "mkdir"):
+                     "ln", "mv", "rm", "mkdir", "chown"):
             path = self.bin / name
             path.write_text(prelude + behavior, encoding="utf-8", newline="\n")
             path.chmod(0o755)
@@ -347,6 +348,26 @@ esac
         self.assertIn(f'sqlite3|-readonly|{shell_path(self.db)}|.backup "{copy}"', self.calls)
         self.assertIn(f"backups not configured; local copy: {copy}", self.output)
         self.assertEqual(self.current.resolve().name, NEW)
+
+    def test_release_is_root_owned_before_its_units_are_installed(self):
+        self.assertEqual(self.run_deploy(), 0, self.output)
+        chown = f"chown|-R|root:root|--|{shell_path(self.release_path(NEW))}"
+        self.assertIn(chown, self.calls)
+        first_install = next(i for i, line in enumerate(self.calls) if line.startswith("install|"))
+        self.assertLess(self.calls.index(chown), first_install)
+
+    def test_backups_not_configured_prunes_copies_older_than_28_days(self):
+        (self.root / "etc/pokewalker/backup.env").unlink()
+        directory = self.root / "var/lib/pokewalker-backup"
+        directory.mkdir(parents=True, exist_ok=True)
+        old, recent = directory / f"pre-deploy-{'c' * 40}.sqlite3", directory / f"pre-deploy-{'d' * 40}.sqlite3"
+        for path, days in ((old, 30), (recent, 3)):
+            path.write_text("copy", encoding="utf-8")
+            stamp = time.time() - days * 86400
+            os.utime(path, (stamp, stamp))
+        self.assertEqual(self.run_deploy(), 0, self.output)
+        self.assertFalse(old.exists())
+        self.assertTrue(recent.exists())
 
     def test_backups_not_configured_copy_failure_restarts_previous_exit_40(self):
         (self.root / "etc/pokewalker/backup.env").unlink()

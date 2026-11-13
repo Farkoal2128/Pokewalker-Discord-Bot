@@ -6,7 +6,7 @@ import secrets
 import time
 from uuid import uuid4
 
-from content.balance import load_table
+from content.balance import limits, load_table
 from pokewalker.db import with_receipt
 from pokewalker.domain import encounters, steps
 from pokewalker.services.items import active_lure, active_mirror, apply_finds
@@ -135,11 +135,11 @@ async def credit_message(conn, profile, words, created_at, message_id, channel_i
         (decision.accepted_words, decision.discarded_words, decision.awarded_c, decision.reason, mid))
     size = await queue_size(conn, pid)
     meter = current["encounter_meter_c"]
-    first = None
-    if size < 3:
+    first, cap = None, limits()['encounter_queue']  # the 0015 queue triggers must match this value
+    if size < cap:
         meter += decision.awarded_c
         if meter >= rules["encounter_step_hundredths"]:
-            while meter >= rules["encounter_step_hundredths"] and size < 3:
+            while meter >= rules["encounter_step_hundredths"] and size < cap:
                 eid = await spawn_encounter(conn, current, content, rng, at, cid, mid)
                 first = eid if first is None else first
                 meter -= rules["encounter_step_hundredths"]

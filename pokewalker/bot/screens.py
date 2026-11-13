@@ -2,6 +2,8 @@
 
 import discord
 
+from content.balance import limits
+
 # Preserve the established renderer exports after the M1.7 size split.
 from pokewalker.bot.screens_catch import _label as label, custom_id, render_catch, render_run_confirm, render_terminal, render_master_confirm
 
@@ -11,7 +13,7 @@ def home(state):
     meter = state["encounter_meter_c"]
     filled = min(10, meter // 1000)
     lines = [f"{companion['name']} · CP {companion['cp']}" if companion else "No companion selected.",
-             f"Queue: {state['queue_size']}/3",
+             f"Queue: {state['queue_size']}/{limits()['encounter_queue']}",
              f"Encounters: {'█' * filled}{'░' * (10 - filled)} {meter / 100:g}/100 steps"]
     flags = state["restrictions"]
     lines.append(f"Rewards waiting: {state.get('rewards_waiting', 0)}")

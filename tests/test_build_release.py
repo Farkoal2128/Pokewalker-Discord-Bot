@@ -28,6 +28,7 @@ class BuildReleaseTests(unittest.TestCase):
         self.bin.mkdir()
         self.releases = self.root / "opt/pokewalker/releases"
         self.releases.mkdir(parents=True)
+        (self.root / "srv/pokewalker/src").mkdir(parents=True)
         self.source = self.root / "source"
         (self.source / "deploy").mkdir(parents=True)
         (self.source / "deploy/pokewalker-bot.service").write_text("unit\n", encoding="utf-8")
@@ -74,8 +75,8 @@ chmod +x "$3/bin/pip"
         path.write_text("#!/bin/bash\nset -e\n" + body + "\n", encoding="utf-8", newline="\n")
         path.chmod(0o755)
 
-    def run_build(self, sha=SHA, env=None):
-        return subprocess.run([BASH, shell_path(self.script), sha], cwd=REPO,
+    def run_build(self, sha=SHA, env=None, cwd=REPO):
+        return subprocess.run([BASH, shell_path(self.script), sha], cwd=cwd,
                               env=self.env if env is None else env,
                               text=True, capture_output=True)
 
@@ -101,6 +102,20 @@ chmod +x "$3/bin/pip"
                 self.assertEqual(result.returncode, 1)
                 self.assertFalse(self.release().exists())
                 self.assertEqual(self.log.read_text(encoding="utf-8"), "")
+
+    def test_builds_from_the_deploy_checkout_whatever_the_working_directory(self):
+        # Review fix: root may start deploy.sh from / or its own clone; git must still see the checkout.
+        git = self.bin / "git"
+        git.write_text(git.read_text(encoding="utf-8").replace(
+            "printf 'git|%s\\n'", '[[ $PWD == */srv/pokewalker/src ]] || exit 1\nprintf \'git|%s\\n\''),
+            encoding="utf-8", newline="\n")
+        self.assertEqual(self.run_build(cwd="/").returncode, 0)
+        self.assertTrue((self.release() / ".complete").exists())
+
+    def test_refuses_without_the_deploy_checkout(self):
+        shutil.rmtree(self.root / "srv")
+        self.assertEqual(self.run_build().returncode, 1)
+        self.assertFalse(self.release().exists())
 
     def test_refuses_short_or_unknown_sha(self):
         self.assertEqual(self.run_build("a" * 39).returncode, 1)

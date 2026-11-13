@@ -41,6 +41,34 @@ class WalkerAdmin(app_commands.Group):
         else:
             await interaction.response.send_message(text, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
 
+    async def add_all_reason(self, interaction, reason):
+        """Shared add-all preamble: the stripped reason, or None after replying with the refusal."""
+        await interaction.response.defer(ephemeral=True)
+        if not await self.authorize(interaction):
+            return None
+        reason = reason.strip()
+        if not reason:
+            await self.reply(interaction, "A reason is required.")
+            return None
+        try:
+            member = await interaction.guild.fetch_member(interaction.user.id)
+        except discord.HTTPException:
+            await self.reply(interaction, "Could not confirm your Manage Server permission. Nothing was changed.")
+            return None
+        if not member.guild_permissions.manage_guild:
+            await self.reply(interaction, "Manage Server permission is required.")
+            return None
+        return reason
+
+    async def send_lines(self, interaction, lines, per_message):
+        """Reply with lines in chunks that stay under Discord's 2000-character limit."""
+        for start in range(0, len(lines), per_message):
+            text = "\n".join(lines[start:start + per_message])
+            if start == 0:
+                await self.reply(interaction, text)
+            else:
+                await interaction.followup.send(text, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+
     async def write_channel(self, conn, interaction, channel_id, reason, now, *, remove=False, count=True, react=True):
         guild_id, channel_id = str(interaction.guild_id), str(channel_id)
         if remove:
@@ -91,20 +119,8 @@ class WalkerAdmin(app_commands.Group):
 
     @channels.command(name="add-all", description="Enable all accessible text and announcement channels")
     async def add_all(self, interaction: discord.Interaction, reason: str, count: bool = True):
-        await interaction.response.defer(ephemeral=True)
-        if not await self.authorize(interaction):
-            return
-        reason = reason.strip()
-        if not reason:
-            await self.reply(interaction, "A reason is required.")
-            return
-        try:
-            member = await interaction.guild.fetch_member(interaction.user.id)
-        except discord.HTTPException:
-            await self.reply(interaction, "Could not confirm your Manage Server permission. Nothing was changed.")
-            return
-        if not member.guild_permissions.manage_guild:
-            await self.reply(interaction, "Manage Server permission is required.")
+        reason = await self.add_all_reason(interaction, reason)
+        if reason is None:
             return
 
         async def mutation(conn):
@@ -159,13 +175,7 @@ class WalkerAdmin(app_commands.Group):
         if not lines:
             await self.reply(interaction, "No walker channels configured.")
             return
-        # Thirty snowflake-sized rows stay below Discord's 2000-character limit.
-        for start in range(0, len(lines), 30):
-            text = "\n".join(lines[start:start + 30])
-            if start == 0:
-                await self.reply(interaction, text)
-            else:
-                await interaction.followup.send(text, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+        await self.send_lines(interaction, lines, 30)  # thirty snowflake-sized rows per message
 
     async def check_actor(self, conn, interaction):
         if not interaction.user.guild_permissions.manage_guild:

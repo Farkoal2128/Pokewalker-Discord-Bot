@@ -34,6 +34,16 @@ TRADE_OUTDATED = "This screen is out of date. Please reopen /trade to refresh."
 TRADE_REOPEN = "That option changed since this screen opened. Please reopen /trade to refresh."
 IDLE_SECONDS = 900
 DOUBLE_PRESS_SECONDS = 10
+RESTARTING = "Walker is restarting. Try again in a minute."
+
+
+async def new_session(conn, guild_id, user_id, profile_id, now, selection="{}"):
+    """The one place a screen session starts, so idle expiry always matches IDLE_SECONDS."""
+    session = {"session_id": str(uuid4()), "guild_id": str(guild_id), "user_id": str(user_id),
+               "profile_id": profile_id, "revision": 0, "expires_at": now + IDLE_SECONDS, "selection": selection}
+    await conn.execute("INSERT INTO sessions(session_id,guild_id,user_id,profile_id,revision,expires_at,selection) "
+                       "VALUES (?,?,?,?,?,?,?)", tuple(session.values()))
+    return session
 
 
 class _Outdated(Exception):
@@ -83,6 +93,9 @@ class Walker:
         if interaction.guild_id is None:
             await interaction.edit_original_response(content="Use /walker in a server.")
             return
+        if getattr(self.bot, "_stopping", False):  # the drain closes the writer before the gateway
+            await interaction.edit_original_response(content=RESTARTING)
+            return
 
         async def create(conn):
             if (await profiles.restrictions(conn, interaction.guild_id, interaction.user.id)).excluded:
@@ -91,14 +104,10 @@ class Walker:
                 raise _Refused("Run /walker-account opt-in first")
             profile = await profiles.get_profile(conn, interaction.guild_id, interaction.user.id)
             now = self.clock()
-            session = {"session_id": str(uuid4()), "guild_id": str(interaction.guild_id),
-                       "user_id": str(interaction.user.id), "profile_id": profile["profile_id"] if profile else None,
-                       "revision": 0, "expires_at": now + 900, "selection": "{}"}
             await conn.execute("INSERT OR IGNORE INTO guilds(guild_id,created_at) VALUES (?,?)",
-                               (session["guild_id"], now))
-            await conn.execute("INSERT INTO sessions(session_id,guild_id,user_id,profile_id,revision,expires_at) "
-                               "VALUES (?,?,?,?,?,?)", tuple(session[key] for key in
-                               ("session_id", "guild_id", "user_id", "profile_id", "revision", "expires_at")))
+                               (str(interaction.guild_id), now))
+            session = await new_session(conn, interaction.guild_id, interaction.user.id,
+                                        profile["profile_id"] if profile else None, now)
             async with conn.execute("SELECT encounter_id,message_id FROM reactions WHERE profile_id=?",
                                     (session["profile_id"],)) as cursor:
                 pending = await cursor.fetchall()
@@ -126,6 +135,9 @@ class Walker:
 
     async def route(self, interaction, custom_id):
         await interaction.response.defer()
+        if getattr(self.bot, "_stopping", False):
+            await self.refuse(interaction, RESTARTING)
+            return
         match = re.fullmatch(CUSTOM_ID, custom_id)
         if match is None:
             await self.refuse(interaction, REOPEN)

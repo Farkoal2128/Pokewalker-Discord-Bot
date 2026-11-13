@@ -103,6 +103,18 @@ class WalkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.rows())[-1]["revision"] - session["revision"], 1)
         self.assertEqual((store._views, store._synced_message_views), ({}, {}))
 
+    async def test_clicks_and_opens_while_stopping_get_a_restart_reply(self):
+        # Audit fix: during shutdown drain the writer closes before the gateway; reply instead of failing.
+        _, session = await self.open()
+        before = await self.rows()
+        self.bot._stopping = True
+        clicked = await self.click(session, "home")
+        self.assertIn("restarting", clicked.followup.send.await_args.args[0])
+        opened = self.interaction()
+        await self.walker.open(opened)
+        self.assertIn("restarting", opened.edit_original_response.await_args.kwargs["content"])
+        self.assertEqual(await self.rows(), before)
+
     async def test_walker_defers_ephemeral_then_edits_original(self):
         interaction, _ = await self.open()
         self.assertEqual([event[0] for event in interaction.events], ["defer", "edit"])

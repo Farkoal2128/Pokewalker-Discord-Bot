@@ -40,11 +40,19 @@ print("   python", sys.version.split()[0], "sqlite", sqlite3.sqlite_version)
 raise SystemExit(0 if ok else 1)'
 
 echo "== source /srv/pokewalker/src at $sha"
+# /srv/pokewalker/src belongs to pokewalker-deploy, so root never runs git there (its hooks and
+# .git/config are that user's). Root bundles this clone; the deploy user fetches the bundle.
 src=/srv/pokewalker/src
-[[ -d $src/.git ]] || git clone -q --no-checkout "$checkout" "$src"
-git -C "$src" fetch -q "$checkout" HEAD
-git -C "$src" checkout -q --detach "$sha"
-chown -R pokewalker-deploy:pokewalker-deploy "$src"
+bundle=$(mktemp -d)
+chmod 0755 "$bundle"
+git -C "$checkout" bundle create -q "$bundle/head.bundle" HEAD
+chmod 0644 "$bundle/head.bundle"
+as_deploy() { runuser -u pokewalker-deploy -- env -i PATH=/usr/bin:/bin HOME=/var/lib/pokewalker-deploy "$@"; }
+[[ ! -e $src ]] || chown -R pokewalker-deploy:pokewalker-deploy "$src"
+[[ -d $src/.git ]] || as_deploy git clone -q --no-checkout "$bundle/head.bundle" "$src"
+as_deploy git -C "$src" fetch -q "$bundle/head.bundle" HEAD
+as_deploy git -C "$src" checkout -q --detach "$sha"
+rm -rf -- "$bundle"
 
 echo "== configuration"
 config=/etc/pokewalker/runtime.env
@@ -67,11 +75,17 @@ fi
 [[ -e /etc/pokewalker/credentials/heartbeat_url ]] || (umask 077; : > /etc/pokewalker/credentials/heartbeat_url)
 
 echo "== deploy"
-cd "$src"
+# Root runs deploy tools from a root-owned copy of this clone, never from the
+# pokewalker-deploy checkout; build_release.sh (run as pokewalker-deploy) must read it.
+tools=$(mktemp -d)
+cp -- "$checkout"/deploy/*.sh "$checkout"/deploy/*.py "$tools"/
+chmod 0755 "$tools" "$tools"/*
+cd /
 log=$(mktemp)
 status=0
-env PATH="$src/deploy:/opt/pokewalker/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
-    deploy/deploy.sh "$sha" 2>&1 | tee "$log" || status=${PIPESTATUS[0]}
+env PATH="$tools:/opt/pokewalker/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+    "$tools/deploy.sh" "$sha" 2>&1 | tee "$log" || status=${PIPESTATUS[0]}
+rm -rf -- "$tools"
 if (( status )); then
     echo "install_ubuntu: deploy exited $status (see README step 6 exit codes)" >&2
     exit "$status"

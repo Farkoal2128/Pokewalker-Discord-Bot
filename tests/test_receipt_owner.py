@@ -45,6 +45,7 @@ class ReceiptOwnerTests(unittest.IsolatedAsyncioTestCase):
 
     async def legacy_schema(self):
         # Keep real producer results while restoring every pre-0003 table and column.
+        await self.conn.execute('DROP INDEX pokemon_profile_state')
         await self.conn.execute('DROP TRIGGER pokemon_trade_guard')
         for table in ("trade_sides", "trades", "trade_channels"):
             await self.conn.execute(f'DROP TABLE {table}')

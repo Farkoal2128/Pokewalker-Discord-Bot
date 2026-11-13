@@ -80,6 +80,8 @@ async def throw(conn, encounter_id, session, expected_revision, rng, now, *, con
             or berry is not None and berry not in rules["berry_multipliers"]
             or guaranteed != (ball == "master_ball")):
         raise ValueError("Invalid catch item selection")
+    if guaranteed and berry not in ("pinap_berry", "silver_pinap_berry"):
+        berry = None  # A catch-rate berry cannot help a guaranteed catch; only Pinaps change the reward.
     items = [ball, *([berry] if berry else [])]
     for item in items:
         async with conn.execute("SELECT quantity FROM inventory WHERE profile_id=? AND item_id=?",
