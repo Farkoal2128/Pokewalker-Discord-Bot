@@ -1328,3 +1328,43 @@ negative and the output's positive delta, both with reason trade_up. It returns 
 consumed, produced}; replays return the saved result. Bag units only fall, so the bag limit
 never refuses a trade-up, and no Master Ball is involved. No schema change. Tests:
 tests/test_ball_trade_up.py.
+
+## Arena schema (0025)
+
+Requirements AR-1..AR-4b, AR-6a, AR-25, AR-33 and AR-35 add migration
+0025 without changing existing rows. Guilds gain arena_enabled (0/1, NOT NULL,
+default 1). Profiles gain arena_best_floor (nonnegative integer, NOT NULL,
+default 0).
+
+arena_runs stores run_id (primary key), profile_id, started_at, nullable
+ended_at and end_reason, revision (default 0), floor (integer >= 1), slot
+(0/1/2), team and enemy. Times are UTC epoch seconds. end_reason is loss,
+draw or expired, and is set exactly when ended_at is set. team and enemy
+are NOT NULL, valid JSON. The partial unique index arena_runs_live permits
+one unended row per profile; arena_runs_profile indexes (profile_id,started_at)
+for cooldown lookup and cascade deletion.
+
+team is an array in party order of {uid, family_id, special, full_hp, hp,
+snapshot}. Each snapshot is the dictionary produced by gyms._battle_snapshot,
+including the Pokemon identity, revision, content version, level, IVs, gender,
+shiny flag, combatant and CP. full_hp preserves full battle HP; hp carries the
+remaining battle HP. enemy is {snapshot, battle_hp, special}, with the same
+snapshot format. These frozen snapshots survive restarts and content changes.
+The Arena start and enemy-generation services produce these JSON shapes.
+
+arena_tickets stores profile_id, tier (bronze/silver/gold/platinum/diamond)
+and quantity (nonnegative integer), with primary key (profile_id,tier).
+Both tables reference profiles(profile_id) ON DELETE CASCADE, so profile
+deletion and reset remove runs, snapshots and ticket balances. Arena writes
+must also pass profile_id to with_receipt so their receipts are deleted.
+
+profiles.arena_team(conn, profile_id, now) is a read-only query returning a
+frozenset of team uid values when ended_at IS NULL and
+started_at > now - load_table('arena')['rules']['run_seconds'], otherwise an
+empty frozenset. Thus the live-team block lifts at exactly hour 18 without a
+write or timer, even while an unended row still occupies the unique index.
+Gym, trading and research consumers use this shared profile-scoped check.
+
+Older binaries refuse schema 25 through open_db's newer-schema check;
+rollback requires a compatible backup, never lowering user_version.
+Verification: test_arena_schema and the ticket-named migration regressions.

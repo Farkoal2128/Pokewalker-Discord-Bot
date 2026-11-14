@@ -79,6 +79,7 @@ class CapacityTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIsNone(after.pop('last_trade_at', 'missing'))
                 self.assertIsNone(after.pop('last_trade_ping_at', 'missing'))
                 self.assertEqual(after.pop('shiny_charm_off', 'missing'), 0)
+                self.assertEqual(after.pop('arena_best_floor', 'missing'), 0)
                 self.assertEqual(after, before)
                 self.assertEqual((await upgraded.execute_fetchall('PRAGMA foreign_key_check')), [])
                 self.assertEqual((await upgraded.execute_fetchall('PRAGMA user_version'))[0][0],
