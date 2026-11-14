@@ -1739,3 +1739,12 @@ last committed count. Fight result/receipt keys and fields and ledger formats
 stay unchanged. Producers: services.arena.fight; consumers: Arena screens and
 chain/heal callers. Tests: test_arena; regressions: test_arena_screens,
 test_battle, test_gym_battle, test_deletion and test_receipt_owner.
+## Owner amendment: member prune (2026-11-14)
+No schema or marker-format change. `/walker-admin prune` writes `delete` markers that carry
+`actor_id` and `reason` (already valid fields; `fold` ignores them for delete), so each
+deletion and its startup replay follow the existing D28 path. One `mod_audit` row per
+confirmed run (target_kind guild, target the guild, action `prune`) commits in its own
+writer job before the run's first marker, so a deletion replayed after a crash always has
+its audit; the row may exist for a run whose first deletion never committed. Restrictions,
+opt-outs and prior audit of pruned users remain. Producer: WalkerAdmin. Consumers:
+`/walker-mod log`, startup replay. Tests: tests/test_admin_prune.py.

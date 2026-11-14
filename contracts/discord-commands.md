@@ -1738,3 +1738,24 @@ limits and the 4096 UTF-16-unit description limit still apply, including a
 and loss of unused fights when a run ends. Producers: bot.arena and content/help;
 consumers: Walker sessions, private views and help. Tests: test_arena_screens,
 test_readme and test_walker_router. Offline evidence is not live Discord acceptance.
+## Owner amendment: member prune (2026-11-14)
+`/walker-admin prune reason [confirm=false]` deletes the game data of this server's
+profiles whose Discord user is no longer a member. It defers privately before any writer
+wait or REST call, requires runtime Manage Server, refuses an excluded actor at entry and
+again in every writer job, requires a stripped nonblank reason and suppresses mentions.
+The bot has no members intent, so each profile is checked with `guild.fetch_member`.
+Only `discord.NotFound` with code 10007 (Unknown Member) marks a user departed; a member
+is kept; any other outcome (other codes, Forbidden, 5xx, RateLimited, transport errors)
+stops the run and nothing more is deleted. Without confirm it writes nothing and replies
+"{n} of {m} profiles are no longer members. Nothing was deleted. Use confirm=True to delete
+their game data; this cannot be undone." With confirm it re-checks every profile itself
+and, right after each departed answer, deletes that profile through `deletion.run_marker`
+with kind delete, the actor and the reason. Before the run's first deletion one guild-target
+`mod_audit` row with action `prune` commits in its own writer job; no reset audits are
+written. A profile already gone is skipped. REST waits are bounded by a 13-minute
+monotonic budget without cancelling the request; a stop replies "<why> Checked {k} of {m}
+profiles; {n} no longer members; {d} deleted. Run it again to continue." and the next run
+in that server resumes after the last checked user (in memory; a restart starts over).
+A finished confirmed run replies "Deleted the game data of {d} of {m} profiles whose users
+left this server." The command manifest changes, so `sync-commands --global --yes` follows
+delivery. Tests: tests/test_admin_prune.py, tests/test_readme.py.
