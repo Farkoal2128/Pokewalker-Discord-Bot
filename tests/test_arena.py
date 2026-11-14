@@ -495,6 +495,59 @@ class ArenaTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(result['candy'], {'family_id': run['team'][0]['family_id'], 'quantity': 1}
                                  if amount else None)
 
+    async def test_regular_nonleading_finisher_gets_candy_with_special_leader(self):
+        for slot in (0, 1, 2):
+            with self.subTest(slot=slot):
+                await self.reset_run_fixture()
+                await self.conn.execute("UPDATE pokemon SET pokemon_id=4 WHERE pokemon_uid='m2'")
+                run = await self.at_fight(slot=slot, special=True)
+                leader, finisher = run['team'][0], run['team'][2]
+                self.assertTrue(leader['special'])
+                self.assertFalse(finisher['special'])
+                self.assertNotEqual(leader['family_id'], finisher['family_id'])
+                for member, quantity in ((leader, 5), (finisher, 7)):
+                    await self.conn.execute('INSERT INTO candy VALUES (?,?,?)',
+                                            (self.pid, member['family_id'], quantity))
+                with patch.object(battle_engine, 'simulate', return_value=self.outcome(finisher=2)):
+                    result = await self.fight(run)
+                self.assertEqual(result['finisher'], 2)
+                self.assertEqual(result['candy'], {'family_id': finisher['family_id'], 'quantity': 1})
+                self.assertEqual({row['family_id']: row['quantity'] for row in
+                                  await self.rows('SELECT family_id,quantity FROM candy')},
+                                 {leader['family_id']: 5, finisher['family_id']: 8})
+                self.assertEqual(await self.rows('SELECT profile_id,resource,resource_id,delta,reason '
+                                                 'FROM resource_ledger'),
+                                 [{'profile_id': self.pid, 'resource': 'candy',
+                                   'resource_id': str(finisher['family_id']), 'delta': 1, 'reason': 'arena_candy'}])
+
+    async def test_special_nonleading_finisher_gets_candy_only_on_boss_with_regular_leader(self):
+        for slot in (0, 1, 2):
+            with self.subTest(slot=slot):
+                await self.reset_run_fixture()
+                await self.conn.execute("UPDATE pokemon SET pokemon_id=144 WHERE pokemon_uid='m1'")
+                run = await self.at_fight(slot=slot)
+                leader, finisher = run['team'][0], run['team'][1]
+                self.assertFalse(leader['special'])
+                self.assertTrue(finisher['special'])
+                self.assertNotEqual(leader['family_id'], finisher['family_id'])
+                for member, quantity in ((leader, 5), (finisher, 7)):
+                    await self.conn.execute('INSERT INTO candy VALUES (?,?,?)',
+                                            (self.pid, member['family_id'], quantity))
+                with patch.object(battle_engine, 'simulate', return_value=self.outcome(finisher=1)):
+                    result = await self.fight(run)
+                amount = 1 if slot == 2 else 0
+                self.assertEqual(result['finisher'], 1)
+                self.assertEqual(result['candy'], {'family_id': finisher['family_id'], 'quantity': 1}
+                                 if amount else None)
+                self.assertEqual({row['family_id']: row['quantity'] for row in
+                                  await self.rows('SELECT family_id,quantity FROM candy')},
+                                 {leader['family_id']: 5, finisher['family_id']: 7 + amount})
+                self.assertEqual(await self.rows('SELECT profile_id,resource,resource_id,delta,reason '
+                                                 'FROM resource_ledger'),
+                                 [{'profile_id': self.pid, 'resource': 'candy',
+                                   'resource_id': str(finisher['family_id']), 'delta': 1, 'reason': 'arena_candy'}]
+                                 if amount else [])
+
     async def test_candy_goes_to_snapshot_family_after_mid_run_evolution(self):
         run = await self.at_fight()
         await self.conn.execute("UPDATE pokemon SET pokemon_id=2,revision=revision+1 WHERE pokemon_uid='m0'")
