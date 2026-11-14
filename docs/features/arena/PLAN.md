@@ -2,7 +2,7 @@
 
 **Status:** approved — in execution · owner approved G-A · G-P 2026-11-13 (direct owner approval in session) · amended 2026-11-14 at owner request: M3 leaderboard rows ARENA-20..23 (AR-36..AR-41) and M4 X-item rows ARENA-25..28 (AR-42..AR-46) added; owner approved ARENA-25, ARENA-26, ARENA-27, ARENA-28 2026-11-14 (in advance)
 **Home:** feature/arena · D:\Projects\Pokewalker-arena
-**Review:** 2026-11-13 · Codex gpt-6-astra (independent, read-only) · GO after 3 rounds (R1 2 MUST/4 SHOULD, R2 1 MUST, R3 0/0); fixes applied by Opus · reviewed untracked tree on main 9c8aec5 · M3 amendment 2026-11-14: Codex gpt-6-astra GO after 1 round (0 MUST, 1 SHOULD fixed by Opus) · M2 brief: astra GO r2 (r1 2M/2S fixed) · M3 brief: astra r2 0M/1S (fixed; r1 1M/1S fixed) · M4: astra GO r1 (1S fixed)
+**Review:** Codex gpt-6-astra, read-only, fixes by Opus: plan 2026-11-13 GO r3 (r1 2M/4S, r2 1M); M3 amendment GO r1 (1S); M2 brief GO r2 (r1 2M/2S); M3 brief r2 0M/1S (r1 1M/1S); M4 GO r1 (1S); all fixed
 **Inputs:** [REQUIREMENTS.md](REQUIREMENTS.md), owner-approved 2026-11-13: every AR-n is settled scope; §6.3 (AR-36..AR-41) and §6.4 (AR-42..AR-46; uncommitted, `git status --short`) added 2026-11-14 at owner request; owner pre-approved the M4 briefs 2026-11-14 · [PIPELINE.md](../../../PIPELINE.md) · `AGENTS.md` · `rules/*.md`
 
 ## 1. Outcome and non-goals
@@ -72,7 +72,7 @@ No owner/repo conflict: AGENTS.md asks for RED → GREEN and the applicable chec
 - **Source increment M1** (rows ARENA-1..ARENA-15, qualified at G-M1): a complete playable Arena on the feature branch, for the owner's smoke test. It is not a delivery.
 - **Final feature** (G-F). M2, M3 and M4 are not source increments; their rows run focused checks.
 
-The owner's code review loop (global CLAUDE.md) is review, not tests; the coordinator applies it.
+The owner's review loop (global CLAUDE.md) runs once, by the supervising Claude session, before G-F; drives use per-row review only.
 
 ### 3.4 Delivery
 

@@ -5,7 +5,10 @@ import json
 import unittest
 from unittest.mock import patch
 from datetime import date
+from dataclasses import fields
 from pathlib import Path
+
+from pokewalker.domain.battle import Combatant
 
 
 def override_limits(case, **limits):
@@ -78,11 +81,12 @@ class BalanceTableTests(unittest.TestCase):
         self.assertIn("docs/features/arena/REQUIREMENTS.md", table["source"])
         self.assertIn("owner approval 2026-11-13", table["source"])
         self.assertIn("section 6.3", table["source"])
+        self.assertIn("section 6.4 (owner ruling 2026-11-14)", table["source"])
         self.assertIn("owner ruling 2026-11-14", table["source"])
         self.assertIn("https://www.serebii.net/pokemon/ultrabeasts.shtml", table["source"])
         self.assertIn("https://www.serebii.net/scarletviolet/paradoxpokemon.shtml", table["source"])
         self.assertEqual(table["checked"], "2026-11-13")
-        self.assertEqual(table["version"], 2)
+        self.assertEqual(table["version"], 3)
         self.assertEqual(table["rules"], {
             "run_seconds": 64800, "cooldown_seconds": 64800, "team_size": 3,
             "heal_items": ["razz_berry", "pinap_berry"], "level_cap": 40,
@@ -120,6 +124,11 @@ class BalanceTableTests(unittest.TestCase):
                 "rewards": [["master_ball", "shiny_lure", "world_legendary_ticket"],
                             ["master_ball", "shiny_lure"], ["master_ball"]],
             },
+            "x_items": {
+                "fights": 3, "multiplier": 2,
+                "items": {"x_attack": {"stat": "attack", "stardust": 300},
+                          "x_defense": {"stat": "defense", "stardust": 300}},
+            },
         })
 
     def test_arena_leaderboard_rewards_are_rare_pocket_items(self):
@@ -134,6 +143,24 @@ class BalanceTableTests(unittest.TestCase):
                 for item in rewards:
                     self.assertIn(item, pockets)
                     self.assertEqual(pockets[item], 1)
+
+    def test_arena_x_items_are_bag_items_with_combatant_stats(self):
+        rules = self.load("arena")["rules"]["x_items"]
+        pockets = self.load("capacities")["limits"]["rare_pockets"]
+        conversion = self.load("conversion_rates")
+        for key in ("fights", "multiplier"):
+            self.assertIs(type(rules[key]), int)
+            self.assertGreater(rules[key], 0)
+        self.assertCountEqual([item["stat"] for item in rules["items"].values()],
+                              ["attack", "defense"])
+        for item_id, item in rules["items"].items():
+            with self.subTest(item=item_id):
+                self.assertIs(type(item["stardust"]), int)
+                self.assertGreater(item["stardust"], 0)
+                self.assertIn(item["stat"], {field.name for field in fields(Combatant)})
+                self.assertNotIn(item_id, pockets)
+                self.assertNotIn(item_id, conversion["stardust_per_unit"])
+                self.assertNotIn(item_id, conversion["purchase_stardust"])
 
     def test_arena_ultra_beasts_equal_milestone_first_catch_list(self):
         species = self.load("arena")["rules"]["special"]["ultra_beast_species"]
@@ -396,7 +423,7 @@ class BalanceTableTests(unittest.TestCase):
                 date.fromisoformat(table["checked"])
                 versions = {"find_table": 2, "conversion_rates": 4, "capacities": 3, "routes": 2,
                             "survivor_table": 3, "catch": 4, "gym_income_table": 2, "checkin_table": 2,
-                            "battle": 2, "arena": 2}
+                            "battle": 2, "arena": 3}
                 self.assertEqual(table["version"], versions.get(name, 1))
                 amended = {"survivor_table", "conversion_rates", "gym_income_table", "checkin_table"}
                 if name == "catch":
