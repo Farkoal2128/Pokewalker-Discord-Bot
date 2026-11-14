@@ -378,3 +378,50 @@ owner decision 2026-11-12). Item effects and storage are C3. Each changed table 
 output, then Great Ball to Ultra Ball with 2 inputs per output. No rule produces or
 consumes a Master Ball. C3 `items.trade_up` and the C5 Bag picker read only this list.
 Tests: tests/test_balance_tables.py, tests/test_ball_trade_up.py.
+
+## Arena table (`arena.json`)
+
+Approved by [Arena requirements](../docs/features/arena/REQUIREMENTS.md), owner
+approval 2026-11-13 (AR-14a, AR-16 through AR-34). Repository authors produce this
+additive version-1 table; the Arena domain/service and offline content build are
+consumers. Existing tables, artifact bytes and `artifact_sha256` stay unchanged.
+The sorted manifest `balance_sha256` gains the SHA-256 of `arena.json` file bytes.
+
+The common envelope applies. `source` cites the approved requirements and the
+published [Serebii Ultra Beasts](https://www.serebii.net/pokemon/ultrabeasts.shtml)
+Sub-Legendary list and [Serebii Paradox Pokemon](https://www.serebii.net/scarletviolet/paradoxpokemon.shtml)
+past/future lists, checked 2026-11-13. Legendary/Mythical classification continues
+to use the pinned artifact flags; those species are special regardless of lists.
+
+`rules` contains exactly these authored values. Durations are real seconds;
+levels are whole levels; IV ranges are inclusive; floor numbers, stat counts,
+reward quantities and percentages are integers. HP factors use integer tenths,
+so 10 means 1.0x; boss BST caps use `cap * pct // 100`.
+
+| Key | Payload and units |
+|---|---|
+| `run_seconds`, `cooldown_seconds` | 64800 each (18 hours) |
+| `team_size`, `level_cap` | 3 members, level 40 |
+| `heal_items` | `["razz_berry", "pinap_berry"]` |
+| `iv_ranges` | `entry: [0,5]`, `middle: [5,10]`, `boss: [10,15]` |
+| `late` | `after_floor: 40`, `step_floors: 5`, `iv_steps_max: 15`, `hp_step_x10: 1`, `hp_cap_x10: 20`, `uncapped_after_floor: 115`, `uncapped_step_x10: 1` |
+| `bst` | `base: 300`, `span: 420`, `span_floors: 31`, `full: 720`, `full_floor: 32`, `boss_pct: 115`, `decade_boss_pct: 150` |
+| `special.ultra_beast_species` | 793-799 and 803-806, in ascending species-ID order |
+| `special.paradox_species` | 984-995, 1005, 1006, 1009, 1010, 1020-1023, in ascending species-ID order |
+| `special.boss_chance_pct`, `special.decade_boss_chance_pct` | 5 and 25 percent |
+| `candy` | `per_knockout: 1`, `special_boss_only: true` (special finishers earn Candy only against bosses) |
+| `tickets.tiers` | Keys `bronze`, `silver`, `gold`, `platinum`, `diamond`; each has the four fields below |
+| tier `encounters` | 1, 2, `"fill"`, `"fill"`, `"fill"` respectively; `"fill"` uses current free queue slots |
+| tier `stardust` | 100, 200, 400, 1000, 3000 respectively |
+| tier `income_rolls` | 0, 2, 4, 8, 24 respectively |
+| tier `survivor_rolls` | 0, 0, 0, 1, 3 respectively |
+| `tickets.schedule` | `bronze: {floors: [5,15]}`, `silver: {floors: [10,20,30,40]}`, `gold: {from: 25, every: 10}`, `platinum: {floors: [50,60,70]}`, `diamond: {from: 80, every: 10}` |
+| `tickets.first_clear_tiers` | `["silver", "gold", "platinum", "diamond"]` |
+| `skip` | `divisor: 2`, `max: 40` floors; read by Phase 2 |
+
+The special predicate is Legendary OR Mythical OR listed Ultra Beast OR listed
+Paradox, giving 128 special and 966 regular pinned identities. The Ultra Beast
+list equals `milestones.json` `ultra_beast_first_catches`. Schedule entries refer
+to known tiers and award at most one tier per floor. No migration or changes to
+existing table consumers are required; removing this table before its consumers
+land requires removing its manifest hash and corresponding tests/contract too.

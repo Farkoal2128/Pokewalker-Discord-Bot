@@ -19,7 +19,7 @@ def override_limits(case, **limits):
 TABLES = (
     "step_rules", "tier_chances", "catch", "find_table", "checkin_table",
     "powerup_prices", "cpm", "conversion_rates", "capacities", "milestones",
-    "routes", "gym_income_table", "simulation", "evolution", "battle", "survivor_table",
+    "routes", "gym_income_table", "simulation", "evolution", "battle", "survivor_table", "arena",
 )
 
 
@@ -72,6 +72,81 @@ class BalanceTableTests(unittest.TestCase):
                                 "poke_ball": (2, 20), "pinap_berry": (1, 15),
                                 "vitamin": (1, 1)})
         self.assertEqual(sum(w for _, w in rows.values()), 100)
+
+    def test_arena_rules_match_approved_requirements(self):
+        table = self.load("arena")
+        self.assertIn("docs/features/arena/REQUIREMENTS.md", table["source"])
+        self.assertIn("owner approval 2026-11-13", table["source"])
+        self.assertIn("https://www.serebii.net/pokemon/ultrabeasts.shtml", table["source"])
+        self.assertIn("https://www.serebii.net/scarletviolet/paradoxpokemon.shtml", table["source"])
+        self.assertEqual(table["checked"], "2026-11-13")
+        self.assertEqual(table["version"], 1)
+        self.assertEqual(table["rules"], {
+            "run_seconds": 64800, "cooldown_seconds": 64800, "team_size": 3,
+            "heal_items": ["razz_berry", "pinap_berry"], "level_cap": 40,
+            "iv_ranges": {"entry": [0, 5], "middle": [5, 10], "boss": [10, 15]},
+            "late": {"after_floor": 40, "step_floors": 5, "iv_steps_max": 15,
+                     "hp_step_x10": 1, "hp_cap_x10": 20, "uncapped_after_floor": 115,
+                     "uncapped_step_x10": 1},
+            "bst": {"base": 300, "span": 420, "span_floors": 31, "full": 720,
+                    "full_floor": 32, "boss_pct": 115, "decade_boss_pct": 150},
+            "special": {
+                "ultra_beast_species": [793, 794, 795, 796, 797, 798, 799, 803, 804, 805, 806],
+                "paradox_species": [984, 985, 986, 987, 988, 989, 990, 991, 992, 993,
+                                    994, 995, 1005, 1006, 1009, 1010, 1020, 1021, 1022, 1023],
+                "boss_chance_pct": 5, "decade_boss_chance_pct": 25,
+            },
+            "candy": {"per_knockout": 1, "special_boss_only": True},
+            "tickets": {
+                "tiers": {
+                    "bronze": {"encounters": 1, "stardust": 100, "income_rolls": 0, "survivor_rolls": 0},
+                    "silver": {"encounters": 2, "stardust": 200, "income_rolls": 2, "survivor_rolls": 0},
+                    "gold": {"encounters": "fill", "stardust": 400, "income_rolls": 4, "survivor_rolls": 0},
+                    "platinum": {"encounters": "fill", "stardust": 1000, "income_rolls": 8, "survivor_rolls": 1},
+                    "diamond": {"encounters": "fill", "stardust": 3000, "income_rolls": 24, "survivor_rolls": 3},
+                },
+                "schedule": {
+                    "bronze": {"floors": [5, 15]}, "silver": {"floors": [10, 20, 30, 40]},
+                    "gold": {"from": 25, "every": 10}, "platinum": {"floors": [50, 60, 70]},
+                    "diamond": {"from": 80, "every": 10},
+                },
+                "first_clear_tiers": ["silver", "gold", "platinum", "diamond"],
+            },
+            "skip": {"divisor": 2, "max": 40},
+        })
+
+    def test_arena_ultra_beasts_equal_milestone_first_catch_list(self):
+        species = self.load("arena")["rules"]["special"]["ultra_beast_species"]
+        milestones = self.load("milestones")["ultra_beast_first_catches"]
+        self.assertEqual(species, sorted(row["species_id"] for row in milestones))
+
+    def test_arena_special_identities_total_128_regular_966(self):
+        rules = self.load("arena")["rules"]["special"]
+        listed = set(rules["ultra_beast_species"]) | set(rules["paradox_species"])
+        artifact = json.loads((Path(__file__).parents[1] /
+                               "content/artifact/content.json").read_bytes())
+        special = [identity for identity in artifact["identities"]
+                   if identity["is_legendary"] or identity["is_mythical"] or
+                   identity["species_id"] in listed]
+        self.assertEqual(len(special), 128)
+        self.assertEqual(len(artifact["identities"]) - len(special), 966)
+
+    def test_arena_schedule_gives_each_floor_at_most_one_known_tier(self):
+        tickets = self.load("arena")["rules"]["tickets"]
+        self.assertEqual(set(tickets["schedule"]), set(tickets["tiers"]))
+        for floor in range(1, 201):
+            with self.subTest(floor=floor):
+                awards = []
+                for tier, schedule in tickets["schedule"].items():
+                    if "floors" in schedule:
+                        due = floor in schedule["floors"]
+                    else:
+                        due = floor >= schedule["from"] and (floor - schedule["from"]) % schedule["every"] == 0
+                    if due:
+                        awards.append(tier)
+                self.assertLessEqual(len(awards), 1)
+                self.assertEqual(len(awards), int(floor % 5 == 0))
+                self.assertTrue(set(awards) <= set(tickets["tiers"]))
 
     def test_battle_rules_match_research_template_values(self):
         self.assertEqual(self.load("battle")["rules"], {
