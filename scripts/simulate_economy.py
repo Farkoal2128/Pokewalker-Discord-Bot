@@ -77,6 +77,27 @@ def render_report(results, *, seed, days, profile, measured, artifact, balances)
     lines.extend(["", "| Gym item | Expected quantity per 8-hour deployment |", "|---|---:|"])
     lines.extend(f"| {item} | {display(quantity)} |" for item, quantity in results[0]["gym_income"]["items_per_deployment"].items())
     lines.extend([f"| **All balls (including Master Ball)** | **{display(results[0]['gym_income']['balls_per_deployment'])}** |", ""])
+    arena = results[0]["arena_income"]
+    lines.extend(["## Arena ticket income", "",
+                  "Reference floors from Arena requirements sections 6.1 and 8 are assumptions, not predictions; no fights are simulated.",
+                  "Repeat tickets only, first-clear bonuses excluded. A skip changes fights and payment timing, not total tickets from floors 1 through the cleared floor.",
+                  "Encounter totals are upper bounds assuming room at every redemption; fill uses the live queue capacity. Roll values are before inventory limits; encounter value and berry costs are excluded.",
+                  "Skip 40 / floor 40 means start and back out: no fights, all tickets paid at start.",
+                  f"Cooldown: {balances['arena']['rules']['cooldown_seconds']:,} seconds; {display(arena['runs_per_day'])} runs/day.",
+                  f"Income roll value: {display(arena['income_roll_value'])} Stardust; survivor reward value (including flat Stardust): {display(arena['survivor_roll_value'])} Stardust.",
+                  "Unpriced items (counted as zero): " + (", ".join(arena["unpriced"]) or "none") + ".",
+                  "Arena payouts below are separate from walking/catching income and the existing Checks; no approved Arena income expectation exists.", "",
+                  "| Skip | Floor cleared | Fights | Tickets | At start | Encounters (max) | Stardust | Income rolls | Survivor rolls | Stardust-equivalent | At-start Stardust-equivalent | Stardust-equivalent/day |",
+                  "|---:|---:|---:|---|---|---:|---:|---:|---:|---:|---:|---:|"])
+    for run in arena["runs"]:
+        tickets, at_start = (", ".join(f"{copies} {tier.title()}" for tier, copies in run[key].items()) or "none"
+                             for key in ("tickets", "at_start"))
+        cells = [str(run["skip"]), str(run["floor"]), str(run["fights"]), tickets, at_start,
+                 str(run["encounters_max"]), str(run["stardust"]), str(run["income_rolls"]), str(run["survivor_rolls"]),
+                 display(run["stardust_equivalent"]), display(run["at_start_stardust_equivalent"]),
+                 display(run["stardust_equivalent"] * arena["runs_per_day"])]
+        lines.append("| " + " | ".join(cells) + " |")
+    lines.append("")
     top = next(r for r in results if r["active_hours"] == 8 and r["style"] == "continuous")
     lines.extend(["## Checks", "",
                   "PASS/FAIL compares these model outputs with the expectations; FAIL does not authorize tuning tables.",

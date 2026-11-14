@@ -2,8 +2,8 @@
 
 ## Inputs
 
-- Artifact manifest SHA-256 (`content/manifest.json`): `d101a9ac0e7240ca78d7a4d54422d475ade2a5cb801f3b52c301855979f69042`
-- Artifact SHA-256 (`content/artifact/content.json`): `2cfab57088c93e301dfcf7999035720aece0198a67ee09a660c4998f7d0b93f0`
+- Artifact manifest SHA-256 (`content/manifest.json`): `7654096a5ef8d9731a168436871c1b1b25f42c0e15423ff907cc6a383af51541`
+- Artifact SHA-256 (`content/artifact/content.json`): `52301ef0e4b36ba4e76125d3ddf730afbe0ef76f5dda53297a25ec917f1ecfcc`
 - Seed: 1 (reset for each scenario and play style)
 - Days: 30
 - Requested profile: regular
@@ -11,18 +11,22 @@
 - G-1: no chat export used; adaptation.md fallback profiles are assumptions, not measured behavior.
 - Fallback daily profiles: casual 10 messages x 10 words; regular 25 x 12; active 60 x 15. Daily totals are distributed across active hours.
 - Balance table versions:
-  - capacities.json: v1
-  - catch.json: v1
-  - checkin_table.json: v1
-  - conversion_rates.json: v1
+  - arena.json: v1
+  - battle.json: v2
+  - capacities.json: v3
+  - catch.json: v4
+  - checkin_table.json: v2
+  - conversion_rates.json: v4
   - cpm.json: v1
-  - find_table.json: v1
-  - gym_income_table.json: v1
+  - evolution.json: v1
+  - find_table.json: v2
+  - gym_income_table.json: v2
   - milestones.json: v1
   - powerup_prices.json: v1
-  - routes.json: v1
+  - routes.json: v2
   - simulation.json: v1
   - step_rules.json: v1
+  - survivor_table.json: v3
   - tier_chances.json: v1
 
 All numbers below use the same requested chat profile at 1, 4 and 8 active hours/day; these are activity-duration scenarios.
@@ -37,11 +41,11 @@ First-shiny mean/median are geometric estimates from generated encounter pace, n
 |---|---:|---:|
 | Encounters | 91 | 90 |
 | Encounters / active hour | 3.03 | 3.00 |
-| Balls supplied | 394 | 395 |
+| Balls supplied | 390 | 393 |
 | Balls spent (stock-limited) | 173 | 173 |
 | Candy in (all families) | 372 | 364 |
 | Favourite Candy in | 65 | 65 |
-| Stardust in | 17810 | 17310 |
+| Stardust in | 17800 | 17310 |
 | Power-up cost to level 30 (Candy / Stardust) | 100 / 15000 | 100 / 15000 |
 | Power-up cost to level 40 (Candy / Stardust) | 180 / 35000 | 180 / 35000 |
 | Favourite final level | 24.00 | 24.00 |
@@ -55,11 +59,11 @@ First-shiny mean/median are geometric estimates from generated encounter pace, n
 |---|---:|---:|
 | Encounters | 91 | 91 |
 | Encounters / active hour | 0.76 | 0.76 |
-| Balls supplied | 412 | 412 |
+| Balls supplied | 410 | 410 |
 | Balls spent (stock-limited) | 190 | 190 |
 | Candy in (all families) | 364 | 364 |
 | Favourite Candy in | 63 | 63 |
-| Stardust in | 15210 | 15210 |
+| Stardust in | 15100 | 15100 |
 | Power-up cost to level 30 (Candy / Stardust) | 100 / 15000 | 100 / 15000 |
 | Power-up cost to level 40 (Candy / Stardust) | 180 / 35000 | 180 / 35000 |
 | Favourite final level | 23.50 | 23.50 |
@@ -73,11 +77,11 @@ First-shiny mean/median are geometric estimates from generated encounter pace, n
 |---|---:|---:|
 | Encounters | 91 | 91 |
 | Encounters / active hour | 0.38 | 0.38 |
-| Balls supplied | 452 | 452 |
-| Balls spent (stock-limited) | 239 | 239 |
-| Candy in (all families) | 385 | 385 |
+| Balls supplied | 455 | 455 |
+| Balls spent (stock-limited) | 275 | 275 |
+| Candy in (all families) | 374 | 374 |
 | Favourite Candy in | 60 | 60 |
-| Stardust in | 19560 | 19560 |
+| Stardust in | 20380 | 20380 |
 | Power-up cost to level 30 (Candy / Stardust) | 100 / 15000 | 100 / 15000 |
 | Power-up cost to level 40 (Candy / Stardust) | 180 / 35000 | 180 / 35000 |
 | Favourite final level | 23.00 | 23.00 |
@@ -94,16 +98,16 @@ All comparison amounts cover the full scenario duration. Deficit = max(0, spent 
 
 | Hours/day | Style | Supplied | Spent | Unmet demand (estimate) | Demand | Deficit | Stockout encounters | Gym balls (a) | Gym balls (b) | (a) closes deficit? |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
-| 1 | continuous | 394 | 173 | 0 | 173 | 0 | 0 | 737.28 | 2,211.84 | no deficit |
-| 1 | hourly check | 395 | 173 | 0 | 173 | 0 | 0 | 737.28 | 2,211.84 | no deficit |
-| 4 | continuous | 412 | 190 | 0 | 190 | 0 | 0 | 737.28 | 2,211.84 | no deficit |
-| 4 | hourly check | 412 | 190 | 0 | 190 | 0 | 0 | 737.28 | 2,211.84 | no deficit |
-| 8 | continuous | 452 | 239 | 0 | 239 | 0 | 0 | 737.28 | 2,211.84 | no deficit |
-| 8 | hourly check | 452 | 239 | 0 | 239 | 0 | 0 | 737.28 | 2,211.84 | no deficit |
+| 1 | continuous | 390 | 173 | 0 | 173 | 0 | 0 | 725.28 | 2,175.84 | no deficit |
+| 1 | hourly check | 393 | 173 | 0 | 173 | 0 | 0 | 725.28 | 2,175.84 | no deficit |
+| 4 | continuous | 410 | 190 | 0 | 190 | 0 | 0 | 725.28 | 2,175.84 | no deficit |
+| 4 | hourly check | 410 | 190 | 0 | 190 | 0 | 0 | 725.28 | 2,175.84 | no deficit |
+| 8 | continuous | 455 | 275 | 0 | 275 | 0 | 0 | 725.28 | 2,175.84 | no deficit |
+| 8 | hourly check | 455 | 275 | 0 | 275 | 0 | 0 | 725.28 | 2,175.84 | no deficit |
 
 | Gym item | Expected quantity per 8-hour deployment |
 |---|---:|
-| poke_ball | 19.76 |
+| poke_ball | 19.36 |
 | great_ball | 4.32 |
 | ultra_ball | 0.48 |
 | razz_berry | 0.64 |
@@ -116,7 +120,30 @@ All comparison amounts cover the full scenario duration. Deficit = max(0, spent 
 | master_ball | 0.02 |
 | star_piece | 0.04 |
 | evolution_item | 0.16 |
-| **All balls (including Master Ball)** | **24.58** |
+| vitamin | 0.08 |
+| **All balls (including Master Ball)** | **24.18** |
+
+## Arena ticket income
+
+Reference floors from Arena requirements sections 6.1 and 8 are assumptions, not predictions; no fights are simulated.
+Repeat tickets only, first-clear bonuses excluded. A skip changes fights and payment timing, not total tickets from floors 1 through the cleared floor.
+Encounter totals are upper bounds assuming room at every redemption; fill uses the live queue capacity. Roll values are before inventory limits; encounter value and berry costs are excluded.
+Skip 40 / floor 40 means start and back out: no fights, all tickets paid at start.
+Cooldown: 64,800 seconds; 1.33 runs/day.
+Income roll value: 25.61 Stardust; survivor reward value (including flat Stardust): 754.25 Stardust.
+Unpriced items (counted as zero): world_legendary_ticket.
+Arena payouts below are separate from walking/catching income and the existing Checks; no approved Arena income expectation exists.
+
+| Skip | Floor cleared | Fights | Tickets | At start | Encounters (max) | Stardust | Income rolls | Survivor rolls | Stardust-equivalent | At-start Stardust-equivalent | Stardust-equivalent/day |
+|---:|---:|---:|---|---|---:|---:|---:|---:|---:|---:|---:|
+| 0 | 10 | 30 | 1 Bronze, 1 Silver | none | 3 | 300 | 2 | 0 | 351.23 | 0.00 | 468.31 |
+| 0 | 20 | 60 | 2 Bronze, 2 Silver | none | 6 | 600 | 4 | 0 | 702.46 | 0.00 | 936.61 |
+| 0 | 30 | 90 | 2 Bronze, 3 Silver, 1 Gold | none | 11 | 1200 | 10 | 0 | 1,456.15 | 0.00 | 1,941.53 |
+| 0 | 40 | 120 | 2 Bronze, 4 Silver, 2 Gold | none | 16 | 1800 | 16 | 0 | 2,209.84 | 0.00 | 2,946.45 |
+| 40 | 40 | 0 | 2 Bronze, 4 Silver, 2 Gold | 2 Bronze, 4 Silver, 2 Gold | 16 | 1800 | 16 | 0 | 2,209.84 | 2,209.84 | 2,946.45 |
+| 40 | 60 | 60 | 2 Bronze, 4 Silver, 4 Gold, 2 Platinum | 2 Bronze, 4 Silver, 2 Gold | 28 | 4600 | 40 | 2 | 7,133.10 | 2,209.84 | 9,510.80 |
+| 40 | 80 | 120 | 2 Bronze, 4 Silver, 6 Gold, 3 Platinum, 1 Diamond | 2 Bronze, 4 Silver, 2 Gold | 40 | 9400 | 80 | 6 | 15,974.70 | 2,209.84 | 21,299.60 |
+| 40 | 100 | 180 | 2 Bronze, 4 Silver, 8 Gold, 3 Platinum, 3 Diamond | 2 Bronze, 4 Silver, 2 Gold | 52 | 16200 | 136 | 12 | 28,734.64 | 2,209.84 | 38,312.85 |
 
 ## Checks
 
@@ -129,21 +156,21 @@ D59: every bundle must be strictly smaller than one month of each scenario's inc
 
 | Expectation | continuous | hourly check |
 |---|---|---|
-| D59 bronze, 1 hours/day | PASS: 575 < 19,501.00 | PASS: 575 < 19,030.00 |
-| D59 diamond, 1 hours/day | FAIL: 52,500 >= 19,501.00 | FAIL: 52,500 >= 19,030.00 |
-| D59 gold, 1 hours/day | PASS: 6,050 < 19,501.00 | PASS: 6,050 < 19,030.00 |
-| D59 platinum, 1 hours/day | PASS: 16,250 < 19,501.00 | PASS: 16,250 < 19,030.00 |
-| D59 silver, 1 hours/day | PASS: 2,215 < 19,501.00 | PASS: 2,215 < 19,030.00 |
-| D59 bronze, 4 hours/day | PASS: 575 < 16,685.00 | PASS: 575 < 16,685.00 |
-| D59 diamond, 4 hours/day | FAIL: 52,500 >= 16,685.00 | FAIL: 52,500 >= 16,685.00 |
-| D59 gold, 4 hours/day | PASS: 6,050 < 16,685.00 | PASS: 6,050 < 16,685.00 |
-| D59 platinum, 4 hours/day | PASS: 16,250 < 16,685.00 | PASS: 16,250 < 16,685.00 |
-| D59 silver, 4 hours/day | PASS: 2,215 < 16,685.00 | PASS: 2,215 < 16,685.00 |
-| D59 bronze, 8 hours/day | PASS: 575 < 21,571.00 | PASS: 575 < 21,571.00 |
-| D59 diamond, 8 hours/day | FAIL: 52,500 >= 21,571.00 | FAIL: 52,500 >= 21,571.00 |
-| D59 gold, 8 hours/day | PASS: 6,050 < 21,571.00 | PASS: 6,050 < 21,571.00 |
-| D59 platinum, 8 hours/day | PASS: 16,250 < 21,571.00 | PASS: 16,250 < 21,571.00 |
-| D59 silver, 8 hours/day | PASS: 2,215 < 21,571.00 | PASS: 2,215 < 21,571.00 |
+| D59 bronze, 1 hours/day | PASS: 575 < 19,696.00 | PASS: 575 < 19,310.00 |
+| D59 diamond, 1 hours/day | FAIL: 52,500 >= 19,696.00 | FAIL: 52,500 >= 19,310.00 |
+| D59 gold, 1 hours/day | PASS: 6,050 < 19,696.00 | PASS: 6,050 < 19,310.00 |
+| D59 platinum, 1 hours/day | PASS: 16,250 < 19,696.00 | PASS: 16,250 < 19,310.00 |
+| D59 silver, 1 hours/day | PASS: 2,215 < 19,696.00 | PASS: 2,215 < 19,310.00 |
+| D59 bronze, 4 hours/day | PASS: 575 < 16,847.00 | PASS: 575 < 16,847.00 |
+| D59 diamond, 4 hours/day | FAIL: 52,500 >= 16,847.00 | FAIL: 52,500 >= 16,847.00 |
+| D59 gold, 4 hours/day | PASS: 6,050 < 16,847.00 | PASS: 6,050 < 16,847.00 |
+| D59 platinum, 4 hours/day | PASS: 16,250 < 16,847.00 | PASS: 16,250 < 16,847.00 |
+| D59 silver, 4 hours/day | PASS: 2,215 < 16,847.00 | PASS: 2,215 < 16,847.00 |
+| D59 bronze, 8 hours/day | PASS: 575 < 23,085.00 | PASS: 575 < 23,085.00 |
+| D59 diamond, 8 hours/day | FAIL: 52,500 >= 23,085.00 | FAIL: 52,500 >= 23,085.00 |
+| D59 gold, 8 hours/day | PASS: 6,050 < 23,085.00 | PASS: 6,050 < 23,085.00 |
+| D59 platinum, 8 hours/day | PASS: 16,250 < 23,085.00 | PASS: 16,250 < 23,085.00 |
+| D59 silver, 8 hours/day | PASS: 2,215 < 23,085.00 | PASS: 2,215 < 23,085.00 |
 
 Planner expectation (not an approved balance rule): level 30 reachable within 30 days at 4 hours/day.
 

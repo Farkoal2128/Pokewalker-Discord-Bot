@@ -425,3 +425,39 @@ list equals `milestones.json` `ultra_beast_first_catches`. Schedule entries refe
 to known tiers and award at most one tier per floor. No migration or changes to
 existing table consumers are required; removing this table before its consumers
 land requires removing its manifest hash and corresponding tests/contract too.
+
+
+## Arena analytic economy output (ARENA-19, C4)
+
+The offline economy model produces additive arena_income(balances) and the
+arena_income field of run_scenario; the report CLI and economy tests consume it.
+No player data, balance values, existing scenario metrics or migrations change.
+The Arena section appears between the gym item table and Checks, without adding
+an Arena PASS/FAIL expectation.
+
+arena_income contains income_roll_value and survivor_roll_value in Stardust:
+weighted row quantity times conversion_rates.stardust_per_unit, with Stardust
+rows valued directly. The survivor value also includes stardust_flat. Missing
+item prices count zero and appear by name in the sorted unpriced list.
+runs_per_day is 86400 / arena.rules.cooldown_seconds, independent of activity.
+
+runs contains these (skip, floor cleared) assumptions in order:
+(0,10), (0,20), (0,30), (0,40), (40,40), (40,60), (40,80), (40,100).
+Each run has skip, floor, fights = 3 * (floor - skip), tickets = skip_tickets(floor),
+at_start = skip_tickets(skip), encounters_max, stardust, income_rolls,
+survivor_rolls, stardust_equivalent and at_start_stardust_equivalent.
+Payout totals use the live Arena ticket tier contents; fill uses the encounter
+queue capacity. Stardust equivalents add flat Stardust and both types of rolls
+at their weighted values, excluding encounters and unpriced items. A skip changes
+fights and when tickets pay, not the total payout for floors 1..floor.
+(40,40) means start and back out, with zero fights and all payout at start.
+
+The report lists every run field plus Stardust-equivalent per day (run equivalent
+times runs_per_day), both roll values and every unpriced item. These are repeat
+payouts without first-clear bonuses; floors are reference assumptions from Arena
+requirements sections 6.1 and 8, not predictions of player reach. No battle is
+simulated. Encounter totals assume room for every redemption and are upper bounds;
+roll values precede inventory limits and exclude encounter value and berry costs.
+The analytic payout is separate from existing walking/catching scenario income
+and existing PASS/FAIL checks. Tests: test_economy_arena and the existing economy
+model, D47 and report CLI suites.

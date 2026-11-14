@@ -7,12 +7,16 @@ from itertools import combinations
 from pathlib import Path
 
 from content.balance import load_table
+from pokewalker.domain.arena import skip_tickets
 from pokewalker.domain.steps import accept_message
 from scripts.measure_chat_rate import MemoryHistory
 
 ROOT = Path(__file__).resolve().parents[2]
 TIERS = dict(zip(("Common", "Uncommon", "Rare", "Evolved", "Legendary/Mythical"),
                  ("common", "uncommon", "rare", "evolved", "legendary")))
+
+
+ARENA_RUNS = ((0, 10), (0, 20), (0, 30), (0, 40), (40, 40), (40, 60), (40, 80), (40, 100))
 
 
 class Model:
@@ -218,6 +222,44 @@ def group_expectation(identities, species_ids, probability):
     return sum((-1) ** (n + 1) / sum(subset) for n in range(1, len(rates) + 1) for subset in combinations(rates, n))
 
 
+def arena_income(balances):
+    rules = balances["arena"]["rules"]
+    rates = balances["conversion_rates"]["stardust_per_unit"]
+    unpriced = set()
+
+    def roll_value(table):
+        value = 0
+        for row in table["rows"]:
+            item = row["item"]
+            if item != "stardust" and item not in rates:
+                unpriced.add(item)
+            value += row["weight"] * row["quantity"] * (1 if item == "stardust" else rates.get(item, 0))
+        return value / sum(row["weight"] for row in table["rows"])
+
+    income_value = roll_value(balances["gym_income_table"])
+    survivor_value = roll_value(balances["survivor_table"]) + balances["survivor_table"]["stardust_flat"]
+
+    def payout(tickets):
+        total = dict.fromkeys(("encounters_max", "stardust", "income_rolls", "survivor_rolls"), 0)
+        for tier, copies in tickets.items():
+            reward = rules["tickets"]["tiers"][tier]
+            encounters = reward["encounters"]
+            total["encounters_max"] += copies * (balances["capacities"]["limits"]["encounter_queue"] if encounters == "fill" else encounters)
+            for key in ("stardust", "income_rolls", "survivor_rolls"):
+                total[key] += copies * reward[key]
+        total["stardust_equivalent"] = total["stardust"] + total["income_rolls"] * income_value + total["survivor_rolls"] * survivor_value
+        return total
+
+    runs = []
+    for skip, floor in ARENA_RUNS:
+        tickets, at_start = skip_tickets(floor, rules), skip_tickets(skip, rules)
+        runs.append({"skip": skip, "floor": floor, "fights": 3 * (floor - skip), "tickets": tickets,
+                     "at_start": at_start, **payout(tickets),
+                     "at_start_stardust_equivalent": payout(at_start)["stardust_equivalent"]})
+    return {"income_roll_value": income_value, "survivor_roll_value": survivor_value,
+            "unpriced": sorted(unpriced), "runs_per_day": 86400 / rules["cooldown_seconds"], "runs": runs}
+
+
 def run_scenario(rng, *, active_hours=1, days=30, profile="regular", measured_path=None,
                  artifact=None, balances=None, style="continuous"):
     if type(days) is not int or days <= 0 or type(active_hours) is not int or not 1 <= active_hours <= 24:
@@ -298,6 +340,7 @@ def run_scenario(rng, *, active_hours=1, days=30, profile="regular", measured_pa
             "unmet_ball_demand": dict(model.unmet_ball_demand), "stockout_events": model.stockout_events,
             "ball_demand": demand, "deficit": max(0, demand - sum(model.balls_supplied.values())),
             "minimum_inventory": model.minimum_inventory,
+            "arena_income": arena_income(balances),
             "gym_income": {"items_per_deployment": gym_items, "balls_per_deployment": gym_balls,
                            "balls_one_deployment_daily": gym_balls * days,
                            "balls_all_day": gym_balls * days * 86400 / gym["tenure_seconds"]},
