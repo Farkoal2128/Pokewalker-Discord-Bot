@@ -63,8 +63,10 @@ class ArenaSchemaTests(unittest.IsolatedAsyncioTestCase):
                     f'SELECT * FROM {table}')] for table in before}
                 self.assertEqual(after['guilds'][0].pop('arena_enabled'), 1)
                 self.assertEqual(after['profiles'][0].pop('arena_best_floor'), 0)
+                self.assertEqual(after['profiles'][0].pop('arena_stop_pct'), 50)
+                self.assertEqual(after['profiles'][0].pop('arena_auto_order'), 0)
                 self.assertEqual(after, before)
-                self.assertEqual(await self.scalar('PRAGMA user_version', conn=upgraded), 25)
+                self.assertEqual(await self.scalar('PRAGMA user_version', conn=upgraded), 26)
                 self.assertEqual(await upgraded.execute_fetchall('PRAGMA foreign_key_check'), [])
                 for table in ('arena_runs', 'arena_tickets'):
                     self.assertEqual(await self.scalar(f'SELECT count(*) FROM {table}', conn=upgraded), 0)
@@ -78,6 +80,55 @@ class ArenaSchemaTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(db, 'MIGRATIONS', prior):
             with self.assertRaisesRegex(RuntimeError, 'schema is newer'):
                 await db.open_db(path)
+
+    async def test_migration_0026_adds_settings_preserving_rows(self):
+        prior = Path(self.temp.name) / 'schema25'
+        prior.mkdir()
+        for migration in db.MIGRATIONS.glob('[0-9][0-9][0-9][0-9]_*.sql'):
+            if int(migration.name[:4]) <= 25:
+                shutil.copyfile(migration, prior / migration.name)
+        path = Path(self.temp.name) / 'schema25.sqlite3'
+        with patch.object(db, 'MIGRATIONS', prior):
+            old = await db.open_db(path)
+        try:
+            self.assertEqual(await self.scalar('PRAGMA user_version', conn=old), 25)
+            await old.execute("INSERT INTO guilds(guild_id) VALUES ('old-g')")
+            await old.execute("INSERT INTO profiles(profile_id,guild_id,user_id,created_at,stardust,arena_best_floor) "
+                              "VALUES ('old','old-g','u',10,1234,60)")
+            await old.execute("INSERT INTO arena_runs(run_id,profile_id,started_at,floor,slot,team,enemy) "
+                              "VALUES ('old-run','old',100,7,2,?,?)",
+                              (json.dumps(self.team), json.dumps({'snapshot': {}, 'battle_hp': 40, 'special': False})))
+            await old.execute("INSERT INTO arena_tickets VALUES ('old','silver',2)")
+            before = {table: [dict(row) for row in await old.execute_fetchall(f'SELECT * FROM {table}')]
+                      for table in ('guilds', 'profiles', 'arena_runs', 'arena_tickets')}
+        finally:
+            await old.close()
+        for _ in range(2):
+            upgraded = await db.open_db(path)
+            try:
+                after = {table: [dict(row) for row in await upgraded.execute_fetchall(f'SELECT * FROM {table}')]
+                         for table in before}
+                self.assertEqual(after['profiles'][0].pop('arena_stop_pct'), 50)
+                self.assertEqual(after['profiles'][0].pop('arena_auto_order'), 0)
+                self.assertEqual(after, before)
+                self.assertEqual(await self.scalar('PRAGMA user_version', conn=upgraded), 26)
+                self.assertEqual(await upgraded.execute_fetchall('PRAGMA foreign_key_check'), [])
+            finally:
+                await upgraded.close()
+        with patch.object(db, 'MIGRATIONS', prior):
+            with self.assertRaisesRegex(RuntimeError, 'schema is newer'):
+                await db.open_db(path)
+
+    async def test_settings_checks_reject_bad_values(self):
+        for column, values in (('arena_stop_pct', (55, 0, 100, None)),
+                               ('arena_auto_order', (2, None))):
+            for value in values:
+                with self.subTest(column=column, value=value), self.assertRaises(sqlite3.IntegrityError):
+                    await self.conn.execute(f'UPDATE profiles SET {column}=? WHERE profile_id=?', (value, self.pid))
+        for value in range(10, 100, 10):
+            await self.conn.execute('UPDATE profiles SET arena_stop_pct=? WHERE profile_id=?', (value, self.pid))
+        for value in (0, 1):
+            await self.conn.execute('UPDATE profiles SET arena_auto_order=? WHERE profile_id=?', (value, self.pid))
 
     async def test_one_live_run_per_profile(self):
         await self.run_row()

@@ -91,7 +91,8 @@ class ArenaTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_start_snapshots_and_rolls_enemy(self):
         self.assertEqual(await self.state(), {'status': 'none', 'run': None, 'cooldown_left': 0,
-                                             'enabled': True, 'best_floor': 0, 'tickets': {}})
+                                             'enabled': True, 'best_floor': 0, 'tickets': {},
+                                             'stop_pct': 50, 'auto_order': False})
         result = await self.start()
         self.assertEqual(result['status'], 'started')
         run = result['run']
@@ -245,6 +246,120 @@ class ArenaTests(unittest.IsolatedAsyncioTestCase):
         for order in ((0, 0, 1), (0, 1), (0, 1, 3), (False, 1, 2)):
             before = await self.snapshot()
             self.assertEqual((await self.order(result['run'], order))['status'], 'invalid')
+            self.assertEqual(await self.snapshot(), before)
+
+    async def setting(self, name, run, value, now=1200, session=None):
+        function = getattr(self.service(), f'set_{name}')
+        return await self.writer.run(lambda conn: function(
+            conn, session or self.session, run['run_id'], run['revision'], value, now))
+
+    async def test_state_reports_setting_defaults(self):
+        current = await self.state()
+        self.assertEqual(current['stop_pct'], 50)
+        self.assertIs(current['auto_order'], False)
+        await self.conn.execute('UPDATE profiles SET arena_stop_pct=90,arena_auto_order=1 WHERE profile_id=?',
+                                (self.other,))
+        self.assertEqual((await self.state())['stop_pct'], 50)
+        self.assertIs((await self.state())['auto_order'], False)
+
+    async def test_setters_save_on_profile_and_bump_live_run_revision(self):
+        run = (await self.start())['run']
+        before = await self.snapshot()
+        self.assertEqual(self.service().STOP_PCTS, range(10, 100, 10))
+        changes = [('stop_pct', value) for value in self.service().STOP_PCTS]
+        changes += [('stop_pct', 90), ('auto_order', True), ('auto_order', True), ('auto_order', False)]
+        for name, value in changes:
+            with self.subTest(name=name, value=value):
+                result = await self.setting(name, run, value)
+                self.assertEqual(result, {'status': 'set', 'run': {**run, 'revision': run['revision'] + 1}})
+                run = result['run']
+                current = await self.state()
+                self.assertEqual(current['run'], run)
+                self.assertEqual(current[name], value)
+                if name == 'auto_order':
+                    self.assertIs(current[name], value)
+                self.assertEqual(await self.scalar(f'SELECT arena_{name} FROM profiles WHERE profile_id=?',
+                                                   (self.pid,)), value)
+        after = await self.snapshot()
+        for table in before.keys() - {'profiles', 'arena_runs'}:
+            self.assertEqual(after[table], before[table])
+        self.assertEqual([row for row in after['profiles'] if row['profile_id'] == self.other],
+                         [row for row in before['profiles'] if row['profile_id'] == self.other])
+        for name, value in (('stop_pct', 10), ('auto_order', True)):
+            with self.assertRaisesRegex(RuntimeError, 'writer transaction'):
+                await getattr(self.service(), f'set_{name}')(
+                    self.conn, self.session, run['run_id'], run['revision'], value, 1200)
+
+    async def test_settings_carry_over_to_the_next_run(self):
+        run = (await self.start())['run']
+        run = (await self.setting('stop_pct', run, 30))['run']
+        await self.setting('auto_order', run, True)
+        await self.writer.close()
+        await self.conn.close()
+        self.conn = await db.open_db(self.path)
+        self.addAsyncCleanup(self.conn.close)
+        self.writer = db.Writer(self.conn)
+        self.addAsyncCleanup(self.writer.close)
+        new_run = (await self.start(now=1000 + RULES['cooldown_seconds'],
+                                    session={**self.session, '_original_revision': 6}))['run']
+        self.assertNotEqual(new_run['run_id'], run['run_id'])
+        current = await self.state(now=new_run['started_at'])
+        self.assertEqual(current['stop_pct'], 30)
+        self.assertIs(current['auto_order'], True)
+
+    async def test_setting_from_stale_screen_or_without_live_run_writes_nothing(self):
+        for name, value in (('stop_pct', 20), ('auto_order', True)):
+            before = await self.snapshot()
+            self.assertEqual(await self.setting(name, {'run_id': 'absent', 'revision': 0}, value),
+                             {'status': 'stale', 'run': None})
+            self.assertEqual(await self.snapshot(), before)
+        run = (await self.start())['run']
+        changed = (await self.setting('stop_pct', run, 30))['run']
+        for name, value in (('stop_pct', 20), ('auto_order', True)):
+            for stale in (run, {**changed, 'run_id': 'other'}):
+                before = await self.snapshot()
+                self.assertEqual(await self.setting(name, stale, value), {'status': 'stale', 'run': changed})
+                self.assertEqual(await self.snapshot(), before)
+        ended = (await self.state(now=1000 + RULES['run_seconds']))['run']
+        for name, value in (('stop_pct', 20), ('auto_order', True)):
+            before = await self.snapshot()
+            self.assertEqual(await self.setting(name, ended, value), {'status': 'stale', 'run': ended})
+            self.assertEqual(await self.snapshot(), before)
+
+    async def test_invalid_setting_values_refused_without_write(self):
+        run = (await self.start())['run']
+        for name, values in (('stop_pct', (55, 0, 100, 10.0, '50', True, False, None)),
+                             ('auto_order', (0, 1, 'on', None, [], {}))):
+            for value in values:
+                with self.subTest(name=name, value=value):
+                    before = await self.snapshot()
+                    self.assertEqual(await self.setting(name, run, value), {'status': 'invalid'})
+                    self.assertEqual(await self.snapshot(), before)
+
+    async def test_fight_from_other_screen_is_stale_after_setting_change(self):
+        run = (await self.start())['run']
+        for name, value in (('stop_pct', 20), ('auto_order', True)):
+            changed = (await self.setting(name, run, value))['run']
+            before = await self.snapshot()
+            with patch.object(battle_engine, 'simulate') as simulate:
+                self.assertEqual(await self.fight(run), {'status': 'stale', 'run': changed})
+                simulate.assert_not_called()
+            self.assertEqual(await self.snapshot(), before)
+            run = changed
+
+    async def test_excluded_member_cannot_change_settings_paused_can(self):
+        run = (await self.start())['run']
+        await self.conn.execute("INSERT INTO restrictions(guild_id,user_id,paused) VALUES ('g','u',1)")
+        for name, value in (('stop_pct', 20), ('auto_order', True)):
+            result = await self.setting(name, run, value)
+            self.assertEqual(result['status'], 'set')
+            run = result['run']
+        await self.conn.execute('UPDATE restrictions SET excluded=1')
+        for name, value in (('stop_pct', 40), ('auto_order', False)):
+            before = await self.snapshot()
+            self.assertEqual(await self.setting(name, run, value), {'status': 'excluded'})
+            self.assertEqual(await self.setting(name, run, value, session={**self.session, 'profile_id': self.other}),
+                             {'status': 'stale'})
             self.assertEqual(await self.snapshot(), before)
 
     async def test_heal_mixed_berry_types(self):

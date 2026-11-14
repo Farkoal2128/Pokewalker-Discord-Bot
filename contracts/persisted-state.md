@@ -1555,3 +1555,26 @@ No resource is directly granted or converted. Full bags and occupied rare
 pockets leave items waiting in the existing lossless inbox until Claim has
 room. Tests: test_arena, unchanged test_gyms, test_gym_mod, test_gym_screens,
 test_milestones. Full M1 and native/live acceptance remain separate.
+
+## Arena settings (0026)
+AR-10b/AR-10d add two per-profile columns: arena_stop_pct INTEGER NOT NULL
+DEFAULT 50 CHECK(arena_stop_pct IN (10,20,30,40,50,60,70,80,90)) and
+arena_auto_order INTEGER NOT NULL DEFAULT 0 CHECK(arena_auto_order IN (0,1)).
+Migration 0026 preserves existing rows; older binaries refuse schema 26 through
+open_db's newer-schema check. Settings survive run endings and later starts.
+
+services.arena.state adds stop_pct and auto_order (a bool) from the profile.
+STOP_PCTS = range(10,100,10) is the shared Python range for consumers.
+set_stop_pct(conn,session,run_id,revision,pct,now) and
+set_auto_order(conn,session,run_id,revision,on,now) call state then _live_run:
+no live run or a mismatching ID/revision returns {status: stale, run}, with no
+settings write (state still lazily expires overdue runs). Session ownership
+refusals remain stale/excluded. Paused members may change settings.
+pct must be an int (not bool) in STOP_PCTS; on must be bool; otherwise invalid.
+Success updates the profile column and increments the live run revision in the
+same caller-owned writer transaction, returning {status: set, run} with the new
+revision, even when setting the current value again. Other screens and chains
+must then redraw under AR-4a. No resource moves, receipt or ledger line occurs.
+Producers: migration 0026 and services.arena; consumers: Arena state/screens and
+fight actions. This is additive for current callers; schema rollback requires
+restoring a pre-migration backup. Tests: test_arena_schema and test_arena.

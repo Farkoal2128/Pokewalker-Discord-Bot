@@ -12,6 +12,9 @@ from pokewalker.domain import battle as battle_engine
 from pokewalker.services import gyms, profiles, stepping, storage
 
 
+STOP_PCTS = range(10, 100, 10)
+
+
 async def _latest_run(conn, profile_id):
     async with conn.execute('SELECT * FROM arena_runs WHERE profile_id=? '
                             'ORDER BY started_at DESC,run_id DESC LIMIT 1', (profile_id,)) as cursor:
@@ -44,7 +47,8 @@ async def state(conn, session, now):
     cooldown = max(0, math.ceil(run['started_at'] + rules['cooldown_seconds'] - now)) if run else 0
     return {'status': 'none' if run is None else 'live' if run['ended_at'] is None else 'ended',
             'run': run, 'cooldown_left': cooldown, 'enabled': enabled,
-            'best_floor': profile['arena_best_floor'], 'tickets': tickets}
+            'best_floor': profile['arena_best_floor'], 'tickets': tickets,
+            'stop_pct': profile['arena_stop_pct'], 'auto_order': bool(profile['arena_auto_order'])}
 
 
 def _enemy_snapshot(rolled, content, multipliers):
@@ -133,6 +137,30 @@ async def set_order(conn, session, run_id, revision, order, now):
                        (json.dumps(run['team']), run_id))
     run['revision'] += 1
     return {'status': 'ordered', 'run': run}
+
+
+async def set_stop_pct(conn, session, run_id, revision, pct, now):
+    run, refusal = _live_run(await state(conn, session, now), run_id, revision)
+    if refusal:
+        return refusal
+    if type(pct) is not int or pct not in STOP_PCTS:
+        return {'status': 'invalid'}
+    await conn.execute('UPDATE profiles SET arena_stop_pct=? WHERE profile_id=?', (pct, session['profile_id']))
+    await conn.execute('UPDATE arena_runs SET revision=revision+1 WHERE run_id=?', (run_id,))
+    run['revision'] += 1
+    return {'status': 'set', 'run': run}
+
+
+async def set_auto_order(conn, session, run_id, revision, on, now):
+    run, refusal = _live_run(await state(conn, session, now), run_id, revision)
+    if refusal:
+        return refusal
+    if type(on) is not bool:
+        return {'status': 'invalid'}
+    await conn.execute('UPDATE profiles SET arena_auto_order=? WHERE profile_id=?', (on, session['profile_id']))
+    await conn.execute('UPDATE arena_runs SET revision=revision+1 WHERE run_id=?', (run_id,))
+    run['revision'] += 1
+    return {'status': 'set', 'run': run}
 
 
 async def heal(conn, session, run_id, revision, positions, berry, now):

@@ -89,6 +89,8 @@ class TradingSchemaTests(unittest.IsolatedAsyncioTestCase):
                 # D64's Shiny Charm switch starts on (0) for existing players.
                 self.assertEqual(profile.pop('shiny_charm_off', 0), 0)
                 self.assertEqual(profile.pop('arena_best_floor', 'missing'), 0)
+                self.assertEqual(profile.pop('arena_stop_pct', 'missing'), 50)
+                self.assertEqual(profile.pop('arena_auto_order', 'missing'), 0)
                 self.assertEqual((profile.pop('last_trade_at', 'missing'),
                                   profile.pop('last_trade_ping_at', 'missing')), (None, None))
                 self.assertEqual(after, before)
