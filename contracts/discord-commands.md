@@ -1412,3 +1412,19 @@ Tests: tests/test_readme.py.
 to the client constructor, so Discord shows "/walker" as the bot's custom status on
 every connect and reconnect (identify and resume carry it). No command, intent or
 manifest change. Tests: tests/test_client_lifecycle.py.
+
+## C5: Arena team restrictions in gym screens
+
+The deploy and attacker pickers label the caller's own live Arena team members
+"in the Arena", ahead of the companion reason. Such attackers are unavailable,
+Start is disabled, and claim options omit them. Team membership uses the same
+profile-scoped, read-only run_seconds rule as C3, including exact expiry.
+
+Starting with a saved team member or receiving C3 in_arena keeps the party
+screen with "That Pokémon is on your Arena team. Pick another attacker."
+It does not show a result screen or the "you already hold a gym" claim result.
+A deploy confirmation returning in_arena refuses with "This Pokémon is on your
+Arena team and can't defend a gym until the run ends."
+Producer: bot.gyms; consumers: private Walker interactions and C3 gym services.
+No action ID or slash command changes. Tests: test_arena_gym_block and the
+existing gym screen, battle, lifecycle and Legendary-setting regressions.

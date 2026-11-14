@@ -1368,3 +1368,22 @@ Gym, trading and research consumers use this shared profile-scoped check.
 Older binaries refuse schema 25 through open_db's newer-schema check;
 rollback requires a compatible backup, never lowering user_version.
 Verification: test_arena_schema and the ticket-named migration regressions.
+
+## Arena gym restrictions (AR-6a, AR-6b)
+
+For a new gym deploy, services.gyms.deploy checks the owned Pokemon and its
+revision, then uses profiles.arena_team(conn, profile_id, now) before checking
+companion status. Membership returns {'status': 'in_arena'} without a receipt
+or any state write. A companion on the live team reports in_arena; a companion
+off it still reports companion. Saved successful receipts retain their replay
+semantics.
+
+services.gyms.battle refuses any live-team attacker with in_arena after its
+ownership/revision checks and before companion/deployment checks or simulation.
+The nominee must be an attacker, so the same check protects gym claims. The
+existing battle savepoint rolls back settlement on this refusal: no defender
+change, payout, battle row, receipt or cooldown is committed. The shared check
+is scoped to the caller's profile and stops blocking at exactly run_seconds
+without ending the Arena row or opening the Arena. Ended runs never block.
+Producer: services.gyms; consumers: private gym screens. No schema or trigger
+change. Tests: test_arena_gym_block and the four existing gym regression modules.

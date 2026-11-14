@@ -77,6 +77,8 @@ async def deploy(conn, session, gym_id, pokemon_uid, rev, now, content):
     pokemon = await storage.detail(conn, profile['profile_id'], pokemon_uid)
     if pokemon is None or pokemon['revision'] != rev:
         return {'status': 'stale'}
+    if pokemon_uid in await profiles.arena_team(conn, profile['profile_id'], now):
+        return {'status': 'in_arena'}
     if profile['companion_uid'] == pokemon_uid:
         return {'status': 'companion'}
     identity, _ = storage.identify(content, pokemon)
@@ -298,12 +300,15 @@ async def battle(conn, session, gym_id, expected_deployment_id, party, nominee_u
             len({slot[0] for slot in party}) != len(party)):
         return await refuse('invalid')
     combatants, snapshots, owned = [], [], {}
+    arena_team = await profiles.arena_team(conn, profile['profile_id'], now)
     for uid, rev in party:
         pokemon = await storage.detail(conn, profile['profile_id'], uid)
         if pokemon is None:
             return await refuse('invalid')
         if pokemon['revision'] != rev:
             return await refuse('stale')
+        if uid in arena_team:
+            return await refuse('in_arena')
         if uid == profile['companion_uid'] or pokemon['gym_deployment_id'] is not None:
             return await refuse('invalid')
         owned[uid] = pokemon
