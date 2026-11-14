@@ -60,6 +60,8 @@ class ReceiptOwnerTests(unittest.IsolatedAsyncioTestCase):
             await self.conn.execute(f'DROP TABLE {table}')
         await self.conn.execute('ALTER TABLE guilds DROP COLUMN arena_enabled')
         await self.conn.execute('ALTER TABLE profiles DROP COLUMN arena_best_floor')
+        await self.conn.execute('ALTER TABLE profiles DROP COLUMN arena_stop_pct')
+        await self.conn.execute('ALTER TABLE profiles DROP COLUMN arena_auto_order')
         await self.conn.execute('DROP INDEX pokemon_profile_state')
         for index in ('catch_attempts_receipt', 'resource_ledger_profile'):
             await self.conn.execute(f'DROP INDEX {index}')
