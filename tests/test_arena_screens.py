@@ -230,7 +230,7 @@ class ArenaScreenTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(set(mapping), expected)
         for action in mapping:
             self.assertIsNotNone(re.fullmatch('[a-z_]+', action))
-        self.assertNotIn('arena', Walker(self.walker.bot).handlers)
+        self.assertIn('arena', Walker(self.walker.bot).handlers)
         await self.click('arena')
         await self.start_run()
 
@@ -650,3 +650,33 @@ class ArenaScreenTests(unittest.IsolatedAsyncioTestCase):
         await self.click('arena_redeem_diamond')
         await self.click('arena_redeem_confirm')
         self.assertEqual(await milestones.pending_count(self.conn, self.pid), 28)
+
+
+class ArenaRouterTests(unittest.IsolatedAsyncioTestCase):
+    from test_walker_router import WalkerTests as _Fixture
+    asyncSetUp = _Fixture.asyncSetUp
+    interaction = _Fixture.interaction
+    rows = _Fixture.rows
+    open = _Fixture.open
+    click = _Fixture.click
+    enroll = _Fixture.enroll
+
+    async def test_home_button_opens_arena_through_router(self):
+        await self.enroll()
+        opened, session = await self.open()
+        home = opened.edit_original_response.await_args.kwargs
+        buttons = [button for button in home['view'].children if button.label == 'Arena']
+        self.assertEqual(len(buttons), 1)
+        self.assertFalse(buttons[0].disabled)
+        pressed = self.interaction()
+        await self.walker.route(pressed, buttons[0].custom_id)
+        pressed.edit_original_response.assert_awaited_once()
+        self.assertEqual(pressed.edit_original_response.await_args.kwargs['embed'].title, 'Arena')
+        current = (await self.rows('SELECT * FROM sessions WHERE session_id=?', (session['session_id'],)))[0]
+        self.assertEqual(current['revision'], session['revision'] + 1)
+
+    async def test_every_arena_action_is_registered(self):
+        from pokewalker.bot import arena
+        expected = set(arena.handlers(self.walker))
+        self.assertTrue(expected)
+        self.assertEqual({action for action in self.walker.handlers if action.startswith('arena')}, expected)

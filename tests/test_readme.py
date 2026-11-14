@@ -41,11 +41,25 @@ class ReadmeTests(IsolatedAsyncioTestCase):
     def test_approved_text_verbatim(self):
         content = Path('content/help.md').read_bytes()
         self.assertEqual(hashlib.sha256(content).hexdigest(),
-                         '0465fc8746b92d9c2b6645af85955c4ca4ecd420624b0504eaa53fa9d3f900cc')
+                         '3b5c0ef6926e756d43b87f190d54ecb09206ba5226d612a9c13d29ff067bf3a6')
 
     def test_page_one_is_current_opening_verbatim(self):
         page = self.pages()[0]
         self.assertEqual(hashlib.sha256(page.encode('utf-8')).hexdigest(), PAGE_ONE_SHA256)
+
+    def test_help_describes_arena_and_admin_switch_within_page_limits(self):
+        pages = self.pages()
+        arena_pages = [page for page in pages[:-1] if '**Arena.**' in page]
+        self.assertEqual(len(arena_pages), 1)
+        player = arena_pages[0]
+        for fragment in ('**Arena.**', 'team of 3', 'three fights per floor', 'HP carries',
+                         'berry healing', '18-hour run', '18-hour cooldown', 'Tickets', 'knockout', 'Candy',
+                         'gym', 'trade', 'research'):
+            self.assertIn(fragment, player)
+        self.assertIn('/walker-admin arena on|off reason', pages[-1])
+        self.assertTrue(all(units(page) <= 4096 for page in pages))
+        self.assertEqual(hashlib.sha256(pages[0].encode('utf-8')).hexdigest(), PAGE_ONE_SHA256)
+        self.assertNotIn(b'\r', Path('content/help.md').read_bytes())
 
     def test_pages_within_limit_last_is_admin(self):
         pages = self.pages()
@@ -120,7 +134,7 @@ class ReadmeTests(IsolatedAsyncioTestCase):
         self.assertIn('**`/walker-admin`** (needs Manage Server)', page)
         self.assertIn('**`/walker-mod`** (needs Moderate Members)', page)
         self.assertNotRegex(page, r'(?<![\w-])/admin\b')
-        self.assertEqual(len(documented), 25)  # D63 added gyms legendary
+        self.assertEqual(len(documented), 26)  # ARENA-14 added arena.
         listed = {span.split()[0] for line in page.splitlines() if line.startswith('- ')
                   for span in re.findall(r'`([^`]+)`', line)}
         self.assertEqual(listed, children)

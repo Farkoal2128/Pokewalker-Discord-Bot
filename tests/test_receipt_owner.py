@@ -21,6 +21,17 @@ class ReceiptOwnerTests(unittest.IsolatedAsyncioTestCase):
     scalar = test_db.DatabaseTests.scalar
     profile = test_db.DatabaseTests.profile
 
+    async def test_every_arena_receipt_action_carries_profile_id(self):
+        from test_deletion import populate_arena
+        writer = db.Writer(self.conn)
+        self.addAsyncCleanup(writer.close)
+        profile_id = await self.profile('player', 'guild')
+        await populate_arena(self.conn, writer, profile_id, 'guild', 'player')
+        rows = await self.conn.execute_fetchall("SELECT action,profile_id FROM action_receipts WHERE action LIKE 'arena_%'")
+        self.assertEqual({row['action']: row['profile_id'] for row in rows},
+                         {action: profile_id for action in ('arena_start', 'arena_heal', 'arena_fight', 'arena_redeem')})
+        self.assertEqual(len(rows), 4)
+
     async def receipts_from_producers(self):
         content = json.loads(Path("content/artifact/content.json").read_text(encoding="utf-8"))
         writer = db.Writer(self.conn)

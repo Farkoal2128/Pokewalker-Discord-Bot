@@ -30,7 +30,7 @@ class ScreenTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(buttons[0].label, "Open encounter")
             self.assertEqual(buttons[0].disabled, count == 0)
             self.assertTrue(all(button.disabled for button in buttons[1:]))
-            self.assertEqual([button.label for button in buttons[1:]], ["Storage", "Bag", "Pokédex", "Route", "Gyms", "Inbox (0)"])
+            self.assertEqual([button.label for button in buttons[1:]], ["Storage", "Bag", "Pokédex", "Route", "Gyms", "Arena", "Inbox (0)"])
             self.assertTrue(all(button.custom_id.startswith("pw:v1:abcd:2:") for button in buttons))
 
     async def test_home_has_gyms_button_enabled_when_registered(self):
@@ -38,6 +38,17 @@ class ScreenTests(unittest.IsolatedAsyncioTestCase):
         button = next(b for b in rendered['view'].children if b.label == 'Gyms')
         self.assertFalse(button.disabled)
         self.assertEqual(button.custom_id, 'pw:v1:abcd:2:gyms')
+
+    async def test_home_has_arena_button_enabled_only_when_registered(self):
+        for available in (set(), {'gyms'}, {'arena'}, {'gyms', 'arena'}):
+            rendered = self.screens.home({**self.state, 'available': available})
+            buttons = rendered['view'].children
+            arena = [button for button in buttons if button.label == 'Arena']
+            self.assertEqual(len(arena), 1)
+            self.assertEqual(arena[0].disabled, 'arena' not in available)
+            self.assertEqual(arena[0].custom_id, 'pw:v1:abcd:2:arena')
+            self.assertEqual(buttons.index(arena[0]), next(i for i, button in enumerate(buttons) if button.label == 'Gyms') + 1)
+            self.assertLessEqual(len(rendered['view'].to_components()), 5)
 
     async def test_home_gyms_button_disabled_when_handler_absent(self):
         for changes in ({}, {'available': {'storage'}}):
@@ -49,7 +60,7 @@ class ScreenTests(unittest.IsolatedAsyncioTestCase):
         components = self.screens.home(self.state)['view'].to_components()
         self.assertLessEqual(len(components), 5)
         self.assertTrue(all(len(row['components']) <= 5 for row in components))
-        self.assertEqual(sum(len(row['components']) for row in components), 7)
+        self.assertEqual(sum(len(row['components']) for row in components), 8)
 
     async def test_home_inbox_button_shows_waiting_count_disabled_at_zero(self):
         for waiting, disabled in ((2, False), (0, True)):

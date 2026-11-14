@@ -56,6 +56,16 @@ Use `/readme` to see this again.
 
 <!-- page -->
 
+**Arena.** Open Arena from `/walker` and choose a fixed team of 3. Climb through three fights per floor: entry, middle and boss. Fight instantly, or heal before the next fight. HP carries between fights; berry healing uses Razz or Pinap Berries from your bag. A win revives fainted team members at 1 HP.
+
+Each 18-hour run ends on defeat or expiry. The 18-hour cooldown starts when the run starts. Backing out does not pause the clock; Resume returns to the same enemy and team HP. Your team cannot change during the run, and later power-ups or evolutions do not change its saved stats.
+
+**Arena rewards.** Each knockout gives Candy to the team member who dealt the final blow. Special Pokémon earn Candy only from boss knockouts. Boss wins at reward floors earn Bronze, Silver, Gold, Platinum or Diamond Tickets. Open Tickets in the Arena to see counts and contents, then confirm a redemption with at least one free encounter slot. Encounters join your queue; Stardust and item rewards wait in your Inbox. Tickets can be redeemed during a live run or while the server's Arena is off.
+
+A live Arena team member cannot defend or attack a gym, enter a trade, or be sent for research until the run ends. Other Pokémon remain available for those activities.
+
+<!-- page -->
+
 # Server setup (admins and moderators)
 
 **Server gyms.** Members with Manage Server can create, remove and list gyms with `/walker-admin gyms`.
@@ -64,10 +74,13 @@ Use `/readme` to see this again.
 
 **Server raids.** Manage Server can enable World Legendary spawns with `/walker-admin raids on` and a text channel, or disable them with `off`; raids start off.
 
+**Server Arena.** Manage Server can use `/walker-admin arena on|off reason`; the Arena starts on. Turning it off blocks new runs while existing runs can finish and tickets can still be redeemed. A reason is required and the change is audited.
+
 **`/walker-admin`** (needs Manage Server)
 - `channels add|add-all|remove|list`: choose the walking channels where words count.
 - `trade-channels add|add-all|remove|list`: choose the channels where members can trade.
 - `gyms create|remove|list|legendary`: manage this server's gyms; legendary on or off allows or blocks Legendary and Mythical defenders (blocked by default).
+- `arena on|off <reason>`: enable or disable new Arena runs in this server.
 - `raids on|off <channel>`: turn World Legendary spawns on in a text channel, or off.
 - `force-raid <reason>`: spawn a World Legendary in the raid channel now (once per 24 hours per server).
 - `sharing on|off`: allow or block Share buttons in this server.
