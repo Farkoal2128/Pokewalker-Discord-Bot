@@ -1466,3 +1466,41 @@ across restarts and do not change with a storage power-up or evolution.
 Producers: services.arena; consumers: later Arena screens and fight actions.
 No schema or gym snapshot changes. Tests: test_arena. Full M1 and native/live
 acceptance remain separate.
+
+
+## Arena fight and rewards (ARENA-9)
+fight(conn,session,run_id,revision,now,rng,content,multipliers,battle_rules,chart)
+uses the ARENA-8 writer/session/expiry and stale-run guards before any battle.
+Paused members and live runs in a server now switched off may continue; excluded
+members cannot. Its profile-owned receipt is arena_fight:<run_id>:<floor>:<slot>.
+It builds Combatants from the stored snapshots, replacing each party member's
+starting HP with current hp in party order. The stored enemy and battle_hp feed
+battle.simulate with the injected gym rules and type chart; party_max does not
+restrict the Arena's three members. No current-storage stats or event text are
+used to derive carried HP. On loss/draw, store exact Result.party_hp, end the run
+at now with that reason and revision+1, and pay nothing (earlier tickets stay).
+On win, store domain.revive(Result.party_hp), keeping order and reviving zeros
+at 1 HP. The snapshot finisher's family earns domain.candy_for(special,slot)
+Candy through the normal additive upsert and candy / family / +n / arena_candy
+ledger line. No current-storage identity is consulted for that reward.
+
+Entry and middle wins advance slot; every boss win advances floor and sets
+slot=0, and updates best_floor=max(best_floor,floor), even with no ticket due.
+Only scheduled boss floors grant arena_tickets: one, plus one on a first clear
+above the prior best for silver or better, never bronze. Their additive upsert
+and arena_ticket / tier / +copies / arena_floor ledger line share the fight
+transaction. Wins roll and store the next enemy once and increment revision.
+The compact result contains status (won|defeated), outcome, reason, ticks, engine,
+the fought floor and slot, enemy {name,cp,types}, party_hp before revival, revived
+(zero-based positions), finisher, candy ({family_id,quantity} or None), and tickets
+({tier,copies,first_clear} or None). It contains neither events nor full snapshots.
+A repeated stale press spends nothing and never resolves or rewards a fight twice.
+
+heal_all_and_fight(conn,session,run_id,revision,berry,now,rng,content,multipliers,
+battle_rules,chart) uses those same guards. Berry must be in heal_items. It calls
+heal for all positions below full HP, then fight at the healed revision in the
+same transaction. When all are full it skips heal. A short stock returns missing
+with short, without spending anything or fighting. Any exception rolls back the
+heal, fight, receipts and rewards together. Every receipt supplies profile_id.
+No engine, gym, stepping or schema changes. Tests: test_arena and test_battle;
+full M1 and native/live acceptance remain separate.
