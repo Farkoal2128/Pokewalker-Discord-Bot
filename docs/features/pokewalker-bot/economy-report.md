@@ -2,7 +2,7 @@
 
 ## Inputs
 
-- Artifact manifest SHA-256 (`content/manifest.json`): `7654096a5ef8d9731a168436871c1b1b25f42c0e15423ff907cc6a383af51541`
+- Artifact manifest SHA-256 (`content/manifest.json`): `d46829a01c6aa74fb0ef39384b1a480a5295fea87e17b6864d97ff8b094418a1`
 - Artifact SHA-256 (`content/artifact/content.json`): `52301ef0e4b36ba4e76125d3ddf730afbe0ef76f5dda53297a25ec917f1ecfcc`
 - Seed: 1 (reset for each scenario and play style)
 - Days: 30
@@ -11,7 +11,7 @@
 - G-1: no chat export used; adaptation.md fallback profiles are assumptions, not measured behavior.
 - Fallback daily profiles: casual 10 messages x 10 words; regular 25 x 12; active 60 x 15. Daily totals are distributed across active hours.
 - Balance table versions:
-  - arena.json: v1
+  - arena.json: v2
   - battle.json: v2
   - capacities.json: v3
   - catch.json: v4
