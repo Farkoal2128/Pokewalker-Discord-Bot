@@ -1504,3 +1504,50 @@ with short, without spending anything or fighting. Any exception rolls back the
 heal, fight, receipts and rewards together. Every receipt supplies profile_id.
 No engine, gym, stepping or schema changes. Tests: test_arena and test_battle;
 full M1 and native/live acceptance remain separate.
+
+## Arena tickets and redemption (ARENA-10)
+
+AR-25..AR-30 and AR-35a add redemption without a schema change. Ticket quantities
+have no storage cap. services.arena produces encounters and inbox rewards;
+Arena confirmation screens consume quotes, and milestones.claim delivers rewards.
+Existing gym payouts and Claim semantics remain compatible.
+
+redeem_quote(conn,profile_id,tier) is read-only and returns {held,free,add}.
+free is limits().encounter_queue minus profiles.queue_size; add is min(free,
+the tier's encounters), with fill meaning the queue capacity. Missing ticket
+rows mean held=0. Only the named profile's ordinary queued/revealed encounters
+count, using the existing raid isolation.
+
+redeem(conn,session,tier,expected_free,expected_add,now,rng,content) requires
+the caller's writer transaction and the usual session_owner/expiry guard.
+Paused members and members of servers with Arena off may redeem; stale sessions
+and excluded members cannot. An unknown tier is invalid. For a valid tier,
+held<1 returns none, free<1 returns queue_full, then a differing free or add
+returns {status:quote_changed,free,add}. These refusals spend no ticket or
+Lure/Mirror charge and create no receipt/reward (usual lazy expiry may persist).
+
+Success uses arena_redeem:<session_id>:<_original_revision> (session revision
+fallback), action arena_redeem, and profile_id. Inside the receipt, generate a
+UUID redeem_id, debit one ticket, record arena_ticket / tier / -1 / arena_redeem,
+and call stepping.spawn_encounter add times on the profile's current route.
+Walking's Lure, Mirror and Shiny Charm behavior applies unchanged. Add one flat
+Stardust row under arena:<redeem_id>:stardust, then the tier's income_rolls
+under arena:<redeem_id>:income:<n> and survivor_rolls under
+arena:<redeem_id>:survivor:<n> (zero-based n). Return redeemed with redeem_id,
+encounters, stardust, income_rolls and survivor_rolls counts. Repeated presses
+cannot spend twice: changed preconditions refuse; matching ones replay the
+receipt. Every receipt and debit ledger line carries profile_id. Encounter,
+effect, ticket, inbox, receipt and ledger writes commit or roll back together.
+
+gyms.income_roll(conn,profile_id,key,now,rng,content) rolls the live
+gym_income_table once, resolves evolution items through items.resolve_item,
+inserts one inbox row under key and returns {item,quantity}.
+gyms.survivor_roll(conn,profile_id,key,now,rng) rolls the live survivor_table
+once and inserts its item and stardust_flat as two rows sharing key. Both
+require a writer transaction. pay_hours and end_deployment reuse them with
+their existing payout keys and unchanged RNG call order. Reward resources are
+item/named resource_id or stardust/NULL; remaining holds the rolled quantity.
+No resource is directly granted or converted. Full bags and occupied rare
+pockets leave items waiting in the existing lossless inbox until Claim has
+room. Tests: test_arena, unchanged test_gyms, test_gym_mod, test_gym_screens,
+test_milestones. Full M1 and native/live acceptance remain separate.

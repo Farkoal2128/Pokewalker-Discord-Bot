@@ -106,6 +106,28 @@ async def deploy(conn, session, gym_id, pokemon_uid, rev, now, content):
     return await with_receipt(conn, key, 'deploy', compute, profile_id=profile['profile_id'])
 
 
+async def income_roll(conn, profile_id, key, now, rng, content):
+    _writer(conn)
+    rows = load_table('gym_income_table')['rows']
+    selected = rng.choices(rows, weights=[row['weight'] for row in rows], k=1)[0]
+    item, quantity = items.resolve_item(rng, selected['item'], selected['quantity'], content)
+    await conn.execute('INSERT INTO inbox_items(profile_id,milestone_id,resource,resource_id,remaining,created_at) '
+                       'VALUES (?,?,?,?,?,?)', (profile_id, key, 'stardust' if item == 'stardust' else 'item',
+                                               None if item == 'stardust' else item, quantity, now))
+    return {'item': item, 'quantity': quantity}
+
+
+async def survivor_roll(conn, profile_id, key, now, rng):
+    _writer(conn)
+    table = load_table('survivor_table')
+    rows = table['rows']
+    selected = rng.choices(rows, weights=[row['weight'] for row in rows], k=1)[0]
+    for item, quantity in ((selected['item'], selected['quantity']), ('stardust', table['stardust_flat'])):
+        await conn.execute('INSERT INTO inbox_items(profile_id,milestone_id,resource,resource_id,remaining,created_at) '
+                           'VALUES (?,?,?,?,?,?)', (profile_id, key, 'stardust' if item == 'stardust' else 'item',
+                                                   None if item == 'stardust' else item, quantity, now))
+
+
 async def pay_hours(conn, guild_id, deployment_id, now, rng, content):
     _writer(conn)
     async with conn.execute('SELECT * FROM gym_deployments WHERE deployment_id=? AND guild_id=?',
@@ -118,18 +140,12 @@ async def pay_hours(conn, guild_id, deployment_id, now, rng, content):
     table = load_table('gym_income_table')
     completed = min(table['tenure_seconds'] // 3600,
                     int((min(now, deployment['ends_at']) - deployment['deployed_at']) // 3600))
-    rows = table['rows']
     for hour in range(1, completed + 1):
         async def compute(conn):
-            selected = rng.choices(rows, weights=[row['weight'] for row in rows], k=1)[0]
-            item, quantity = items.resolve_item(rng, selected['item'], selected['quantity'], content)
-            await conn.execute('INSERT INTO inbox_items(profile_id,milestone_id,resource,resource_id,remaining,created_at) '
-                               'VALUES (?,?,?,?,?,?)', (deployment['profile_id'], f'gym_income:{deployment_id}:{hour}',
-                               'stardust' if item == 'stardust' else 'item',
-                               None if item == 'stardust' else item, quantity, now))
+            result = await income_roll(conn, deployment['profile_id'], f'gym_income:{deployment_id}:{hour}', now, rng, content)
             await conn.execute('UPDATE gym_deployments SET paid_hours=MAX(paid_hours,?) '
                                'WHERE deployment_id=? AND guild_id=?', (hour, deployment_id, guild_id))
-            return {'item': item, 'quantity': quantity}, []
+            return result, []
 
         await with_receipt(conn, f'gym_hour:{deployment_id}:{hour}', 'gym_hour', compute,
                            profile_id=deployment['profile_id'])
@@ -150,14 +166,7 @@ async def end_deployment(conn, guild_id, deployment_id, reason, now, rng, conten
         paid = await pay_hours(conn, guild_id, deployment_id, now, rng, content)
         deployment['paid_hours'] = paid['paid_hours']
     if reason == 'expired' and now >= deployment['ends_at'] and not deployment['survivor_rolled']:
-        table = load_table('survivor_table')
-        rows = table['rows']
-        selected = rng.choices(rows, weights=[row['weight'] for row in rows], k=1)[0]
-        for item, quantity in ((selected['item'], selected['quantity']), ('stardust', table['stardust_flat'])):
-            await conn.execute('INSERT INTO inbox_items(profile_id,milestone_id,resource,resource_id,remaining,created_at) '
-                               'VALUES (?,?,?,?,?,?)', (deployment['profile_id'], f'survivor:{deployment_id}',
-                               'stardust' if item == 'stardust' else 'item',
-                               None if item == 'stardust' else item, quantity, now))
+        await survivor_roll(conn, deployment['profile_id'], f'survivor:{deployment_id}', now, rng)
         await conn.execute('UPDATE gym_deployments SET survivor_rolled=1 WHERE deployment_id=? AND guild_id=?',
                            (deployment_id, guild_id))
         deployment['survivor_rolled'] = 1
