@@ -95,7 +95,8 @@ class ArenaTests(unittest.IsolatedAsyncioTestCase):
     async def test_start_snapshots_and_rolls_enemy(self):
         self.assertEqual(await self.state(), {'status': 'none', 'run': None, 'cooldown_left': 0,
                                              'enabled': True, 'best_floor': 0, 'tickets': {},
-                                             'stop_pct': 50, 'auto_order': False})
+                                             'stop_pct': 50, 'auto_order': False,
+                                             'stardust': 0, 'x_items': {'x_attack': 0, 'x_defense': 0}})
         result = await self.start()
         self.assertEqual(result['status'], 'started')
         run = result['run']
@@ -118,6 +119,172 @@ class ArenaTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(enemy['battle_hp'], enemy['snapshot']['combatant']['hp'])
         self.assertFalse(enemy['special'])
         self.assertEqual((await self.state())['run'], run)
+
+    async def x_press(self):
+        self.session['_original_revision'] = self.session['revision']
+        self.session['revision'] += 1
+        await self.conn.execute('UPDATE sessions SET revision=? WHERE session_id=?',
+                                (self.session['revision'], self.session['session_id']))
+
+    async def buy_x(self, item='x_attack', *, press=True, session=None):
+        if press:
+            await self.x_press()
+        return await self.writer.run(lambda conn: self.service().buy_x(conn, session or self.session, item))
+
+    async def use_x(self, run, item='x_attack', now=1200):
+        await self.x_press()
+        return await self.writer.run(lambda conn: self.service().use_x(
+            conn, self.session, run['run_id'], run['revision'], item, now))
+
+    async def test_state_reports_stardust_and_held_x_items(self):
+        self.assertEqual((await self.state())['x_items'], {'x_attack': 0, 'x_defense': 0})
+        await self.conn.execute('UPDATE profiles SET stardust=1234 WHERE profile_id=?', (self.pid,))
+        await self.inventory('x_defense', 2)
+        await self.inventory('razz_berry', 9)
+        current = await self.state()
+        self.assertEqual(current['stardust'], 1234)
+        self.assertEqual(current['x_items'], {'x_attack': 0, 'x_defense': 2})
+
+    async def test_buy_x_moves_stardust_to_bag_with_buy_ledger_lines(self):
+        await self.conn.execute('UPDATE profiles SET stardust=1000 WHERE profile_id=?', (self.pid,))
+        for item in RULES['x_items']['items']:
+            result = await self.buy_x(item)
+            price = RULES['x_items']['items'][item]['stardust']
+            self.assertEqual(result, {'status': 'bought', 'item': item, 'stardust': price})
+            self.assertEqual(await self.scalar('SELECT quantity FROM inventory WHERE item_id=?', (item,)), 1)
+            self.assertEqual(await self.rows('SELECT resource,resource_id,delta,reason FROM resource_ledger '
+                                             'WHERE receipt_key=? ORDER BY line_key',
+                                             (f"buy:s:{self.session['revision']}",)), [
+                dict(resource='stardust', resource_id=None, delta=-price, reason='buy'),
+                dict(resource='item', resource_id=item, delta=1, reason='buy')])
+        self.assertEqual((await self.state())['stardust'], 400)
+
+    async def test_buy_x_refuses_insufficient_then_bag_full(self):
+        await self.inventory('poke_ball', limits()['bag_units'])
+        await self.x_press()
+        before = await self.snapshot()
+        self.assertEqual(await self.buy_x(press=False), {'status': 'insufficient'})
+        self.assertEqual(await self.snapshot(), before)
+        await self.conn.execute('UPDATE profiles SET stardust=1000 WHERE profile_id=?', (self.pid,))
+        before = await self.snapshot()
+        self.assertEqual(await self.buy_x(press=False), {'status': 'bag_full'})
+        self.assertEqual(await self.snapshot(), before)
+
+    async def test_buy_x_needs_no_run_ignores_off_cooldown_pause(self):
+        await self.conn.execute('UPDATE profiles SET stardust=2000 WHERE profile_id=?', (self.pid,))
+        self.assertEqual((await self.buy_x())['status'], 'bought')
+        run = (await self.start())['run']
+        await self.conn.execute('UPDATE guilds SET arena_enabled=0')
+        await self.conn.execute("INSERT INTO restrictions(guild_id,user_id,paused) VALUES ('g','u',1)")
+        self.assertEqual((await self.buy_x())['status'], 'bought')
+        self.assertEqual((await self.state())['run'], run)
+        await self.conn.execute("UPDATE arena_runs SET ended_at=1100,end_reason='loss'")
+        self.assertGreater((await self.state())['cooldown_left'], 0)
+        self.assertEqual((await self.buy_x())['status'], 'bought')
+        self.assertEqual((await self.state())['run']['revision'], run['revision'])
+
+    async def test_same_buy_press_buys_once(self):
+        await self.conn.execute('UPDATE profiles SET stardust=300 WHERE profile_id=?', (self.pid,))
+        result = await self.buy_x()
+        before = await self.snapshot()
+        self.assertEqual(await self.buy_x(press=False), result)
+        self.assertEqual(await self.snapshot(), before)
+        self.assertEqual((await self.state())['x_items']['x_attack'], 1)
+        self.assertEqual(await self.rows("SELECT key FROM action_receipts WHERE action='buy'"),
+                         [{'key': f"buy:s:{self.session['revision']}"}])
+
+    async def test_use_x_sets_counter_spends_item_bumps_revision(self):
+        run = (await self.start())['run']
+        await self.inventory('x_attack', 2)
+        await self.conn.execute("INSERT INTO restrictions(guild_id,user_id,paused) VALUES ('g','u',1)")
+        result = await self.use_x(run)
+        expected = {**run, 'x_attack_left': RULES['x_items']['fights'], 'revision': run['revision'] + 1}
+        self.assertEqual(result, {'status': 'used', 'run': expected})
+        self.assertEqual((await self.state())['run'], expected)
+        self.assertEqual((await self.state())['x_items']['x_attack'], 1)
+        before = await self.snapshot()
+        self.assertEqual((await self.use_x(run))['status'], 'stale')
+        before['sessions'][0]['revision'] = self.session['revision']
+        self.assertEqual(await self.snapshot(), before)
+
+    async def test_use_x_active_kind_refused_other_kind_allowed(self):
+        run = (await self.start())['run']
+        await self.inventory('x_attack', 1)
+        await self.inventory('x_defense', 1)
+        run = (await self.use_x(run))['run']
+        await self.x_press()
+        before = await self.snapshot()
+        result = await self.writer.run(lambda conn: self.service().use_x(
+            conn, self.session, run['run_id'], run['revision'], 'x_attack', 1200))
+        self.assertEqual(result, {'status': 'active', 'left': RULES['x_items']['fights']})
+        self.assertEqual(await self.snapshot(), before)
+        other = (await self.use_x(run, 'x_defense'))['run']
+        self.assertEqual((other['x_attack_left'], other['x_defense_left']), (3, 3))
+        self.assertEqual(other['revision'], run['revision'] + 1)
+
+    async def test_use_x_missing_stale_invalid_write_nothing(self):
+        await self.x_press()
+        before = await self.snapshot()
+        self.assertEqual(await self.writer.run(lambda conn: self.service().use_x(
+            conn, self.session, 'absent', 0, 'unknown', 1200)), {'status': 'stale', 'run': None})
+        self.assertEqual(await self.snapshot(), before)
+        run = (await self.start())['run']
+        for run_id, revision, item, expected in (
+                (run['run_id'], 0, 'x_attack', {'status': 'missing'}),
+                (run['run_id'], 0, 'unknown', {'status': 'invalid'}),
+                ('other', 0, 'unknown', {'status': 'stale', 'run': run}),
+                (run['run_id'], 99, 'x_attack', {'status': 'stale', 'run': run})):
+            await self.x_press()
+            before = await self.snapshot()
+            self.assertEqual(await self.writer.run(lambda conn: self.service().use_x(
+                conn, self.session, run_id, revision, item, 1200)), expected)
+            self.assertEqual(await self.snapshot(), before)
+        before = await self.snapshot()
+        self.assertEqual(await self.buy_x('unknown', press=False), {'status': 'invalid'})
+        self.assertEqual(await self.snapshot(), before)
+        self.assertEqual(await self.buy_x(press=False, session={**self.session, 'profile_id': self.other}),
+                         {'status': 'stale'})
+        self.assertEqual(await self.snapshot(), before)
+
+    async def test_new_run_starts_both_counters_at_zero(self):
+        run = (await self.start())['run']
+        self.assertEqual((run['x_attack_left'], run['x_defense_left']), (0, 0))
+        await self.inventory('x_attack', 1)
+        await self.use_x(run)
+        await self.conn.execute("UPDATE arena_runs SET ended_at=1300,end_reason='loss'")
+        await self.x_press()
+        run = (await self.start(now=65800))['run']
+        self.assertEqual((run['x_attack_left'], run['x_defense_left']), (0, 0))
+
+    async def test_x_receipts_and_ledger_carry_profile_id(self):
+        await self.conn.execute('UPDATE profiles SET stardust=300 WHERE profile_id=?', (self.pid,))
+        await self.buy_x()
+        buy_key = f"buy:s:{self.session['revision']}"
+        run = (await self.start())['run']
+        await self.use_x(run)
+        use_key = f"arena_use:{run['run_id']}:0"
+        self.assertEqual(await self.rows("SELECT key,action,profile_id FROM action_receipts "
+                                         "WHERE action IN ('buy','arena_use') ORDER BY action"), [
+            dict(key=use_key, action='arena_use', profile_id=self.pid),
+            dict(key=buy_key, action='buy', profile_id=self.pid)])
+        self.assertEqual(await self.rows('SELECT receipt_key,profile_id,resource,resource_id,delta,reason '
+                                         'FROM resource_ledger WHERE receipt_key=?', (use_key,)), [
+            dict(receipt_key=use_key, profile_id=self.pid, resource='item', resource_id='x_attack',
+                 delta=-1, reason='arena_use')])
+        self.assertEqual(await self.scalar('SELECT count(*) FROM resource_ledger WHERE profile_id=?',
+                                          (self.pid,)), 3)
+
+    async def test_excluded_member_cannot_buy_or_use_x(self):
+        run = (await self.start())['run']
+        await self.inventory('x_attack', 1)
+        await self.conn.execute('UPDATE profiles SET stardust=1000 WHERE profile_id=?', (self.pid,))
+        await self.conn.execute("INSERT INTO restrictions(guild_id,user_id,excluded) VALUES ('g','u',1)")
+        await self.x_press()
+        before = await self.snapshot()
+        self.assertEqual(await self.buy_x(press=False), {'status': 'excluded'})
+        self.assertEqual(await self.writer.run(lambda conn: self.service().use_x(
+            conn, self.session, run['run_id'], run['revision'], 'x_attack', 1200)), {'status': 'excluded'})
+        self.assertEqual(await self.snapshot(), before)
 
     async def test_every_identity_snapshots_as_itself(self):
         for identity in CONTENT['identities']:
