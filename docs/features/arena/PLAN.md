@@ -135,7 +135,7 @@ Every build row is `seam` (PIPELINE.md:13): at most 2 production files and 300 p
 | 9 | [ARENA-8](tickets/ARENA-8.md) service: start, expiry, order, heal | build | seam | L | ✅ done · 5e645db · GO review r1 |
 | 10 | [ARENA-9](tickets/ARENA-9.md) service: fight, Heal all and fight, Candy, ticket credit | build | seam | L | ✅ done · b1d47f4 · GO review r2 |
 | 11 | [ARENA-10](tickets/ARENA-10.md) service: redemption and the gym roll helper | build | seam | M | ✅ done · 992b663 · GO review r1 |
-| 12 | [ARENA-11](tickets/ARENA-11.md) screens: Arena home, team picker, start | build | seam | M | pending |
+| 12 | [ARENA-11](tickets/ARENA-11.md) screens: Arena home, team picker, start | build | seam | M | ✅ done · 6fbe971 · GO review r2 |
 | 13 | [ARENA-12](tickets/ARENA-12.md) screens: break actions and results | build | seam | M | pending |
 | 14 | [ARENA-13](tickets/ARENA-13.md) screens: tickets, redemption, inbox labels | build | seam | M | pending |
 | 15 | [ARENA-14](tickets/ARENA-14.md) admin on/off command | build | seam | S | pending |
