@@ -54,7 +54,7 @@ class ArenaTests(unittest.IsolatedAsyncioTestCase):
     async def snapshot(self):
         return {table: await self.rows(f'SELECT * FROM {table} ORDER BY 1') for table in
                 ('guilds', 'profiles', 'sessions', 'restrictions', 'pokemon', 'inventory',
-                 'arena_runs', 'arena_tickets', 'action_receipts', 'resource_ledger')}
+                 'arena_runs', 'arena_tickets', 'arena_month_scores', 'action_receipts', 'resource_ledger')}
 
     async def state(self, now=1100, session=None):
         return await self.writer.run(lambda conn: self.service().state(conn, session or self.session, now))
@@ -643,6 +643,105 @@ class ArenaTests(unittest.IsolatedAsyncioTestCase):
                           'floor', 'slot', 'enemy', 'party_hp', 'revived', 'finisher', 'candy', 'tickets'})
         self.assertEqual((receipt['key'], receipt['profile_id']), (f"arena_fight:{run['run_id']}:1:0", self.pid))
         self.assertEqual(await self.rows("SELECT * FROM resource_ledger WHERE resource='item'"), [])
+
+    async def test_boss_win_writes_month_score_other_fights_do_not(self):
+        run = (await self.start())['run']
+        self.assertEqual(await self.rows('SELECT * FROM arena_month_scores'), [])
+        with patch.object(battle_engine, 'simulate', return_value=self.outcome()):
+            for _ in range(2):
+                await self.fight(run)
+                run = (await self.state())['run']
+                self.assertEqual(await self.rows('SELECT * FROM arena_month_scores'), [])
+            result = await self.fight(run)
+        self.assertEqual(await self.rows('SELECT * FROM arena_month_scores'), [
+            dict(guild_id='g', month='1970-01', profile_id=self.pid, floor=1, reached_at=1300)])
+        self.assertEqual(result['floor'], 1)
+        for outcome in ('loss', 'draw'):
+            await self.reset_run_fixture()
+            await self.conn.execute('DELETE FROM arena_month_scores')
+            run = await self.at_fight(slot=2)
+            with patch.object(battle_engine, 'simulate', return_value=self.outcome(outcome, hp=(0, 0, 0), finisher=None)):
+                self.assertEqual((await self.fight(run))['status'], 'defeated')
+            self.assertEqual(await self.rows('SELECT * FROM arena_month_scores'), [])
+
+    async def test_higher_floor_replaces_score_else_floor_and_time_stay(self):
+        with patch.object(battle_engine, 'simulate', return_value=self.outcome()):
+            for floor, now, expected_floor, expected_time in ((5, 1300, 5, 1300), (5, 1400, 5, 1300),
+                                                            (4, 1500, 5, 1300), (6, 1600, 6, 1600)):
+                with self.subTest(floor=floor, now=now):
+                    await self.reset_run_fixture()
+                    await self.fight(await self.at_fight(floor=floor, slot=2), now=now)
+                    self.assertEqual(await self.rows('SELECT * FROM arena_month_scores'), [
+                        dict(guild_id='g', month='1970-01', profile_id=self.pid,
+                             floor=expected_floor, reached_at=expected_time)])
+
+    async def test_run_crossing_utc_month_scores_in_new_month(self):
+        boundary = 1735689600  # 2025-01-01 00:00 UTC.
+        run = await self.at_fight(slot=2)
+        await self.conn.execute('UPDATE arena_runs SET started_at=?', (boundary - 100,))
+        with patch.object(battle_engine, 'simulate', return_value=self.outcome()):
+            for now in (boundary - 1, boundary, boundary + 1, boundary + 2):
+                await self.fight(run, now=now)
+                run = (await self.state(now=now))['run']
+        self.assertEqual(await self.rows('SELECT month,floor,reached_at FROM arena_month_scores ORDER BY month'),
+                         [dict(month='2024-12', floor=1, reached_at=boundary - 1),
+                          dict(month='2025-01', floor=2, reached_at=boundary + 2)])
+        self.assertEqual(self.service().month_key(boundary - 1), '2024-12')
+        self.assertEqual(self.service().month_key(boundary), '2025-01')
+
+    async def test_skip_writes_no_score_first_score_is_floor_41(self):
+        run = (await self.skip_start())['run']
+        self.assertEqual(await self.rows('SELECT * FROM arena_month_scores'), [])
+        with patch.object(battle_engine, 'simulate', return_value=self.outcome()):
+            for slot in range(3):
+                self.assertEqual(run['slot'], slot)
+                await self.fight(run)
+                run = (await self.state())['run']
+                if slot < 2:
+                    self.assertEqual(await self.rows('SELECT * FROM arena_month_scores'), [])
+        self.assertEqual(await self.scalar('SELECT floor FROM arena_month_scores'), 41)
+
+    async def test_chain_step_and_heal_all_boss_wins_score(self):
+        for action, floor in (('chain', 1), ('heal', 2)):
+            with self.subTest(action=action):
+                await self.reset_run_fixture()
+                run = await self.at_fight(floor=floor, slot=2)
+                if action == 'heal':
+                    run = await self.hurt(run)
+                    await self.inventory('razz_berry', 3)
+                with patch.object(battle_engine, 'simulate', return_value=self.outcome()):
+                    result = await self.chain_step(run) if action == 'chain' else await self.fight(run, berry='razz_berry')
+                self.assertEqual(result['status'], 'won')
+                self.assertEqual(await self.scalar('SELECT floor FROM arena_month_scores'), floor)
+        self.assertEqual(await self.scalar("SELECT quantity FROM inventory WHERE item_id='razz_berry'"), 0)
+
+    async def test_boss_score_rolls_back_when_ledger_write_fails(self):
+        run = await self.at_fight(slot=2)
+        await self.conn.execute("CREATE TRIGGER fail_score BEFORE INSERT ON resource_ledger "
+                                "BEGIN SELECT RAISE(ABORT,'boss ledger failure'); END")
+        before = await self.snapshot()
+        with patch.object(battle_engine, 'simulate', return_value=self.outcome()):
+            with self.assertRaisesRegex(Exception, 'boss ledger failure'):
+                await self.fight(run)
+        self.assertEqual(await self.snapshot(), before)
+
+    async def test_replayed_boss_fight_scores_once(self):
+        run = await self.at_fight(slot=2)
+        with patch.object(battle_engine, 'simulate', return_value=self.outcome()) as simulate:
+            results = await asyncio.gather(self.fight(run), self.fight(run))
+        self.assertEqual([result['status'] for result in results], ['won', 'stale'])
+        self.assertEqual(simulate.call_count, 1)
+        scores = await self.rows('SELECT * FROM arena_month_scores')
+        self.assertEqual(len(scores), 1)
+        self.assertEqual(await self.scalar("SELECT count(*) FROM action_receipts WHERE action='arena_fight'"), 1)
+        # Recreate the pre-fight screen to exercise receipt replay as well as the stale guard.
+        await self.conn.execute('UPDATE arena_runs SET floor=1,slot=2,revision=? WHERE run_id=?',
+                                (run['revision'], run['run_id']))
+        before = await self.snapshot()
+        with patch.object(battle_engine, 'simulate', side_effect=AssertionError('replay fought')):
+            self.assertEqual(await self.fight(run, now=1400), results[0])
+        self.assertEqual(await self.snapshot(), before)
+        self.assertEqual(await self.rows('SELECT * FROM arena_month_scores'), scores)
 
     async def test_floor_1_boss_win_advances_without_ticket(self):
         run = await self.at_fight(slot=2)

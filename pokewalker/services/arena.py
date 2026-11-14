@@ -3,6 +3,7 @@
 import json
 import math
 from dataclasses import replace
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from content.balance import limits, load_table
@@ -13,6 +14,10 @@ from pokewalker.services import gyms, profiles, stepping, storage
 
 
 STOP_PCTS = range(10, 100, 10)
+
+
+def month_key(now):
+    return datetime.fromtimestamp(now, timezone.utc).strftime('%Y-%m')
 
 
 async def _latest_run(conn, profile_id):
@@ -242,6 +247,11 @@ async def fight(conn, session, run_id, revision, now, rng, content, multipliers,
                 next_floor, next_slot = floor + 1, 0
                 await conn.execute('UPDATE profiles SET arena_best_floor=MAX(arena_best_floor,?) WHERE profile_id=?',
                                    (floor, pid))
+                await conn.execute('INSERT INTO arena_month_scores(guild_id,month,profile_id,floor,reached_at) '
+                                   'VALUES (?,?,?,?,?) ON CONFLICT(profile_id,month) DO UPDATE '
+                                   'SET floor=excluded.floor,reached_at=excluded.reached_at '
+                                   'WHERE excluded.floor > arena_month_scores.floor',
+                                   (session['guild_id'], month_key(now), pid, floor, now))
                 tier = domain.ticket_for(floor, rules)
                 if tier is not None:
                     first_clear = domain.first_clear_bonus(floor, current['best_floor'], rules)

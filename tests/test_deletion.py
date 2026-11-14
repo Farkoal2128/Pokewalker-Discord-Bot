@@ -38,6 +38,7 @@ async def populate_arena(conn, writer, profile_id, guild_id, user_id):
     started = await writer.run(lambda conn: arena.start(conn, session, team, 10, rng, content, multipliers))
     assert started['status'] == 'started', started
     run = started['run']
+    await conn.execute('UPDATE arena_runs SET slot=2 WHERE run_id=?', (run['run_id'],))
     battle = test_arena.battle_engine.Result('win', 'defender_fainted', 9, (0, 1, 2), (),
                                            party_hp=(1, 2, 3), finisher=0)
     with patch.object(test_arena.battle_engine, 'simulate', return_value=battle):
@@ -52,6 +53,8 @@ async def populate_arena(conn, writer, profile_id, guild_id, user_id):
     redeemed = await writer.run(lambda conn: arena.redeem(
         conn, session, 'silver', quote['free'], quote['add'], 40, rng, content))
     assert redeemed['status'] == 'redeemed', redeemed
+    await conn.execute("INSERT INTO arena_months VALUES (?,'1970-01',50)", (guild_id,))
+    await conn.execute("INSERT INTO arena_month_places VALUES (?,'1970-01',1,?,1)", (guild_id, profile_id))
     return session
 
 
@@ -299,10 +302,11 @@ class DeletionTests(unittest.IsolatedAsyncioTestCase):
         for table in ("step_events", "encounters", "catch_attempts", "pokemon", "inventory",
                       "candy", "pokedex", "reactions", "sessions", "action_receipts",
                       "resource_ledger", "milestone_awards", "inbox_items", "finds", "active_effects",
-                      "arena_runs", "arena_tickets"):
+                      "arena_runs", "arena_tickets", "arena_month_scores", "arena_month_places"):
             with self.subTest(table=table):
                 self.assertEqual(await self.scalar(f"SELECT count(*) FROM {table}"), 0)
         self.assertEqual(await self.scalar("SELECT profile_id FROM profiles"), other)
+        self.assertEqual(await self.scalar("SELECT COUNT(*) FROM arena_months"), 1)
         self.assertEqual(await self.scalar("SELECT paused+excluded+share_banned FROM restrictions"), 3)
         self.assertEqual(await self.scalar("SELECT count(*) FROM mod_audit"), 1)
         self.assertEqual(await self.scalar("SELECT count(*) FROM opt_outs"), 1)
@@ -311,9 +315,13 @@ class DeletionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.scalar("SELECT paused+excluded+share_banned FROM restrictions"), 3)
 
     async def assert_arena_traces_removed(self, conn):
-        for table in ('arena_runs', 'arena_tickets', 'action_receipts', 'resource_ledger', 'inbox_items'):
+        for table in ('arena_runs', 'arena_tickets', 'arena_month_scores', 'arena_month_places',
+                      'action_receipts', 'resource_ledger', 'inbox_items'):
             rows = await conn.execute_fetchall(f'SELECT * FROM {table} WHERE profile_id=?', (self.profile_id,))
             self.assertEqual(rows, [], table)
+
+        self.assertEqual([dict(row) for row in await conn.execute_fetchall('SELECT * FROM arena_months')],
+                         [dict(guild_id='1', month='1970-01', settled_at=50)])
 
     async def test_delete_removes_arena_runs_tickets_receipts_ledger_and_inbox_rows(self):
         await self.populate()

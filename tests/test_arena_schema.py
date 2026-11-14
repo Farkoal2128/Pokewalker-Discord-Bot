@@ -66,7 +66,7 @@ class ArenaSchemaTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(after['profiles'][0].pop('arena_stop_pct'), 50)
                 self.assertEqual(after['profiles'][0].pop('arena_auto_order'), 0)
                 self.assertEqual(after, before)
-                self.assertEqual(await self.scalar('PRAGMA user_version', conn=upgraded), 26)
+                self.assertEqual(await self.scalar('PRAGMA user_version', conn=upgraded), 27)
                 self.assertEqual(await upgraded.execute_fetchall('PRAGMA foreign_key_check'), [])
                 for table in ('arena_runs', 'arena_tickets'):
                     self.assertEqual(await self.scalar(f'SELECT count(*) FROM {table}', conn=upgraded), 0)
@@ -111,13 +111,100 @@ class ArenaSchemaTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(after['profiles'][0].pop('arena_stop_pct'), 50)
                 self.assertEqual(after['profiles'][0].pop('arena_auto_order'), 0)
                 self.assertEqual(after, before)
-                self.assertEqual(await self.scalar('PRAGMA user_version', conn=upgraded), 26)
+                self.assertEqual(await self.scalar('PRAGMA user_version', conn=upgraded), 27)
                 self.assertEqual(await upgraded.execute_fetchall('PRAGMA foreign_key_check'), [])
             finally:
                 await upgraded.close()
         with patch.object(db, 'MIGRATIONS', prior):
             with self.assertRaisesRegex(RuntimeError, 'schema is newer'):
                 await db.open_db(path)
+
+    async def test_migration_0027_adds_month_tables_preserving_rows(self):
+        prior = Path(self.temp.name) / 'schema26'
+        prior.mkdir()
+        for migration in db.MIGRATIONS.glob('[0-9][0-9][0-9][0-9]_*.sql'):
+            if int(migration.name[:4]) <= 26:
+                shutil.copyfile(migration, prior / migration.name)
+        path = Path(self.temp.name) / 'schema26.sqlite3'
+        with patch.object(db, 'MIGRATIONS', prior):
+            old = await db.open_db(path)
+        try:
+            self.assertEqual(await self.scalar('PRAGMA user_version', conn=old), 26)
+            await old.execute("INSERT INTO guilds(guild_id) VALUES ('old-g')")
+            await old.execute("INSERT INTO profiles(profile_id,guild_id,user_id,created_at,arena_best_floor,"
+                              "arena_stop_pct,arena_auto_order) VALUES ('old','old-g','u',10,60,80,1)")
+            await old.execute("INSERT INTO arena_runs(run_id,profile_id,started_at,floor,slot,team,enemy) "
+                              "VALUES ('old-run','old',100,7,2,?,?)", (json.dumps(self.team), '{}'))
+            await old.execute("INSERT INTO arena_tickets VALUES ('old','silver',2)")
+            before = {table: [dict(row) for row in await old.execute_fetchall(f'SELECT * FROM {table}')]
+                      for table in ('guilds', 'profiles', 'arena_runs', 'arena_tickets')}
+        finally:
+            await old.close()
+        for _ in range(2):
+            upgraded = await db.open_db(path)
+            try:
+                self.assertEqual(await self.scalar('PRAGMA user_version', conn=upgraded), 27)
+                self.assertEqual({table: [dict(row) for row in await upgraded.execute_fetchall(
+                    f'SELECT * FROM {table}')] for table in before}, before)
+                for table in ('arena_month_scores', 'arena_months', 'arena_month_places'):
+                    self.assertEqual(await self.scalar(f'SELECT count(*) FROM {table}', conn=upgraded), 0)
+                self.assertEqual(await upgraded.execute_fetchall('PRAGMA foreign_key_check'), [])
+                self.assertEqual([row['name'] for row in await upgraded.execute_fetchall(
+                    'PRAGMA index_info(arena_month_scores_guild_month)')], ['guild_id', 'month'])
+            finally:
+                await upgraded.close()
+        with patch.object(db, 'MIGRATIONS', prior):
+            with self.assertRaisesRegex(RuntimeError, 'schema is newer'):
+                await db.open_db(path)
+
+    async def test_month_tables_reject_bad_rows(self):
+        await self.conn.execute("INSERT INTO guilds(guild_id) VALUES ('other-g')")
+        valid = {
+            'arena_month_scores': dict(guild_id='g', month='2026-11', profile_id=self.pid, floor=1, reached_at=1.5),
+            'arena_months': dict(guild_id='g', month='2026-11', settled_at=2.5),
+            'arena_month_places': dict(guild_id='g', month='2026-11', place=1, profile_id=self.pid, floor=1),
+        }
+        for table, row in valid.items():
+            invalid = [dict(month=month) for month in ('bad', '2026-1', '2026-00', '2026-13', '2026-11x', None)]
+            invalid += [dict(guild_id='missing'), dict(guild_id=None)]
+            for column in ('floor', 'place'):
+                if column in row:
+                    invalid += [{column: value} for value in (0, -1, 1.5, 'bad', None)]
+            if 'profile_id' in row:
+                invalid += [dict(profile_id='missing'), dict(profile_id=None), dict(guild_id='other-g')]
+            if 'settled_at' in row:
+                invalid += [dict(settled_at=None)]
+            if 'reached_at' in row:
+                invalid += [dict(reached_at=None)]
+            for changes in invalid:
+                bad = {**row, **changes}
+                with self.subTest(table=table, changes=changes), self.assertRaises(sqlite3.IntegrityError):
+                    await self.conn.execute(f"INSERT INTO {table}({','.join(bad)}) "
+                                            f"VALUES ({','.join('?' for _ in bad)})", tuple(bad.values()))
+            await self.conn.execute(f"INSERT INTO {table}({','.join(row)}) "
+                                    f"VALUES ({','.join('?' for _ in row)})", tuple(row.values()))
+            with self.subTest(duplicate=table), self.assertRaises(sqlite3.IntegrityError):
+                await self.conn.execute(f"INSERT INTO {table}({','.join(row)}) "
+                                        f"VALUES ({','.join('?' for _ in row)})", tuple(row.values()))
+        with self.assertRaises(sqlite3.IntegrityError):
+            await self.conn.execute("INSERT INTO arena_month_places VALUES ('g','2026-11',2,?,3)", (self.pid,))
+        with self.assertRaises(sqlite3.IntegrityError):
+            await self.conn.execute("INSERT INTO arena_month_places VALUES ('g','2026-11',1,?,3)", (self.other,))
+
+    async def test_profile_delete_cascades_scores_places_guild_delete_months(self):
+        for place, pid in enumerate((self.pid, self.other), 1):
+            await self.conn.execute("INSERT INTO arena_month_scores VALUES ('g','2026-11',?,10,100)", (pid,))
+            await self.conn.execute("INSERT INTO arena_month_places VALUES ('g','2026-11',?,?,10)", (place, pid))
+        await self.conn.execute("INSERT INTO arena_months VALUES ('g','2026-11',200)")
+        await self.conn.execute('DELETE FROM profiles WHERE profile_id=?', (self.pid,))
+        for table in ('arena_month_scores', 'arena_month_places'):
+            self.assertEqual([row[0] for row in await self.conn.execute_fetchall(
+                f'SELECT profile_id FROM {table}')], [self.other])
+        self.assertEqual(await self.scalar('SELECT count(*) FROM arena_months'), 1)
+        await self.conn.execute("DELETE FROM guilds WHERE guild_id='g'")
+        for table in ('arena_month_scores', 'arena_month_places', 'arena_months'):
+            self.assertEqual(await self.scalar(f'SELECT count(*) FROM {table}'), 0)
+        self.assertEqual(await self.conn.execute_fetchall('PRAGMA foreign_key_check'), [])
 
     async def test_settings_checks_reject_bad_values(self):
         for column, values in (('arena_stop_pct', (55, 0, 100, None)),
