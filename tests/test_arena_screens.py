@@ -115,7 +115,7 @@ class ArenaScreenTests(unittest.IsolatedAsyncioTestCase):
                                     (f'new{index:02}', self.pid, index + 1))
         await self.conn.execute("UPDATE pokemon SET favorite=1 WHERE pokemon_uid='m0'")
         first = await self.click('arena_team')
-        self.assertEqual(self.selection(), {'phase': 'arena_team', 'team': [], 'offset': 0, 'favorites_first': False})
+        self.assertEqual(self.selection(), {'phase': 'arena_team', 'team': [], 'offset': 0, 'favorites_first': False, 'skip': 0})
         self.assertEqual(self.button(first, 'arena_team_sort').label, 'Favorites first')
         select = next(item for item in first['view'].children if hasattr(item, 'options'))
         self.assertEqual(select.options[0].value, 'new10')
@@ -130,6 +130,165 @@ class ArenaScreenTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(select.options[0].value, 'm0')
         self.assertEqual(self.button(sorted_view, 'arena_team_sort').label, 'Newest first')
         self.assertEqual(self.selection()['offset'], 0)
+
+    async def test_skip_select_hidden_at_best_floor_below_2(self):
+        for best in (0, 1):
+            await self.conn.execute('UPDATE profiles SET arena_best_floor=? WHERE profile_id=?', (best, self.pid))
+            view = await self.click('arena_team')
+            actions = {item.custom_id.rsplit(':', 1)[-1] for item in view['view'].children}
+            self.assertFalse({'arena_skip', 'arena_skip_more'} & actions)
+            self.assertEqual(self.selection()['skip'], 0)
+
+    async def test_skip_select_lists_0_to_s_and_second_select_from_25(self):
+        for best, maximum in ((2, 1), (48, 24), (50, 25), (79, 39), (80, 40)):
+            with self.subTest(best=best):
+                await self.conn.execute('UPDATE profiles SET arena_best_floor=? WHERE profile_id=?', (best, self.pid))
+                view = await self.click('arena_team')
+                first = self.button(view, 'arena_skip')
+                self.assertEqual((first.row, [o.value for o in first.options]),
+                                 (3, [str(k) for k in range(min(maximum, 24) + 1)]))
+                self.assertEqual([o.label for o in first.options],
+                                 ['No skip'] + [f'Skip {k} floors: start at floor {k + 1}'
+                                                for k in range(1, min(maximum, 24) + 1)])
+                self.assertEqual([o.value for o in first.options if o.default], ['0'])
+                if maximum >= 25:
+                    second = self.button(view, 'arena_skip_more')
+                    self.assertEqual((second.row, [o.value for o in second.options]),
+                                     (4, [str(k) for k in range(25, maximum + 1)]))
+                    chosen = await self.click('arena_skip_more', [str(maximum)])
+                    self.assertEqual([o.value for o in self.button(chosen, 'arena_skip_more').options if o.default],
+                                     [str(maximum)])
+                    self.assertFalse(any(o.default for o in self.button(chosen, 'arena_skip').options))
+                else:
+                    self.assertFalse(any(item.custom_id.endswith(':arena_skip_more') for item in view['view'].children))
+
+    async def test_skip_choice_persists_across_paging_and_shows_paid_tickets(self):
+        await self.conn.execute('UPDATE profiles SET arena_best_floor=80 WHERE profile_id=?', (self.pid,))
+        await self.picked()
+        for index in range(11):
+            await self.conn.execute('INSERT INTO pokemon(pokemon_uid,profile_id,pokemon_id,level_x2,iv_attack,'
+                                    'iv_defense,iv_stamina,gender,shiny,origin,content_version,caught_at) '
+                                    "VALUES (?,?,1,20,10,10,10,'male',0,'catch','test',?)",
+                                    (f'new{index:02}', self.pid, index + 1))
+        await self.click('arena_team_next')
+        before = self.selection()
+        chosen = await self.click('arena_skip_more', ['40'])
+        self.assertEqual(self.selection(), {**before, 'skip': 40})
+        self.assertIn('Skipping 40 floors pays now: 2 Bronze, 4 Silver, 2 Gold.', chosen['embed'].description)
+        await self.click('arena_team_prev')
+        await self.click('arena_team_sort')
+        self.assertEqual(self.selection()['skip'], 40)
+        self.assertEqual(self.selection()['team'], before['team'])
+        self.assertTrue(self.selection()['favorites_first'])
+        self.assertIn('Skipping 1 floors pays now: nothing.', (await self.click('arena_skip', ['1']))['embed'].description)
+
+    async def test_skip_value_out_of_range_or_malformed_refused(self):
+        await self.conn.execute('UPDATE profiles SET arena_best_floor=30 WHERE profile_id=?', (self.pid,))
+        await self.click('arena_team')
+        for action in ('arena_skip', 'arena_skip_more'):
+            for values in ([], ['16'], ['-1'], ['1.0'], ['x'], ['1', '2'], [None], [1], [True], [{}]):
+                with self.subTest(action=action, values=values):
+                    before = await self.resource_snapshot()
+                    selected = self.session['selection']
+                    with self.assertRaises(_Refused):
+                        await self.click(action, values)
+                    self.assertEqual(self.session['selection'], selected)
+                    self.assertEqual(await self.resource_snapshot(), before)
+        self.session['selection'] = '{}'
+        for action in ('arena_skip', 'arena_skip_more'):
+            with self.assertRaises(_Refused):
+                await self.click(action, ['1'])
+
+    async def test_start_with_skip_opens_break_at_next_floor_with_ticket_notice(self):
+        await self.conn.execute('UPDATE profiles SET arena_best_floor=80 WHERE profile_id=?', (self.pid,))
+        await self.picked()
+        await self.click('arena_skip_more', ['40'])
+        old = self.session['selection']
+        started = await self.click('arena_start')
+        self.assertIn('Floor 41', started['embed'].description)
+        self.assertIn('Skipped 40 floors: +2 Bronze, +4 Silver, +2 Gold Tickets.', started['embed'].description)
+        self.assertEqual((await self.writer.run(lambda c: service.state(c, self.session, self.now)))['tickets'],
+                         {'bronze': 2, 'silver': 4, 'gold': 2})
+        self.session['selection'] = old
+        before = await self.resource_snapshot()
+        self.assertNotIn('Skipped', (await self.click('arena_start'))['embed'].description)
+        self.assertEqual(await self.resource_snapshot(), before)
+
+    async def test_break_layout_has_toggle_in_row_0_and_threshold_in_row_4(self):
+        view = await self.start_run()
+        row = [item.label for item in view['view'].children if item.row == 0]
+        self.assertEqual(row, ['Fight', 'Heal all & fight', 'Auto-order: off', 'Back out'])
+        threshold = self.button(view, 'arena_stop_pct')
+        self.assertEqual(threshold.row, 4)
+        self.assertEqual([o.label for o in threshold.options], [f'Stop below {pct}%' for pct in service.STOP_PCTS])
+        self.assertEqual([o.value for o in threshold.options], [str(pct) for pct in service.STOP_PCTS])
+        self.assertEqual([o.value for o in threshold.options if o.default], ['50'])
+
+    async def test_threshold_select_saves_and_marks_default(self):
+        await self.start_run()
+        for pct in (30, 90):
+            before = await self.run_state()
+            view = await self.click('arena_stop_pct', [str(pct)])
+            self.assertEqual([o.value for o in self.button(view, 'arena_stop_pct').options if o.default], [str(pct)])
+            self.assertEqual(await self.scalar('SELECT arena_stop_pct FROM profiles WHERE profile_id=?', (self.pid,)), pct)
+            self.assertEqual(self.selection()['run_revision'], before['revision'] + 1)
+        for values in ([], ['55'], ['0'], ['100'], ['30', '40'], ['30.0'], [30], [None], [{}]):
+            before = await self.resource_snapshot()
+            with self.assertRaises(_Refused):
+                await self.click('arena_stop_pct', values)
+            self.assertEqual(await self.resource_snapshot(), before)
+
+    async def test_auto_order_button_toggles_label_and_setting(self):
+        await self.start_run()
+        for on in (True, False):
+            before = await self.run_state()
+            view = await self.click('arena_auto_order')
+            self.assertEqual(self.button(view, 'arena_auto_order').label, 'Auto-order: ' + ('on' if on else 'off'))
+            self.assertEqual(await self.scalar('SELECT arena_auto_order FROM profiles WHERE profile_id=?', (self.pid,)), on)
+            self.assertEqual(self.selection()['run_revision'], before['revision'] + 1)
+
+    async def test_setting_from_stale_screen_redraws_without_saving(self):
+        await self.start_run()
+        old = self.session['selection']
+        run = await self.run_state()
+        await self.writer.run(lambda c: service.set_stop_pct(c, self.session, run['run_id'], run['revision'], 30, self.now))
+        for action, values in (('arena_stop_pct', ['90']), ('arena_auto_order', [])):
+            self.session['selection'] = old
+            before = await self.resource_snapshot()
+            view = await self.click(action, values)
+            self.assertIn(self.screens().STALE, view['embed'].description)
+            self.assertEqual(await self.resource_snapshot(), before)
+            self.assertEqual(self.selection()['run_revision'], 1)
+            self.assertEqual(self.button(view, 'arena_auto_order').label, 'Auto-order: off')
+            self.assertEqual([o.value for o in self.button(view, 'arena_stop_pct').options if o.default], ['30'])
+
+    async def test_other_open_screen_must_redraw_after_setting_change(self):
+        await self.start_run()
+        first = self.session
+        await self.conn.execute('INSERT INTO sessions(session_id,guild_id,user_id,profile_id,revision,expires_at) '
+                                "VALUES ('abce','g','u',?,0,1e12)", (self.pid,))
+        self.session = {**first, 'session_id': 'abce', 'selection': '{}'}
+        await self.click('arena_resume')
+        await self.click('arena_auto_order')
+        self.session = first
+        before = await self.resource_snapshot()
+        with patch.object(test_arena.battle_engine, 'simulate', side_effect=AssertionError('stale fight')):
+            view = await self.click('arena_fight')
+        self.assertIn(self.screens().STALE, view['embed'].description)
+        self.assertEqual(await self.resource_snapshot(), before)
+        self.assertEqual(self.button(view, 'arena_auto_order').label, 'Auto-order: on')
+
+    async def test_settings_shown_again_on_next_run(self):
+        await self.start_run()
+        await self.click('arena_stop_pct', ['20'])
+        await self.click('arena_auto_order')
+        old_id = self.selection()['run_id']
+        self.now += test_arena.RULES['cooldown_seconds']
+        self.session['_original_revision'] += 1
+        view = await self.start_run()
+        self.assertNotEqual(self.selection()['run_id'], old_id)
+        self.assertEqual(self.button(view, 'arena_auto_order').label, 'Auto-order: on')
+        self.assertEqual([o.value for o in self.button(view, 'arena_stop_pct').options if o.default], ['20'])
 
     async def test_picker_marks_gym_defender_unavailable_allows_companion(self):
         gym = await self.writer.run(lambda conn: gyms.create(conn, 'g', 'Park', 0))
@@ -223,6 +382,7 @@ class ArenaScreenTests(unittest.IsolatedAsyncioTestCase):
         mapping = self.screens().handlers(self.walker)
         expected = {'arena', 'arena_resume', 'arena_team', 'arena_team_prev', 'arena_team_next',
                     'arena_team_sort', 'arena_team_pick', 'arena_team_clear', 'arena_start',
+                    'arena_skip', 'arena_skip_more', 'arena_auto_order', 'arena_stop_pct',
                     'arena_fight', 'arena_heal_fight', 'arena_heal_one', 'arena_heal_two',
                     'arena_heal_three', 'arena_berry', 'arena_order', 'arena_tickets',
                     'arena_redeem_bronze', 'arena_redeem_silver', 'arena_redeem_gold',
@@ -296,10 +456,10 @@ class ArenaScreenTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('arena_fight', [item.custom_id.rsplit(':', 1)[-1] for item in rendered['view'].children])
         rows = {action: self.button(rendered, action).row for action in
                 ('arena_fight', 'arena_heal_fight', 'arena', 'arena_heal_one', 'arena_heal_two',
-                 'arena_heal_three', 'arena_berry', 'arena_order')}
+                 'arena_heal_three', 'arena_berry', 'arena_order', 'arena_auto_order', 'arena_stop_pct')}
         self.assertEqual(rows, {'arena_fight': 0, 'arena_heal_fight': 0, 'arena': 0,
                                 'arena_heal_one': 1, 'arena_heal_two': 1, 'arena_heal_three': 1,
-                                'arena_berry': 2, 'arena_order': 3})
+                                'arena_berry': 2, 'arena_order': 3, 'arena_auto_order': 0, 'arena_stop_pct': 4})
         for word in ('one', 'two', 'three'):
             self.assertTrue(self.button(rendered, 'arena_heal_' + word).disabled)
 
@@ -503,6 +663,7 @@ class ArenaScreenTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotRegex(rendered['embed'].description, r'(?i)\blevel\b|\bivs?\b|iv_attack|level_x2')
 
     async def test_views_within_5_rows_unique_custom_ids(self):
+        await self.conn.execute('UPDATE profiles SET arena_best_floor=80 WHERE profile_id=?', (self.pid,))
         views = [await self.click('arena'), await self.click('arena_team'), await self.start_run()]
         self.now += test_arena.RULES['run_seconds']
         views.append(await self.click('arena_resume'))
@@ -510,7 +671,10 @@ class ArenaScreenTests(unittest.IsolatedAsyncioTestCase):
             ids = [item.custom_id for item in rendered['view'].children]
             self.assertEqual(len(ids), len(set(ids)))
             if rendered['embed'].title == 'Arena break':
-                self.assertEqual({item.row for item in rendered['view'].children}, {0, 1, 2, 3})
+                self.assertEqual({item.row for item in rendered['view'].children}, {0, 1, 2, 3, 4})
+            if rendered['embed'].title == 'Arena team':
+                self.assertEqual({item.row if item.row is not None else item._rendered_row
+                                  for item in rendered['view'].children}, {0, 1, 2, 3, 4})
 
     async def test_tickets_screen_lists_five_tiers_with_counts_and_contents(self):
         await self.ticket('silver', 2)
@@ -674,6 +838,29 @@ class ArenaRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pressed.edit_original_response.await_args.kwargs['embed'].title, 'Arena')
         current = (await self.rows('SELECT * FROM sessions WHERE session_id=?', (session['session_id'],)))[0]
         self.assertEqual(current['revision'], session['revision'] + 1)
+
+    async def test_m1_team_selection_without_skip_starts(self):
+        await self.enroll()
+        _, session = await self.open()
+        pid = session['profile_id']
+        for uid in ('router1', 'router2'):
+            await self.conn.execute('INSERT INTO pokemon(pokemon_uid,profile_id,pokemon_id,level_x2,iv_attack,'
+                                    'iv_defense,iv_stamina,gender,shiny,origin,content_version,caught_at) '
+                                    "VALUES (?,?,1,20,10,10,10,'male',0,'catch','test',0)", (uid, pid))
+        members = await self.rows('SELECT pokemon_uid,revision FROM pokemon WHERE profile_id=?', (pid,))
+        selection = {'phase': 'arena_team', 'team': [[m['pokemon_uid'], m['revision']] for m in members],
+                     'offset': 0, 'favorites_first': False}
+        await self.conn.execute('UPDATE sessions SET selection=? WHERE session_id=?',
+                                (json.dumps(selection), session['session_id']))
+        interaction = await self.click(session, 'arena_start')
+        rendered = interaction.edit_original_response.await_args.kwargs
+        self.assertEqual(rendered['embed'].title, 'Arena break')
+        self.assertIn('Floor 1', rendered['embed'].description)
+        self.assertNotIn('Skipped', rendered['embed'].description)
+        self.assertEqual(await self.rows('SELECT * FROM arena_tickets'), [])
+        saved = (await self.rows('SELECT * FROM sessions WHERE session_id=?', (session['session_id'],)))[0]
+        self.assertEqual(json.loads(saved['selection'])['phase'], 'arena_break')
+        self.assertEqual(saved['revision'], session['revision'] + 1)
 
     async def test_every_arena_action_is_registered(self):
         from pokewalker.bot import arena
