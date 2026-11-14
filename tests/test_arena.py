@@ -1406,6 +1406,7 @@ class ArenaTests(unittest.IsolatedAsyncioTestCase):
             for place, pid in enumerate(ranked[:3], 1) for item in RULES['leaderboard']['rewards'][place - 1]])
         for table in ('action_receipts', 'resource_ledger', 'milestone_awards'):
             self.assertEqual(await self.scalar(f'SELECT count(*) FROM {table}'), 0)
+        self.assertEqual(await self.scalar("SELECT count(*) FROM arena_month_scores WHERE month='2026-11'"), 0)
 
     async def test_settle_repeat_or_same_month_writes_nothing(self):
         await self.month_score(month='2026-12', floor=50)

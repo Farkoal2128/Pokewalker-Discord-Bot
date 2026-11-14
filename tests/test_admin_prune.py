@@ -297,12 +297,14 @@ class AdminPruneTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.users(), [PRESENT])
 
     async def test_stalled_fetch_and_cleanup_are_bounded(self):
-        self.bot.clock = time.monotonic
+        skew = [0.0]  # the stall jumps the clock past the deadline, so a timer firing a tick early can't race
+        self.bot.clock = lambda: time.monotonic() + skew[0]
         cancelled, release = [], asyncio.Event()
         await self.conn.execute("INSERT INTO reactions(message_id,profile_id,channel_id,desired,actual,created_at) "
                                 "VALUES ('11',?,'21','add','added',0)", (self.ids["789"],))
 
         async def stall(*args):
+            skew[0] += 1
             try:
                 await release.wait()
             except asyncio.CancelledError:

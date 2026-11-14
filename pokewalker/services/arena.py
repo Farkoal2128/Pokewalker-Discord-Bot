@@ -52,6 +52,8 @@ async def settle(conn, guild_id, now):
                                'VALUES (?,?,?,?,?)', (guild_id, month, place, row['profile_id'], row['floor']))
         await conn.execute('INSERT INTO arena_months(guild_id,month,settled_at) VALUES (?,?,?)',
                            (guild_id, month, now))
+        # Settled scores are never read again (the board shows paid places), so drop them.
+        await conn.execute('DELETE FROM arena_month_scores WHERE guild_id=? AND month=?', (guild_id, month))
     return months
 
 
