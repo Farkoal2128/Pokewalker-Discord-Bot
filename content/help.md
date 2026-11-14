@@ -66,6 +66,8 @@ Each 18-hour run ends on defeat or expiry. The 18-hour cooldown starts when the 
 
 **Arena rewards.** Each knockout gives Candy to the team member who dealt the final blow. Special Pokémon earn Candy only from boss knockouts. Boss wins at reward floors earn Bronze, Silver, Gold, Platinum or Diamond Tickets. Open Tickets in the Arena to see counts and contents, then confirm a redemption with at least one free encounter slot. Encounters join your queue; Stardust and item rewards wait in your Inbox. Tickets can be redeemed during a live run or while the server's Arena is off.
 
+The monthly server leaderboard ranks your best floor fully cleared that month. Months reset on the 1st at 00:00 UTC. Ties favor whoever reached the floor first, then the older profile, then profile ID. Rewards need floor 10 or higher. 1st: Master Ball, Shiny Lure, World Legendary Ticket. 2nd: Master Ball, Shiny Lure. 3rd: Master Ball. Rewards wait in your Inbox, paid when anyone next opens the walker home, Arena, Leaderboard or Inbox after the month ends. Open Leaderboard in Arena for the top ten, your place, the reset countdown and last month's paid places, even while Arena is off.
+
 A live Arena team member cannot defend or attack a gym, enter a trade, or be sent for research until the run ends. Other Pokémon remain available for those activities.
 
 <!-- page -->

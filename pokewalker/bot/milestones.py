@@ -1,12 +1,13 @@
 """Private reward inbox with durable Claim and detached rendering."""
 
 import json
+import re
 
 import discord
 
 from content.balance import load_table
 from pokewalker.bot.screens_catch import custom_id
-from pokewalker.services import items, milestones as service
+from pokewalker.services import arena, items, milestones as service
 
 
 def _entries(content):
@@ -84,6 +85,14 @@ async def _gym_labels(conn, session, details):
     labels = {}
     for row in details:
         key = row['milestone_id']
+        if key.startswith('arena_month:'):
+            parts = key.split(':')
+            label = 'Arena leaderboard reward'
+            if (len(parts) == 3 and re.fullmatch(r'[0-9]{4}-(0[1-9]|1[0-2])', parts[1])
+                    and parts[2] in ('1', '2', '3')):
+                place = {'1': '1st', '2': '2nd', '3': '3rd'}[parts[2]]
+                label = f'Arena leaderboard {parts[1]}: {place} place'
+            labels[key] = label
         if key.startswith('arena:'):
             parts = key.split(':')
             label = 'Arena ticket reward'
@@ -179,6 +188,7 @@ def handlers(walker):
     from pokewalker.bot.walker import _Refused, REOPEN, EXCLUDED
 
     async def inbox(conn, session, interaction):
+        await arena.settle(conn, session['guild_id'], walker.clock())
         if json.loads(session['selection']).get('back') == 'inbox':
             session['selection'] = '{}'
         details = await service.waiting_details(conn, session['profile_id'])

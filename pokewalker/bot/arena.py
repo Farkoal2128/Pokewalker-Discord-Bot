@@ -50,10 +50,32 @@ def render_home(state):
     if state['paused']:
         lines.append(paused(state['until']))
     lines.append('Tickets: ' + (', '.join(f'{tier.title()}: {quantity}' for tier, quantity in state['tickets'].items()) or 'none'))
-    view = gyms.buttons(state, [*actions, (f"Tickets ({sum(state['tickets'].values())})", 'arena_tickets'), ('Back', 'home')])
+    view = gyms.buttons(state, [*actions, (f"Tickets ({sum(state['tickets'].values())})", 'arena_tickets'),
+                                 ('Leaderboard', 'arena_leaderboard'), ('Back', 'home')])
     if state['status'] != 'live':
         view.children[0].disabled = not state['enabled'] or state['paused'] or bool(state['cooldown_left'])
     return {'embed': discord.Embed(title='Arena', description='\n'.join(lines)), 'view': view}
+
+
+def render_leaderboard(state):
+    days, minutes = divmod(math.ceil(max(0, state['reset_at'] - state['now']) / 60), 24 * 60)
+    hours, minutes = divmod(minutes, 60)
+    lines = [f"Month {state['month']} · resets in {days}d {hours}h {minutes}m"]
+
+    def row_text(row):
+        return f"{row['place']}. <@{row['user_id']}> · floor {row['floor']}"
+
+    lines.extend([row_text(row) for row in state['rows']] or ['No floors cleared this month yet.'])
+    if state['viewer']:
+        lines.append(f"Your place: {state['viewer']['place']} · floor {state['viewer']['floor']}")
+    for place, rewards in zip(('1st', '2nd', '3rd'), state['rules']['rewards']):
+        lines.append(place + ': ' + ', '.join(item.replace('_', ' ').title() for item in rewards))
+    lines.append(f"Rewards need floor {state['rules']['min_floor']} or higher.")
+    last = f"Last month ({state['last_month']}):"
+    lines.extend([last, *[row_text(row) for row in state['last']]] if state['last']
+                 else [last + ' no rewards paid.'])
+    return {'embed': discord.Embed(title='Arena leaderboard', description='\n'.join(lines)),
+            'view': gyms.buttons(state, [('Back', 'arena')])}
 
 
 def ticket_contents(rewards):
@@ -399,6 +421,10 @@ def handlers(walker):
         current = await service.state(conn, session, now)
         if current['status'] in ('stale', 'excluded'):
             raise _Refused(EXCLUDED if current['status'] == 'excluded' else REOPEN)
+        await service.settle(conn, session['guild_id'], now)
+        if action == 'arena_leaderboard':
+            board = await service.leaderboard(conn, session['guild_id'], session['profile_id'], now)
+            return render_leaderboard({'session': session, **board, 'now': now, 'rules': rules['leaderboard']})
         if action in REDEEM or action in ('arena_tickets', 'arena_redeem_confirm'):
             return await tickets_action(action, conn, session, current, now)
         if action in BREAK_ACTIONS:
@@ -465,6 +491,6 @@ def handlers(walker):
         return render_team(await team_state(conn, session, selection, current['best_floor'], notice))
 
     return {name: partial(dispatch, name) for name in
-            ('arena', 'arena_resume', 'arena_team', 'arena_team_prev', 'arena_team_next',
+            ('arena', 'arena_leaderboard', 'arena_resume', 'arena_team', 'arena_team_prev', 'arena_team_next',
              'arena_team_sort', 'arena_team_pick', 'arena_team_clear', 'arena_start', 'arena_skip', 'arena_skip_more', *BREAK_ACTIONS,
              'arena_tickets', *REDEEM, 'arena_redeem_confirm')}

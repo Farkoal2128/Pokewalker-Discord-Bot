@@ -41,7 +41,14 @@ class ReadmeTests(IsolatedAsyncioTestCase):
     def test_approved_text_verbatim(self):
         content = Path('content/help.md').read_bytes()
         self.assertEqual(hashlib.sha256(content).hexdigest(),
-                         'fbf85e63345bb10a2372b9ef4f3f0baea079d5d8256ee4151697a8ae57f6d901')
+                         '9127e6e7678ebbce013d3dcb0d8e402bba39f905db599ec0b54a064fbd6bc0f1')
+
+    def test_help_describes_monthly_leaderboard(self):
+        player = next(page for page in self.pages() if '**Arena.**' in page)
+        for phrase in ('monthly server leaderboard', 'best floor', 'UTC', 'first', 'older profile',
+                       'profile ID', 'floor 10', '1st: Master Ball, Shiny Lure, World Legendary Ticket',
+                       '2nd: Master Ball, Shiny Lure', '3rd: Master Ball', 'Inbox'):
+            self.assertIn(phrase, player)
 
     def test_help_describes_skip_and_fight_until_hurt(self):
         player = next(page for page in self.pages() if '**Arena.**' in page)

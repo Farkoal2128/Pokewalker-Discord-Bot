@@ -582,6 +582,32 @@ class MilestoneTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.snapshot(), after)
         self.assertEqual(len(await self.rows("SELECT * FROM action_receipts WHERE action='claim'")), 1)
 
+    async def test_inbox_open_settles_and_lists_reward(self):
+        session = await self.ready()
+        await self.conn.execute('INSERT INTO arena_month_scores VALUES (?,?,?,?,?)',
+                                ('123', '1969-12', self.profile['profile_id'], 10, 100))
+        await self.conn.execute('UPDATE guilds SET arena_enabled=0')
+        shown = await self.click(session, 'inbox')
+        text = shown.edit_original_response.await_args.kwargs['embed'].description
+        self.assertIn('Arena leaderboard 1969-12: 1st place', text)
+        self.assertIn('Master Ball \u00d71, Shiny Lure \u00d71, World Legendary Ticket \u00d71', text)
+        self.assertNotIn('arena_month:', text)
+        self.assertEqual(len(await self.rows('SELECT * FROM inbox_items')), 3)
+        await self.click(await self.current(session), 'inbox')
+        self.assertEqual(len(await self.rows('SELECT * FROM inbox_items')), 3)
+
+    async def test_arena_month_keys_get_place_labels_else_generic(self):
+        from pokewalker.bot import milestones as screen
+        keys = ['arena_month:2026-11:' + p for p in ('1', '2', '3', '4', '01', 'x')]
+        keys += ['arena_month:', 'arena_month:2026-13:1', 'arena_month:2026-00:1',
+                 'arena_month:26-11:1', 'arena_month:2026-1:1', 'arena_month:2026-11:1:extra',
+                 'arena_month:\uff12\uff10\uff12\uff16-11:1']
+        with patch.object(self.conn, 'execute', side_effect=AssertionError('label query')):
+            labels = await screen._gym_labels(self.conn, {}, [{'milestone_id': k} for k in keys])
+        self.assertEqual([labels[k] for k in keys[:3]],
+                         [f'Arena leaderboard 2026-11: {p} place' for p in ('1st', '2nd', '3rd')])
+        self.assertTrue(all(labels[k] == 'Arena leaderboard reward' for k in keys[3:]))
+
     async def test_inbox_lists_named_milestones_and_partial_claim_details(self):
         session = await self.ready()
         profile_id = self.profile['profile_id']

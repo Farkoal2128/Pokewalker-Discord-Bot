@@ -79,6 +79,124 @@ class ArenaScreenTests(unittest.IsolatedAsyncioTestCase):
         await self.picked()
         return await self.click('arena_start')
 
+    async def test_home_leaderboard_button_enabled_in_every_state(self):
+        current = await self.writer.run(lambda conn: service.state(conn, self.session, self.now))
+        for status in ('none', 'live', 'ended'):
+            for enabled in (False, True):
+                for pause in (False, True):
+                    state = dict(current, session=self.session, status=status, enabled=enabled,
+                                 paused=pause, until=None, cooldown_left=60,
+                                 run={'floor': 2, 'slot': 0} if status != 'none' else None)
+                    view = self.screens().render_home(state)
+                    actions = [b.custom_id.rsplit(':', 1)[-1] for b in view['view'].children]
+                    self.assertEqual(actions[-3:], ['arena_tickets', 'arena_leaderboard', 'home'])
+                    button = self.button(view, 'arena_leaderboard')
+                    self.assertEqual(button.label, 'Leaderboard')
+                    self.assertFalse(button.disabled)
+
+    async def score(self, pid, floor, month='2026-12'):
+        await self.conn.execute('INSERT INTO arena_month_scores VALUES (?,?,?,?,?)',
+                                ('g', month, pid, floor, 100))
+
+    async def test_leaderboard_lists_top_ten_mentions_and_viewer_below(self):
+        self.now = test_arena.MONTH_NOW
+        await self.score(self.pid, 10)
+        for i in range(10):
+            await self.score(await self.profile(f'ranked{i}', 'g'), 30 - i)
+        self.session['selection'] = json.dumps({'berry': 'pinap_berry', 'phase': 'arena_break'})
+        selection = self.session['selection']
+        rendered = await self.click('arena_leaderboard')
+        self.assertEqual(rendered['embed'].title, 'Arena leaderboard')
+        for i in range(10):
+            self.assertIn(f'{i + 1}. <@ranked{i}> · floor {30 - i}', rendered['embed'].description)
+        self.assertIn('Your place: 11 · floor 10', rendered['embed'].description)
+        self.assertNotIn('<@u>', rendered['embed'].description)
+        self.assertEqual(self.session['selection'], selection)
+        self.assertEqual(self.button(rendered, 'arena').label, 'Back')
+
+    async def test_leaderboard_shows_reset_rewards_and_minimum(self):
+        self.now = test_arena.MONTH_NOW - 61
+        rendered = await self.click('arena_leaderboard')
+        text = rendered['embed'].description
+        for line in ('Month 2026-11 · resets in 0d 0h 2m',
+                     '1st: Master Ball, Shiny Lure, World Legendary Ticket',
+                     '2nd: Master Ball, Shiny Lure', '3rd: Master Ball',
+                     'Rewards need floor 10 or higher.'):
+            self.assertIn(line, text)
+        with patch.object(self.screens(), 'render_leaderboard', wraps=self.screens().render_leaderboard) as render:
+            await self.click('arena_leaderboard')
+        with (patch('aiosqlite.Connection.execute', side_effect=AssertionError('renderer SQL')),
+              patch('builtins.open', side_effect=AssertionError('renderer file I/O'))):
+            self.screens().render_leaderboard(render.call_args.args[0])
+        state = dict(render.call_args.args[0], rules={'min_floor': 12, 'rewards': [['shiny_lure']]})
+        custom = self.screens().render_leaderboard(state)['embed'].description
+        self.assertIn('1st: Shiny Lure', custom)
+        self.assertIn('Rewards need floor 12 or higher.', custom)
+
+    async def test_last_month_skips_deleted_winner(self):
+        self.now = test_arena.MONTH_NOW
+        deleted = await self.profile('deleted', 'g')
+        excluded = await self.profile('excluded', 'g')
+        for pid, floor in ((deleted, 30), (self.other, 20), (excluded, 10)):
+            await self.score(pid, floor, '2026-11')
+        await self.writer.run(lambda conn: service.settle(conn, 'g', self.now))
+        await self.conn.execute('DELETE FROM profiles WHERE profile_id=?', (deleted,))
+        await self.conn.execute("INSERT INTO restrictions(guild_id,user_id,excluded) VALUES ('g','excluded',1)")
+        text = (await self.click('arena_leaderboard'))['embed'].description
+        self.assertIn('Last month (2026-11):\n2. <@v> · floor 20', text)
+        self.assertNotIn('1. <@', text)
+        self.assertNotIn('3. <@', text)
+
+    async def test_empty_month_and_unpaid_last_month_texts(self):
+        self.now = test_arena.MONTH_NOW
+        await self.score(self.pid, 9, '2026-11')
+        text = (await self.click('arena_leaderboard'))['embed'].description
+        self.assertIn('No floors cleared this month yet.', text)
+        self.assertIn('Last month (2026-11): no rewards paid.', text)
+        self.assertNotIn('Your place:', text)
+
+    async def test_arena_actions_settle_once_also_with_arena_off(self):
+        await self.start_run()
+        run = await self.run_state()
+        for enabled in (0, 1):
+            await self.conn.execute('UPDATE guilds SET arena_enabled=?', (enabled,))
+            mapping = self.screens().handlers(self.walker)
+            for action, handler in mapping.items():
+                if action == 'arena_until_hurt':
+                    continue
+                self.session['selection'] = json.dumps(
+                    {'phase': 'arena_team', 'team': [], 'offset': 0, 'favorites_first': False, 'skip': 0}
+                    if action.startswith(('arena_team', 'arena_skip')) or action == 'arena_start'
+                    else {'phase': 'arena_break', 'run_id': run['run_id'], 'run_revision': run['revision'],
+                          'berry': 'razz_berry'})
+                with self.subTest(action=action, enabled=enabled), patch.object(service, 'settle', wraps=service.settle) as settle:
+                    try:
+                        await self.writer.run(lambda conn: handler(conn, self.session, SimpleNamespace(data={'values': []})))
+                    except _Refused:
+                        pass
+                    settle.assert_awaited_once_with(self.conn, 'g', self.now)
+        with patch.object(service, 'settle') as settle:
+            await self.screens().handlers(self.walker)['arena_until_hurt'](self.conn, self.session, None)
+            settle.assert_not_called()
+        for status in ('stale', 'excluded'):
+            with patch.object(service, 'state', return_value={'status': status}), patch.object(service, 'settle') as settle:
+                with self.assertRaises(_Refused):
+                    await self.click('arena')
+                settle.assert_not_called()
+
+    async def test_refused_press_rolls_back_payout_next_open_pays_once(self):
+        self.now = test_arena.MONTH_NOW
+        await self.score(self.pid, 10, '2026-11')
+        with self.assertRaises(_Refused):
+            await self.click('arena_redeem_confirm')
+        for table in ('arena_months', 'arena_month_places', 'inbox_items'):
+            self.assertEqual(await self.rows('SELECT * FROM ' + table), [])
+        await self.click('arena')
+        self.assertEqual(await self.scalar('SELECT count(*) FROM inbox_items'), 3)
+        await self.click('arena_leaderboard')
+        self.assertEqual(await self.scalar('SELECT count(*) FROM inbox_items'), 3)
+        self.assertEqual(await self.scalar('SELECT count(*) FROM arena_months'), 1)
+
     async def test_arena_home_states_off_live_cooldown_ready(self):
         await self.conn.executemany('INSERT INTO arena_tickets VALUES (?,?,?)',
                                     [(self.pid, 'bronze', 3), (self.pid, 'diamond', 12)])
@@ -386,7 +504,7 @@ class ArenaScreenTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_action_names_match_router_pattern(self):
         mapping = self.screens().handlers(self.walker)
-        expected = {'arena', 'arena_resume', 'arena_team', 'arena_team_prev', 'arena_team_next',
+        expected = {'arena', 'arena_leaderboard', 'arena_resume', 'arena_team', 'arena_team_prev', 'arena_team_next',
                     'arena_team_sort', 'arena_team_pick', 'arena_team_clear', 'arena_start',
                     'arena_skip', 'arena_skip_more', 'arena_auto_order', 'arena_stop_pct', 'arena_until_hurt',
                     'arena_fight', 'arena_heal_fight', 'arena_heal_one', 'arena_heal_two',
@@ -1058,6 +1176,17 @@ class ArenaRouterTests(unittest.IsolatedAsyncioTestCase):
     open = _Fixture.open
     click = _Fixture.click
     enroll = _Fixture.enroll
+
+    async def test_leaderboard_through_router_sends_no_pings(self):
+        await self.enroll()
+        _, session = await self.open()
+        await self.conn.execute('INSERT INTO arena_month_scores VALUES (?,?,?,?,?)',
+                                ('123', '1970-01', session['profile_id'], 12, 100))
+        pressed = await self.click(session, 'arena_leaderboard')
+        rendered = pressed.edit_original_response.await_args.kwargs
+        self.assertEqual(rendered['embed'].title, 'Arena leaderboard')
+        self.assertIn('1. <@456> · floor 12', rendered['embed'].description)
+        self.assertEqual(rendered['allowed_mentions'].to_dict(), discord.AllowedMentions.none().to_dict())
 
     async def test_walker_open_settles_and_enables_inbox_also_arena_off(self):
         await self.enroll()
