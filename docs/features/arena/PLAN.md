@@ -2,7 +2,7 @@
 
 **Status:** approved — in execution · owner approved G-A · G-P 2026-11-13 (direct owner approval in session) · amended 2026-11-14: M3 leaderboard rows ARENA-20..23 added at owner request (AR-36..AR-41), unbriefed; briefed ARENA-16, ARENA-17, ARENA-18, ARENA-24, ARENA-19 await owner approval
 **Home:** feature/arena · D:\Projects\Pokewalker-arena
-**Review:** 2026-11-13 · Codex gpt-6-astra (independent, read-only) · GO after 3 rounds (R1 2 MUST/4 SHOULD, R2 1 MUST, R3 0/0); fixes applied by Opus · reviewed untracked tree on main 9c8aec5 · M3 amendment 2026-11-14: Codex gpt-6-astra GO after 1 round (0 MUST, 1 SHOULD fixed by Opus) · M2 briefing 2026-11-14: Codex gpt-6-astra GO after 2 rounds (R1 2 MUST/2 SHOULD fixed by Opus, R2 0/0)
+**Review:** 2026-11-13 · Codex gpt-6-astra (independent, read-only) · GO after 3 rounds (R1 2 MUST/4 SHOULD, R2 1 MUST, R3 0/0); fixes applied by Opus · reviewed untracked tree on main 9c8aec5 · M3 amendment 2026-11-14: Codex gpt-6-astra GO after 1 round (0 MUST, 1 SHOULD fixed by Opus) · M2 brief: astra GO r2 (r1 2M/2S fixed)
 **Inputs:** [REQUIREMENTS.md](REQUIREMENTS.md), owner-approved 2026-11-13: every AR-n is settled scope; §6.3 (AR-36..AR-41) added 2026-11-14, owner approval of its [R] items unverified · [PIPELINE.md](../../../PIPELINE.md) · `AGENTS.md` · `rules/*.md`
 
 ## 1. Outcome and non-goals
