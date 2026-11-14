@@ -7,8 +7,9 @@ from pokewalker.db import with_receipt
 from pokewalker.services import profiles, storage
 
 
-def protected_reason(identity, pokemon, profile):
-    for reason, protected in (("deployed", pokemon.get("gym_deployment_id") is not None),
+def protected_reason(identity, pokemon, profile, arena_team=frozenset()):
+    for reason, protected in (("in_arena", pokemon["pokemon_uid"] in arena_team),
+                              ("deployed", pokemon.get("gym_deployment_id") is not None),
                               ("favorite", pokemon["favorite"]),
                               ("companion", pokemon["pokemon_uid"] == profile["companion_uid"]),
                               ("shiny", pokemon["shiny"]),
@@ -18,9 +19,10 @@ def protected_reason(identity, pokemon, profile):
     return None
 
 
-async def candidates(conn, profile_id, content, offset):
+async def candidates(conn, profile_id, content, offset, now):
     async with conn.execute("SELECT * FROM profiles WHERE profile_id=?", (profile_id,)) as cursor:
         profile = await cursor.fetchone()
+    arena_team = await profiles.arena_team(conn, profile_id, now)
     total = await storage.owned_count(conn, profile_id)
     async with conn.execute("SELECT * FROM pokemon WHERE profile_id=? AND state='owned' "
                             "ORDER BY caught_at DESC,pokemon_uid LIMIT 5 OFFSET ?", (profile_id, offset)) as cursor:
@@ -29,7 +31,7 @@ async def candidates(conn, profile_id, content, offset):
     for item in pokemon:
         identity, sprite = storage.identify(content, item)
         rows.append({"pokemon": item, "identity": identity, "sprite": sprite,
-                     "reason": protected_reason(identity, item, profile)})
+                     "reason": protected_reason(identity, item, profile, arena_team)})
     return rows, total
 
 
@@ -62,12 +64,13 @@ async def send(conn, session, picks, preview, now, content):
         return saved
     changed = {"status": "changed"}
     rows = []
+    arena_team = await profiles.arena_team(conn, profile["profile_id"], now)
     for uid, revision in picks:
         pokemon = await storage.detail(conn, profile["profile_id"], uid)
         if pokemon is None or pokemon["revision"] != revision:
             return changed
         identity, _ = storage.identify(content, pokemon)
-        reason = protected_reason(identity, pokemon, profile)
+        reason = protected_reason(identity, pokemon, profile, arena_team)
         if reason is not None and not (len(picks) == 1 and saved.get("single")
                                        and preview.get("unlocked") and reason in ("shiny", "legendary_or_mythical")):
             return changed

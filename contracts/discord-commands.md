@@ -1428,3 +1428,16 @@ Arena team and can't defend a gym until the run ends."
 Producer: bot.gyms; consumers: private Walker interactions and C3 gym services.
 No action ID or slash command changes. Tests: test_arena_gym_block and the
 existing gym screen, battle, lifecycle and Legendary-setting regressions.
+
+## C5: Arena team restrictions in research screens
+
+Bulk research rows label in_arena as "on your Arena team" and disable their
+toggles. Toggle, review, unlock and confirm recheck the live team using the
+injected Walker clock; a run started after selection cannot be bypassed.
+Single-send refuses with "This Pokémon is on your Arena team. It can't be sent
+until the run ends." before the Shiny/Legendary unlock screen, including a
+Legendary or Shiny team member. The existing Storage detail Send button is
+unchanged; its handler applies this hard refusal, like companion/favorite guards.
+Producer: bot.research; consumers: private Walker interactions and C3 research.
+No component IDs or slash commands change. Tests: test_research, test_storage,
+test_trading. Native/live acceptance remains separate.
