@@ -41,7 +41,14 @@ class ReadmeTests(IsolatedAsyncioTestCase):
     def test_approved_text_verbatim(self):
         content = Path('content/help.md').read_bytes()
         self.assertEqual(hashlib.sha256(content).hexdigest(),
-                         '9127e6e7678ebbce013d3dcb0d8e402bba39f905db599ec0b54a064fbd6bc0f1')
+                         '40019462c06995179d494d05badf6021feebf7025b5cabb76af3084c7e2f305e')
+
+    def test_help_describes_x_items(self):
+        player = next(page for page in self.pages() if '**Arena.**' in page)
+        for phrase in ('X-Attack', 'X-Defense', 'doubles', 'attack', 'defense', '3 fights',
+                       '300 Stardust', 'Arena home', 'break screen', 'one of each kind',
+                       'unused fights are lost', 'run ends'):
+            self.assertIn(phrase, player)
 
     def test_help_describes_monthly_leaderboard(self):
         player = next(page for page in self.pages() if '**Arena.**' in page)

@@ -79,17 +79,171 @@ class ArenaScreenTests(unittest.IsolatedAsyncioTestCase):
         await self.picked()
         return await self.click('arena_start')
 
+    async def buy_x(self, item='x_attack'):
+        await test_arena.ArenaTests.x_press(self)
+        return await self.click('arena_buy_' + item)
+
+    async def test_home_stock_line_and_buy_buttons_in_every_state(self):
+        current = await self.writer.run(lambda conn: service.state(conn, self.session, self.now))
+        for status in ('none', 'live', 'ended'):
+            for enabled in (False, True):
+                for pause in (False, True):
+                    for cooldown in (0, 60):
+                        state = dict(current, session=self.session, status=status, enabled=enabled,
+                                     paused=pause, until=None, cooldown_left=cooldown, stardust=987,
+                                     x_items={'x_attack': 2, 'x_defense': 0}, x_rules=test_arena.RULES['x_items'],
+                                     notice='Purchase notice.', run={'floor': 2, 'slot': 0} if status != 'none' else None)
+                        rendered = self.screens().render_home(state)
+                        self.assertIn('Stardust 987 · X-Attack ×2 · X-Defense ×0', rendered['embed'].description)
+                        self.assertIn('Purchase notice.', rendered['embed'].description)
+                        for item, name in (('x_attack', 'X-Attack'), ('x_defense', 'X-Defense')):
+                            button = self.button(rendered, 'arena_buy_' + item)
+                            self.assertEqual((button.label, button.row, button.disabled), (f'Buy {name} · 300', 1, False))
+
+        state['x_rules'] = json.loads(json.dumps(test_arena.RULES['x_items']))
+        state['x_rules']['items']['x_attack']['stardust'] = 321
+        rendered = self.screens().render_home(state)
+        self.assertEqual(self.button(rendered, 'arena_buy_x_attack').label, 'Buy X-Attack · 321')
+
+    async def test_home_buy_notices_bought_short_and_bag_full(self):
+        await self.conn.execute('UPDATE profiles SET stardust=300 WHERE profile_id=?', (self.pid,))
+        bought = await self.buy_x()
+        self.assertEqual(bought['embed'].title, 'Arena')
+        self.assertIn('Bought 1 X-Attack for 300 Stardust.', bought['embed'].description)
+        self.assertIn('Stardust 0 · X-Attack ×1 · X-Defense ×0', bought['embed'].description)
+        before = await self.resource_snapshot()
+        short = await self.buy_x('x_defense')
+        self.assertIn('You need 300 Stardust for X-Defense. Nothing was spent.', short['embed'].description)
+        self.assertEqual(await self.resource_snapshot(), before)
+        await self.inventory('poke_ball', limits()['bag_units'])
+        await self.conn.execute('UPDATE profiles SET stardust=300 WHERE profile_id=?', (self.pid,))
+        before = await self.resource_snapshot()
+        full = await self.buy_x('x_defense')
+        self.assertIn('Your bag is full. Nothing was spent.', full['embed'].description)
+        self.assertEqual(await self.resource_snapshot(), before)
+
+    async def test_break_row_1_x_button_buy_then_use_then_fights_left(self):
+        rendered = await self.start_run()
+        self.assertIn('arena_buy_x_attack', [item.custom_id.rsplit(':', 1)[-1] for item in rendered['view'].children])
+        self.assertEqual(self.button(rendered, 'arena_buy_x_attack').label, 'Buy X-Attack · 300')
+        self.assertEqual(self.button(rendered, 'arena_buy_x_defense').label, 'Buy X-Defense · 300')
+        self.assertEqual(sum(item.width for item in rendered['view'].children if item.row == 1), 5)
+        await self.conn.execute('UPDATE profiles SET stardust=300 WHERE profile_id=?', (self.pid,))
+        rendered = await self.buy_x()
+        self.assertEqual(self.button(rendered, 'arena_use_x_attack').label, 'Use X-Attack (1)')
+        rendered = await self.click('arena_use_x_attack')
+        button = self.button(rendered, 'arena_use_x_attack')
+        self.assertEqual((button.label, button.disabled, button.row), ('X-Attack: 3 fights left', True, 1))
+
+    async def test_break_buy_stays_on_break_keeps_run_revision(self):
+        await self.start_run()
+        run = await self.run_state()
+        await self.conn.execute('UPDATE profiles SET stardust=600 WHERE profile_id=?', (self.pid,))
+        rendered = await self.buy_x()
+        self.assertEqual(rendered['embed'].title, 'Arena break')
+        self.assertEqual(await self.run_state(), run)
+        self.assertEqual(self.selection()['run_revision'], run['revision'])
+        self.assertIn('Bought 1 X-Attack for 300 Stardust.', rendered['embed'].description)
+        self.now += test_arena.RULES['run_seconds']
+        ended = await self.buy_x('x_defense')
+        self.assertEqual(ended['embed'].title, 'Arena defeat')
+        self.assertIn('Bought 1 X-Defense for 300 Stardust.', ended['embed'].description)
+        self.assertNotIn('Stardust 0 ×', ended['embed'].description)
+        self.assertNotIn('fights left', ended['embed'].description)
+
+    async def test_use_shows_active_line_bumps_run_revision(self):
+        await self.inventory('x_attack', 2)
+        await self.start_run()
+        run = await self.run_state()
+        rendered = await self.click('arena_use_x_attack')
+        self.assertIn('X-Attack used: ×2 attack for the next 3 fights.', rendered['embed'].description)
+        self.assertIn('X-Attack: ×2 attack · 3 fights left', rendered['embed'].description)
+        self.assertIn('X-Attack ×1', rendered['embed'].description)
+        self.assertEqual(self.selection()['run_revision'], run['revision'] + 1)
+        before = await self.resource_snapshot()
+        active = await self.click('arena_use_x_attack')
+        self.assertIn('X-Attack is already active. Nothing was spent.', active['embed'].description)
+        self.assertEqual(await self.resource_snapshot(), before)
+        missing = await self.click('arena_use_x_defense')
+        self.assertIn('You have no X-Defense.', missing['embed'].description)
+        self.assertEqual(await self.resource_snapshot(), before)
+
+    async def test_fights_count_lines_down_button_free_at_zero(self):
+        await self.inventory('x_attack', 2)
+        await self.start_run()
+        await self.click('arena_use_x_attack')
+        for left in (2, 1, 0):
+            with patch.object(test_arena.battle_engine, 'simulate', return_value=self.outcome(hp=(58, 58, 58))):
+                rendered = await self.click('arena_fight')
+            if left:
+                text = f"{left} fight{'s' if left != 1 else ''} left"
+                self.assertIn('X-Attack: ×2 attack · ' + text, rendered['embed'].description)
+                self.assertEqual(self.button(rendered, 'arena_use_x_attack').label, 'X-Attack: ' + text)
+            else:
+                self.assertNotIn('X-Attack: ×2 attack', rendered['embed'].description)
+                button = self.button(rendered, 'arena_use_x_attack')
+                self.assertEqual((button.label, button.disabled), ('Use X-Attack (1)', False))
+
+    async def test_both_kinds_active_together(self):
+        await self.inventory('x_attack', 1)
+        await self.inventory('x_defense', 1)
+        await self.start_run()
+        rules = json.loads(json.dumps(test_arena.RULES))
+        rules['x_items'].update(multiplier=3, fights=4)
+        with patch.object(self.screens(), 'load_table', return_value={'rules': rules}), \
+                patch.object(service, 'load_table', return_value={'rules': rules}):
+            await self.click('arena_use_x_attack')
+            rendered = await self.click('arena_use_x_defense')
+        self.assertIn('X-Attack: ×3 attack · 4 fights left', rendered['embed'].description)
+        self.assertIn('X-Defense: ×3 defense · 4 fights left', rendered['embed'].description)
+        self.assertIn('X-Defense used: ×3 defense for the next 4 fights.', rendered['embed'].description)
+        self.assertTrue(self.button(rendered, 'arena_use_x_attack').disabled)
+        self.assertTrue(self.button(rendered, 'arena_use_x_defense').disabled)
+        self.assertEqual(self.selection()['run_revision'], 2)
+
+    async def test_stale_break_use_spends_nothing_and_redraws(self):
+        await self.inventory('x_attack', 1)
+        await self.start_run()
+        run = await self.run_state()
+        await self.writer.run(lambda conn: service.set_order(
+            conn, self.session, run['run_id'], run['revision'], (2, 1, 0), self.now))
+        before = await self.resource_snapshot()
+        rendered = await self.click('arena_use_x_attack')
+        self.assertIn(self.screens().STALE, rendered['embed'].description)
+        self.assertEqual(await self.resource_snapshot(), before)
+        self.assertEqual(self.selection()['run_revision'], run['revision'] + 1)
+        self.assertFalse(self.button(rendered, 'arena_use_x_attack').disabled)
+
+    async def test_until_hurt_chain_shows_counters_each_fight(self):
+        await self.inventory('x_attack', 1)
+        await self.inventory('x_defense', 1)
+        await self.start_run()
+        await self.click('arena_use_x_attack')
+        await self.click('arena_use_x_defense')
+        run = await self.run_state()
+        healthy = self.outcome(hp=tuple(m['full_hp'] for m in run['team']))
+        screens = self.screens()
+        with patch.object(screens, 'render_break', wraps=screens.render_break) as render, \
+                patch.object(test_arena.battle_engine, 'simulate', side_effect=[healthy, self.outcome()]):
+            rendered = await self.click('arena_until_hurt')
+        self.assertEqual([call.args[0]['run']['x_attack_left'] for call in render.call_args_list], [2, 1])
+        self.assertEqual([call.args[0]['run']['x_defense_left'] for call in render.call_args_list], [2, 1])
+        self.assertIn('X-Attack: ×2 attack · 1 fight left', rendered['embed'].description)
+        self.assertIn('X-Defense: ×2 defense · 1 fight left', rendered['embed'].description)
+        self.assertEqual(self.selection()['run_revision'], 4)
+
     async def test_home_leaderboard_button_enabled_in_every_state(self):
         current = await self.writer.run(lambda conn: service.state(conn, self.session, self.now))
         for status in ('none', 'live', 'ended'):
             for enabled in (False, True):
                 for pause in (False, True):
                     state = dict(current, session=self.session, status=status, enabled=enabled,
-                                 paused=pause, until=None, cooldown_left=60,
+                                 paused=pause, until=None, cooldown_left=60, x_rules=test_arena.RULES['x_items'],
                                  run={'floor': 2, 'slot': 0} if status != 'none' else None)
                     view = self.screens().render_home(state)
                     actions = [b.custom_id.rsplit(':', 1)[-1] for b in view['view'].children]
-                    self.assertEqual(actions[-3:], ['arena_tickets', 'arena_leaderboard', 'home'])
+                    self.assertEqual(actions[-5:], ['arena_tickets', 'arena_leaderboard', 'home',
+                                                    'arena_buy_x_attack', 'arena_buy_x_defense'])
                     button = self.button(view, 'arena_leaderboard')
                     self.assertEqual(button.label, 'Leaderboard')
                     self.assertFalse(button.disabled)
@@ -510,7 +664,8 @@ class ArenaScreenTests(unittest.IsolatedAsyncioTestCase):
                     'arena_fight', 'arena_heal_fight', 'arena_heal_one', 'arena_heal_two',
                     'arena_heal_three', 'arena_berry', 'arena_order', 'arena_tickets',
                     'arena_redeem_bronze', 'arena_redeem_silver', 'arena_redeem_gold',
-                    'arena_redeem_platinum', 'arena_redeem_diamond', 'arena_redeem_confirm'}
+                    'arena_redeem_platinum', 'arena_redeem_diamond', 'arena_redeem_confirm',
+                    'arena_buy_x_attack', 'arena_buy_x_defense', 'arena_use_x_attack', 'arena_use_x_defense'}
         self.assertEqual(set(mapping), expected)
         for action in mapping:
             self.assertIsNotNone(re.fullmatch('[a-z_]+', action))
@@ -538,7 +693,8 @@ class ArenaScreenTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_excluded_and_stale_owners_cannot_open_or_mutate_arena(self):
         await self.conn.execute("INSERT INTO restrictions(guild_id,user_id,excluded) VALUES ('g','u',1)")
-        for action in ('arena', 'arena_resume', 'arena_team', 'arena_start'):
+        for action in ('arena', 'arena_resume', 'arena_team', 'arena_start',
+                       'arena_buy_x_attack', 'arena_buy_x_defense', 'arena_use_x_attack', 'arena_use_x_defense'):
             with self.subTest(action=action), self.assertRaises(_Refused):
                 await self.click(action)
         await self.conn.execute('UPDATE restrictions SET excluded=0')
@@ -1176,6 +1332,25 @@ class ArenaRouterTests(unittest.IsolatedAsyncioTestCase):
     open = _Fixture.open
     click = _Fixture.click
     enroll = _Fixture.enroll
+
+    async def test_buy_twice_through_router_spends_twice(self):
+        await self.enroll()
+        _, session = await self.open()
+        await self.conn.execute('UPDATE profiles SET stardust=600 WHERE profile_id=?', (session['profile_id'],))
+        for held in (1, 2):
+            pressed = await self.click(session, 'arena_buy_x_attack')
+            pressed.edit_original_response.assert_awaited_once()
+            rendered = pressed.edit_original_response.await_args.kwargs
+            self.assertEqual(rendered['embed'].title, 'Arena')
+            self.assertIn(f'X-Attack ×{held}', rendered['embed'].description)
+            self.assertIn('Bought 1 X-Attack for 300 Stardust.', rendered['embed'].description)
+            saved = (await self.rows('SELECT * FROM sessions WHERE session_id=?', (session['session_id'],)))[0]
+            self.assertEqual(saved['revision'], session['revision'] + 1)
+            session = saved
+        self.assertEqual(await self.rows('SELECT stardust FROM profiles'), [{'stardust': 0}])
+        self.assertEqual(await self.rows("SELECT quantity FROM inventory WHERE item_id='x_attack'"), [{'quantity': 2}])
+        self.assertEqual(len(await self.rows("SELECT * FROM action_receipts WHERE action='buy'")), 2)
+        self.assertEqual(await self.rows('SELECT * FROM arena_runs'), [])
 
     async def test_leaderboard_through_router_sends_no_pings(self):
         await self.enroll()
