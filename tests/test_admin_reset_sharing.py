@@ -229,8 +229,10 @@ class AdminResetSharingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.scalar('SELECT COUNT(*) FROM arena_runs'), 1)
         self.assertGreater(await self.scalar('SELECT quantity FROM arena_tickets'), 0)
         await self.invoke(confirm=True)
-        for table in ('arena_runs', 'arena_tickets', 'action_receipts', 'resource_ledger', 'inbox_items'):
+        for table in ('arena_runs', 'arena_tickets', 'arena_month_scores', 'arena_month_places',
+                      'action_receipts', 'resource_ledger', 'inbox_items'):
             self.assertEqual(await self.scalar(f'SELECT COUNT(*) FROM {table} WHERE profile_id=?', (profile_id,)), 0, table)
+        self.assertEqual(await self.scalar("SELECT COUNT(*) FROM arena_months"), 1)
         new = await self.enroll()
         self.assertNotEqual(new['profile_id'], profile_id)
         await deletion.replay_markers(self.writer, self.path)

@@ -1609,3 +1609,38 @@ the unchanged compact fight receipt. No berries are spent. Producers: Arena
 domain/service; consumers: later Arena screens and chain coordinator. Additive
 API with no schema change; tests: test_arena_domain and test_arena. Full G-F
 and live-platform acceptance remain separate.
+
+
+## Arena monthly leaderboard schema (0027)
+AR-36, AR-37, AR-39 and AR-40 add three tables without changing existing rows.
+Older binaries refuse schema 27 through open_db's existing newer-schema guard;
+rollback requires restoring a pre-migration backup.
+
+arena_month_scores(guild_id,month,profile_id,floor,reached_at) has primary key
+(profile_id,month), a (guild_id,month) index, and a composite foreign key
+(profile_id,guild_id) to profiles with ON DELETE CASCADE.
+arena_months(guild_id,month,settled_at) has primary key (guild_id,month) and a
+guild foreign key with ON DELETE CASCADE. It has no player reference: a settled
+month survives player deletion/reset and disappears only with its guild.
+arena_month_places(guild_id,month,place,profile_id,floor) has primary key
+(guild_id,month,place), UNIQUE(profile_id,month) (also its profile cascade index),
+and the same composite profile foreign key with ON DELETE CASCADE.
+All months are NOT NULL UTC YYYY-MM text, GLOB-checked with months 01 through 12;
+floors and places are NOT NULL integers at least 1. Times are NOT NULL epoch seconds.
+
+services.arena.month_key(now) returns the UTC YYYY-MM of epoch now. Only fight's
+boss-win compute writes a monthly score, in the same caller-owned transaction
+and existing profile-owned arena_fight receipt as Candy, tickets and best floor.
+The upsert inserts the cleared floor and reached_at=now, or replaces both only
+for a strictly higher floor; an equal/lower floor preserves the original time.
+The guild comes from the session. Skipped floors never score: after skip 40,
+the first possible score is floor 41. chain_step and heal_all_and_fight use
+fight and score normally. Boss wins across UTC month boundaries score in their
+respective months. Replayed fights write nothing. Fight results, compact receipt
+fields, resource ledger and state output stay unchanged.
+
+Producers: migration 0027 and services.arena; consumers: monthly ranking and
+settlement (subsequent rows), profile deletion/reset and guild deletion.
+Compatibility: additive schema and service helper; existing callers keep their
+results. Tests: test_arena_schema, test_arena, test_deletion and
+test_admin_reset_sharing, with db/forms/route migration regressions.
