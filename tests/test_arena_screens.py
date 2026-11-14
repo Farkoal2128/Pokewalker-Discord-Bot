@@ -9,6 +9,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
 
+import discord
+
 from pokewalker.bot.walker import CUSTOM_ID, Walker, _Refused
 from content.balance import limits
 from pokewalker.services import arena as service, gyms
