@@ -1,6 +1,7 @@
 """C3 Arena lifecycle: real SQLite transactions, frozen snapshots and berry debits."""
 
 import asyncio
+from dataclasses import replace
 import importlib
 import json
 from pathlib import Path
@@ -648,6 +649,178 @@ class ArenaTests(unittest.IsolatedAsyncioTestCase):
         return battle_engine.Result(outcome, 'defender_fainted' if outcome != 'loss' else 'party_fainted', 9,
                                     tuple(i for i, value in enumerate(hp) if value), ('private battle event',),
                                     party_hp=hp, finisher=finisher)
+
+    async def x_fight_run(self, attack=0, defense=0, floor=1):
+        run = await self.at_fight(floor=floor)
+        await self.conn.execute('UPDATE arena_runs SET x_attack_left=?,x_defense_left=? WHERE run_id=?',
+                                (attack, defense, run['run_id']))
+        return (await self.state())['run']
+
+    def assert_x_party(self, simulate, run, attack=1, defense=1):
+        expected = [replace(battle_engine.Combatant(**member['snapshot']['combatant']),
+                            hp=member['hp'], attack=member['snapshot']['combatant']['attack'] * attack,
+                            defense=member['snapshot']['combatant']['defense'] * defense)
+                    for member in run['team']]
+        self.assertEqual(simulate.call_args.args[0], expected)
+
+    async def test_x_attack_doubles_only_party_attack_given_to_simulate(self):
+        run = await self.x_fight_run(attack=3, floor=5)
+        with patch.object(battle_engine, 'simulate', wraps=battle_engine.simulate) as simulate:
+            await self.fight(run)
+        self.assert_x_party(simulate, run, attack=2)
+
+    async def test_x_defense_doubles_only_party_defense_and_both_kinds_combine(self):
+        for attack in (0, 3):
+            with self.subTest(attack=attack):
+                await self.reset_run_fixture()
+                run = await self.x_fight_run(attack=attack, defense=3, floor=5)
+                with patch.object(battle_engine, 'simulate', wraps=battle_engine.simulate) as simulate:
+                    await self.fight(run)
+                self.assert_x_party(simulate, run, attack=2 if attack else 1, defense=2)
+
+    async def test_enemy_combatant_and_stored_snapshots_stay_unboosted(self):
+        run = await self.x_fight_run(3, 3, floor=5)
+        with patch.object(battle_engine, 'simulate', wraps=battle_engine.simulate) as simulate:
+            await self.fight(run)
+        self.assert_x_party(simulate, run, attack=2, defense=2)
+        self.assertEqual(simulate.call_args.args[1:], (
+            battle_engine.Combatant(**run['enemy']['snapshot']['combatant']), run['enemy']['battle_hp']))
+        self.assertEqual(simulate.call_args.kwargs, {'rules': load_table('battle')['rules'],
+                                                    'chart': CONTENT['type_chart']})
+        after = (await self.state())['run']
+        self.assertEqual([m['snapshot'] for m in after['team']], [m['snapshot'] for m in run['team']])
+        self.assertEqual(after['enemy'], json.loads(json.dumps(self.service()._roll_enemy(
+            5, 1, random.Random(11), CONTENT, MULTIPLIERS))))
+
+    async def test_three_fights_boosted_fourth_not_both_counters_drop_each_fight(self):
+        run = await self.x_fight_run(3, 3)
+        for left in (2, 1, 0, 0):
+            with patch.object(battle_engine, 'simulate', wraps=battle_engine.simulate) as simulate:
+                self.assertEqual((await self.fight(run))['status'], 'won')
+            self.assert_x_party(simulate, run, attack=2 if run['x_attack_left'] else 1,
+                                defense=2 if run['x_defense_left'] else 1)
+            run = (await self.state())['run']
+            self.assertEqual((run['x_attack_left'], run['x_defense_left']), (left, left))
+
+    async def test_loss_and_draw_count_down_and_end_the_run(self):
+        for outcome in ('loss', 'draw'):
+            with self.subTest(outcome=outcome):
+                await self.reset_run_fixture()
+                run = await self.x_fight_run(3, 1)
+                inventory = await self.rows('SELECT * FROM inventory')
+                with patch.object(battle_engine, 'simulate', return_value=self.outcome(outcome, (0, 0, 0), None)):
+                    result = await self.fight(run)
+                after = (await self.state())['run']
+                self.assertEqual(result['status'], 'defeated')
+                self.assertEqual((after['x_attack_left'], after['x_defense_left']), (2, 0))
+                self.assertEqual((after['ended_at'], after['end_reason']), (1300, outcome))
+                self.assertEqual(await self.rows('SELECT * FROM inventory'), inventory)
+
+    async def test_expired_run_keeps_counters_and_refunds_nothing(self):
+        run = await self.x_fight_run(3, 2)
+        before = await self.snapshot()
+        with patch.object(battle_engine, 'simulate', side_effect=AssertionError('expired boost fought')):
+            self.assertEqual((await self.fight(run, now=65800))['status'], 'stale')
+        before['arena_runs'][0].update(ended_at=65800, end_reason='expired', revision=run['revision'] + 1)
+        self.assertEqual(await self.snapshot(), before)
+
+    async def test_chain_step_and_heal_all_fights_are_boosted_and_counted(self):
+        for action in ('chain', 'heal'):
+            with self.subTest(action=action):
+                await self.reset_run_fixture()
+                run = await self.x_fight_run(3, 3)
+                if action == 'heal':
+                    run = await self.hurt(run)
+                    await self.inventory('razz_berry', 3)
+                with patch.object(battle_engine, 'simulate', wraps=battle_engine.simulate) as simulate:
+                    result = await self.chain_step(run) if action == 'chain' else await self.fight(run, berry='razz_berry')
+                self.assertEqual(result['status'], 'won')
+                healed = {**run, 'team': [{**m, 'hp': m['full_hp']} for m in run['team']]}
+                self.assert_x_party(simulate, healed, attack=2, defense=2)
+                after = (await self.state())['run']
+                self.assertEqual((after['x_attack_left'], after['x_defense_left']), (2, 2))
+                self.assertEqual(after['revision'], run['revision'] + (2 if action == 'heal' else 1))
+
+    async def test_chain_continues_when_a_boost_runs_out(self):
+        run = await self.x_fight_run(1, 1)
+        for left in (0, 0):
+            with patch.object(battle_engine, 'simulate', wraps=battle_engine.simulate) as simulate:
+                result = await self.chain_step(run)
+            self.assert_x_party(simulate, run, attack=2 if run['x_attack_left'] else 1,
+                                defense=2 if run['x_defense_left'] else 1)
+            self.assertEqual((result['status'], result['stop']), ('won', None))
+            run = result['run']
+            self.assertEqual((run['x_attack_left'], run['x_defense_left']), (left, left))
+
+    async def test_replayed_fight_counts_down_once(self):
+        run = await self.x_fight_run(3, 3)
+        with patch.object(battle_engine, 'simulate', wraps=battle_engine.simulate) as simulate:
+            results = await asyncio.gather(self.fight(run), self.fight(run))
+        self.assertEqual([r['status'] for r in results], ['won', 'stale'])
+        self.assertEqual(simulate.call_count, 1)
+        after = (await self.state())['run']
+        self.assertEqual((after['x_attack_left'], after['x_defense_left']), (2, 2))
+        # Restore the screen coordinates to reach the receipt replay guard as well.
+        await self.conn.execute('UPDATE arena_runs SET floor=?,slot=?,revision=? WHERE run_id=?',
+                                (run['floor'], run['slot'], run['revision'], run['run_id']))
+        before = await self.snapshot()
+        with patch.object(battle_engine, 'simulate', side_effect=AssertionError('receipt replay fought')):
+            self.assertEqual(await self.fight(run), results[0])
+        self.assertEqual(await self.snapshot(), before)
+
+    async def test_crash_mid_boost_keeps_count_and_rolls_back_together(self):
+        run = await self.x_fight_run(3, 3)
+        await self.fight(run)
+        before_restart = await self.state()
+        self.assertEqual((before_restart['run']['x_attack_left'], before_restart['run']['x_defense_left']), (2, 2))
+        before_crash = await self.snapshot()
+        with patch.object(self.conn, 'commit', side_effect=asyncio.CancelledError):
+            with self.assertRaises(asyncio.CancelledError):
+                await self.fight(before_restart['run'])
+        await self.writer.close()
+        await self.conn.close()
+        self.conn = await db.open_db(self.path)
+        self.addAsyncCleanup(self.conn.close)
+        self.writer = db.Writer(self.conn)
+        self.addAsyncCleanup(self.writer.close)
+        self.assertEqual(await self.state(), before_restart)
+        self.assertEqual(await self.snapshot(), before_crash)
+        await self.conn.execute("CREATE TRIGGER fail_boost BEFORE INSERT ON resource_ledger "
+                                "BEGIN SELECT RAISE(ABORT,'boost ledger failure'); END")
+        before = await self.snapshot()
+        with self.assertRaisesRegex(Exception, 'boost ledger failure'):
+            await self.fight(before_restart['run'])
+        self.assertEqual(await self.snapshot(), before)
+
+    async def test_fight_result_and_receipt_keys_unchanged_by_boost(self):
+        for attack, defense in ((0, 0), (3, 3)):
+            with self.subTest(attack=attack):
+                await self.reset_run_fixture()
+                run = await self.x_fight_run(attack, defense)
+                result = await self.fight(run)
+                self.assertEqual(set(result), {'status', 'outcome', 'reason', 'ticks', 'engine', 'floor',
+                                  'slot', 'enemy', 'party_hp', 'revived', 'finisher', 'candy', 'tickets'})
+                receipt = (await self.rows("SELECT * FROM action_receipts WHERE action='arena_fight'"))[0]
+                self.assertEqual((receipt['key'], receipt['action'], receipt['profile_id']),
+                                 (f"arena_fight:{run['run_id']}:1:0", 'arena_fight', self.pid))
+                self.assertEqual(json.loads(receipt['result']), result)
+                self.assertEqual(result['engine'], battle_engine.ENGINE_VERSION)
+                self.assertEqual(await self.rows('SELECT profile_id,resource,resource_id,delta,reason '
+                                                 'FROM resource_ledger'), [
+                    dict(profile_id=self.pid, resource='candy', resource_id='1', delta=1, reason='arena_candy')])
+
+    async def test_real_engine_boosts_cut_ticks_and_damage_taken(self):
+        results = {}
+        for kind in (None, 'attack', 'defense'):
+            await self.reset_run_fixture()
+            run = await self.x_fight_run(attack=3 if kind == 'attack' else 0,
+                                         defense=3 if kind == 'defense' else 0, floor=5)
+            result = await self.fight(run)
+            self.assertEqual(result['status'], 'won')
+            results[kind] = (result['ticks'], sum(result['party_hp']))
+        self.assertGreater(results[None][0], 1)
+        self.assertLess(results['attack'][0], results[None][0], results)
+        self.assertGreater(results['defense'][1], results[None][1], results)
 
     async def reset_run_fixture(self):
         await self.conn.execute('DELETE FROM arena_runs')

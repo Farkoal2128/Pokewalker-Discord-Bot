@@ -320,8 +320,11 @@ async def fight(conn, session, run_id, revision, now, rng, content, multipliers,
     pid = session['profile_id']
 
     async def compute(conn):
-        party = [replace(battle_engine.Combatant(**member['snapshot']['combatant']), hp=member['hp'])
-                 for member in run['team']]
+        x_rules = rules['x_items']
+        boosted_stats = [rule['stat'] for item, rule in x_rules['items'].items() if run[f'{item}_left'] > 0]
+        party = [replace(battle_engine.Combatant(**member['snapshot']['combatant']), hp=member['hp'],
+                         **{stat: member['snapshot']['combatant'][stat] * x_rules['multiplier']
+                            for stat in boosted_stats}) for member in run['team']]
         enemy = battle_engine.Combatant(**run['enemy']['snapshot']['combatant'])
         battle = battle_engine.simulate(party, enemy, run['enemy']['battle_hp'], rules=battle_rules, chart=chart)
         won = battle.outcome == 'win'
@@ -363,6 +366,7 @@ async def fight(conn, session, run_id, revision, now, rng, content, multipliers,
                                   'delta': copies, 'reason': 'arena_floor'})
             next_enemy = _roll_enemy(next_floor, next_slot, rng, content, multipliers)
         await conn.execute('UPDATE arena_runs SET team=?,enemy=?,floor=?,slot=?,ended_at=?,end_reason=?,'
+                           'x_attack_left=MAX(0,x_attack_left-1),x_defense_left=MAX(0,x_defense_left-1),'
                            'revision=revision+1 WHERE run_id=?',
                            (json.dumps(run['team']), json.dumps(next_enemy), next_floor, next_slot,
                             None if won else now, None if won else battle.outcome, run_id))
