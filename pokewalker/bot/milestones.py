@@ -81,10 +81,23 @@ def _reward_name(row, content):
 
 
 async def _gym_labels(conn, session, details):
+    labels = {}
+    for row in details:
+        key = row['milestone_id']
+        if key.startswith('arena:'):
+            parts = key.split(':')
+            label = 'Arena ticket reward'
+            if len(parts) >= 3 and parts[1]:
+                if len(parts) == 3 and parts[2] == 'stardust':
+                    label = 'Arena ticket: Stardust'
+                elif (len(parts) == 4 and parts[2] in ('income', 'survivor')
+                      and parts[3].isascii() and parts[3].isdecimal()):
+                    label = 'Arena ticket: ' + ('income roll' if parts[2] == 'income' else 'survivor reward')
+            labels[key] = label
     rewards = {row['milestone_id']: row['milestone_id'].split(':') for row in details
                if row['milestone_id'].startswith(('gym_income:', 'survivor:'))}
-    labels = {milestone_id: 'Gym income reward' if parts[0] == 'gym_income' else 'Gym survivor reward'
-              for milestone_id, parts in rewards.items()}
+    labels.update({milestone_id: 'Gym income reward' if parts[0] == 'gym_income' else 'Gym survivor reward'
+                   for milestone_id, parts in rewards.items()})
     rewards = {milestone_id: parts for milestone_id, parts in rewards.items() if parts[1] and (
         (parts[0] == 'gym_income' and len(parts) == 3 and parts[2] in ('1', '2', '3', '4', '5', '6', '7', '8'))
         or (parts[0] == 'survivor' and len(parts) == 2))}

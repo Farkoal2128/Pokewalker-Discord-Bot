@@ -7,7 +7,7 @@ import math
 
 import discord
 
-from content.balance import load_table
+from content.balance import limits, load_table
 from pokewalker.bot import gyms
 from pokewalker.bot.screens_catch import custom_id
 from pokewalker.domain import arena as domain
@@ -21,6 +21,7 @@ BERRIES = ('razz_berry', 'pinap_berry')
 HEALS = ('arena_heal_one', 'arena_heal_two', 'arena_heal_three')
 BREAK_ACTIONS = ('arena_fight', 'arena_heal_fight', *HEALS, 'arena_berry', 'arena_order')
 STALE = 'The run changed on another screen. This is its current state.'
+REDEEM = {f'arena_redeem_{tier}': tier for tier in ('bronze', 'silver', 'gold', 'platinum', 'diamond')}
 
 
 def wait(seconds):
@@ -51,8 +52,36 @@ def render_home(state):
     view = gyms.buttons(state, [*actions, (f"Tickets ({sum(state['tickets'].values())})", 'arena_tickets'), ('Back', 'home')])
     if state['status'] != 'live':
         view.children[0].disabled = not state['enabled'] or state['paused'] or bool(state['cooldown_left'])
-    view.children[-2].disabled = True
     return {'embed': discord.Embed(title='Arena', description='\n'.join(lines)), 'view': view}
+
+
+def ticket_contents(rewards):
+    encounters = ('fill encounter queue' if rewards['encounters'] == 'fill'
+                  else '1 encounter' if rewards['encounters'] == 1 else f"up to {rewards['encounters']} encounters")
+    survivors = f"{rewards['survivor_rolls']} survivor reward" + ('' if rewards['survivor_rolls'] == 1 else 's')
+    return (f"{encounters}, {rewards['stardust']} Stardust, {rewards['income_rolls']} gym income rolls, "
+            + survivors)
+
+
+def render_tickets(state):
+    lines = [f"{tier.title()} ×{state['tickets'].get(tier, 0)}: {ticket_contents(rewards)}"
+             for tier, rewards in state['tiers'].items()]
+    if state.get('notice'):
+        lines.append(state['notice'])
+    view = gyms.buttons(state, [(tier.title(), action) for action, tier in REDEEM.items()] + [('Back', 'arena')])
+    for button, tier in zip(view.children, REDEEM.values()):
+        button.disabled = state['tickets'].get(tier, 0) == 0
+    return {'embed': discord.Embed(title='Arena tickets', description='\n'.join(lines)), 'view': view}
+
+
+def render_redeem(state):
+    selection = state['selection']
+    lines = [ticket_contents(state['tiers'][selection['tier']]),
+             f"{selection['free']} of {state['cap']} slots free: +{selection['add']} encounters"]
+    if state.get('notice'):
+        lines.append(state['notice'])
+    return {'embed': discord.Embed(title=f"Redeem {selection['tier'].title()} Ticket?", description='\n'.join(lines)),
+            'view': gyms.buttons(state, [('Confirm', 'arena_redeem_confirm'), ('Back', 'arena_tickets')])}
 
 
 def render_team(state):
@@ -142,13 +171,52 @@ def render_defeat(state):
     if state.get('notice'):
         lines.append(state['notice'])
     view = gyms.buttons(state, [('Tickets', 'arena_tickets'), ('Back', 'arena')])
-    view.children[0].disabled = True
     return {'embed': discord.Embed(title='Arena defeat', description='\n'.join(lines)), 'view': view}
 
 
 def handlers(walker):
     from pokewalker.bot.walker import _Refused, REOPEN, EXCLUDED
     rules = load_table('arena')['rules']
+
+    async def tickets_action(action, conn, session, current, now):
+        tiers, cap = rules['tickets']['tiers'], limits()['encounter_queue']
+        selection = json.loads(session['selection'])
+        notice = None
+
+        def preview(tier, quote, notice=None):
+            selection = {'phase': 'arena_redeem', 'tier': tier, 'free': quote['free'], 'add': quote['add']}
+            session['selection'] = json.dumps(selection)
+            return render_redeem({'session': session, 'selection': selection, 'tiers': tiers, 'cap': cap, 'notice': notice})
+
+        if action != 'arena_tickets':
+            if action == 'arena_redeem_confirm':
+                if (selection.get('phase') != 'arena_redeem' or selection.get('tier') not in tiers
+                        or not {'free', 'add'} <= selection.keys()):
+                    raise _Refused(REOPEN)
+                tier = selection['tier']
+                result = await service.redeem(conn, session, tier, expected_free=selection['free'],
+                                              expected_add=selection['add'], now=now, rng=walker.rng,
+                                              content=walker.bot.content)
+                status = result['status']
+                if status == 'quote_changed':
+                    return preview(tier, result, 'Your queue changed. Nothing was spent.')
+                if status == 'redeemed':
+                    notice = f"Redeemed a {tier.title()} Ticket: +{result['encounters']} encounters. Rewards are in your Inbox."
+                    current = await service.state(conn, session, now)
+                elif status not in ('none', 'queue_full'):
+                    raise _Refused(EXCLUDED if status == 'excluded' else REOPEN)
+            else:
+                tier = REDEEM[action]
+                quote = await service.redeem_quote(conn, session['profile_id'], tier)
+                status = 'none' if not quote['held'] else 'queue_full' if quote['free'] == 0 else 'preview'
+                if status == 'preview':
+                    return preview(tier, quote)
+            if status == 'none':
+                notice = f'You have no {tier.title()} Tickets.'
+            elif status == 'queue_full':
+                notice = f'Your encounter queue is full ({cap}/{cap}). Open an encounter first. Nothing was spent.'
+        session['selection'] = '{}'
+        return render_tickets({'session': session, 'tickets': current['tickets'], 'tiers': tiers, 'notice': notice})
 
     def pokemon_state(pokemon):
         item = storage.stats(walker.bot.content, pokemon, walker.multipliers)
@@ -235,6 +303,8 @@ def handlers(walker):
         current = await service.state(conn, session, now)
         if current['status'] in ('stale', 'excluded'):
             raise _Refused(EXCLUDED if current['status'] == 'excluded' else REOPEN)
+        if action in REDEEM or action in ('arena_tickets', 'arena_redeem_confirm'):
+            return await tickets_action(action, conn, session, current, now)
         if action in BREAK_ACTIONS:
             return await break_action(action, conn, session, interaction, current, now)
         selection = json.loads(session['selection'])
@@ -290,4 +360,5 @@ def handlers(walker):
 
     return {name: partial(dispatch, name) for name in
             ('arena', 'arena_resume', 'arena_team', 'arena_team_prev', 'arena_team_next',
-             'arena_team_sort', 'arena_team_pick', 'arena_team_clear', 'arena_start', *BREAK_ACTIONS)}
+             'arena_team_sort', 'arena_team_pick', 'arena_team_clear', 'arena_start', *BREAK_ACTIONS,
+             'arena_tickets', *REDEEM, 'arena_redeem_confirm')}

@@ -10,6 +10,7 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 from pokewalker.bot.walker import CUSTOM_ID, Walker, _Refused
+from content.balance import limits
 from pokewalker.services import arena as service, gyms
 import test_arena
 
@@ -18,6 +19,10 @@ class ArenaScreenTests(unittest.IsolatedAsyncioTestCase):
     profile = test_arena.ArenaTests.profile
     scalar = test_arena.ArenaTests.scalar
     rows = test_arena.ArenaTests.rows
+    ticket = test_arena.ArenaTests.ticket
+    queue = test_arena.ArenaTests.queue
+    snapshot = test_arena.ArenaTests.snapshot
+    redemption_snapshot = test_arena.ArenaTests.redemption_snapshot
 
     async def asyncSetUp(self):
         await test_arena.ArenaTests.asyncSetUp(self)
@@ -38,7 +43,9 @@ class ArenaScreenTests(unittest.IsolatedAsyncioTestCase):
 
     async def click(self, action, values=None):
         interaction = SimpleNamespace(data={'values': values or []})
-        rendered = await self.writer.run(lambda conn: self.screens().handlers(self.walker)[action](conn, self.session, interaction))
+        handlers = self.screens().handlers(self.walker)
+        self.assertIn(action, handlers, 'Required Arena action is absent')
+        rendered = await self.writer.run(lambda conn: handlers[action](conn, self.session, interaction))
         self.assertLessEqual(len(rendered['embed'].description), 4096)
         rows = {}
         for item in rendered['view'].children:
@@ -74,7 +81,7 @@ class ArenaScreenTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('Bronze: 3', ready['embed'].description)
         self.assertFalse(self.button(ready, 'arena_team').disabled)
         self.assertEqual(self.button(ready, 'arena_tickets').label, 'Tickets (15)')
-        self.assertTrue(self.button(ready, 'arena_tickets').disabled)
+        self.assertFalse(self.button(ready, 'arena_tickets').disabled)
         self.assertEqual(self.button(ready, 'home').label, 'Back')
         await self.conn.execute('UPDATE guilds SET arena_enabled=0')
         off = await self.click('arena')
@@ -217,7 +224,9 @@ class ArenaScreenTests(unittest.IsolatedAsyncioTestCase):
         expected = {'arena', 'arena_resume', 'arena_team', 'arena_team_prev', 'arena_team_next',
                     'arena_team_sort', 'arena_team_pick', 'arena_team_clear', 'arena_start',
                     'arena_fight', 'arena_heal_fight', 'arena_heal_one', 'arena_heal_two',
-                    'arena_heal_three', 'arena_berry', 'arena_order'}
+                    'arena_heal_three', 'arena_berry', 'arena_order', 'arena_tickets',
+                    'arena_redeem_bronze', 'arena_redeem_silver', 'arena_redeem_gold',
+                    'arena_redeem_platinum', 'arena_redeem_diamond', 'arena_redeem_confirm'}
         self.assertEqual(set(mapping), expected)
         for action in mapping:
             self.assertIsNotNone(re.fullmatch('[a-z_]+', action))
@@ -502,3 +511,142 @@ class ArenaScreenTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(ids), len(set(ids)))
             if rendered['embed'].title == 'Arena break':
                 self.assertEqual({item.row for item in rendered['view'].children}, {0, 1, 2, 3})
+
+    async def test_tickets_screen_lists_five_tiers_with_counts_and_contents(self):
+        await self.ticket('silver', 2)
+        rendered = await self.click('arena_tickets')
+        self.assertEqual(rendered['embed'].title, 'Arena tickets')
+        self.assertEqual(rendered['embed'].description.splitlines(), [
+            'Bronze ×0: 1 encounter, 100 Stardust, 0 gym income rolls, 0 survivor rewards',
+            'Silver ×2: up to 2 encounters, 200 Stardust, 2 gym income rolls, 0 survivor rewards',
+            'Gold ×0: fill encounter queue, 400 Stardust, 4 gym income rolls, 0 survivor rewards',
+            'Platinum ×0: fill encounter queue, 1000 Stardust, 8 gym income rolls, 1 survivor reward',
+            'Diamond ×0: fill encounter queue, 3000 Stardust, 24 gym income rolls, 3 survivor rewards'])
+        self.assertEqual(self.button(rendered, 'arena').label, 'Back')
+        rules = json.loads(json.dumps(test_arena.RULES))
+        rules['tickets']['tiers']['silver'].update(encounters=1, stardust=321, income_rolls=7)
+        screens = self.screens()
+        with patch.object(screens, 'load_table', return_value={'rules': rules}), \
+                patch.object(screens, 'render_tickets', wraps=screens.render_tickets) as render:
+            changed = await self.click('arena_tickets')
+        self.assertIn('Silver ×2: 1 encounter, 321 Stardust, 7 gym income rolls', changed['embed'].description)
+        with patch('builtins.open', side_effect=AssertionError('renderer I/O')), \
+                patch.object(self.conn, 'execute', side_effect=AssertionError('renderer SQL')):
+            self.assertEqual(screens.render_tickets(render.call_args.args[0])['embed'].description,
+                             changed['embed'].description)
+
+    async def test_redeem_buttons_disabled_at_zero(self):
+        await self.ticket('gold', 1)
+        rendered = await self.click('arena_tickets')
+        for tier in test_arena.RULES['tickets']['tiers']:
+            self.assertEqual(self.button(rendered, 'arena_redeem_' + tier).disabled, tier != 'gold')
+        before = await self.redemption_snapshot()
+        none = await self.click('arena_redeem_bronze')
+        self.assertIn('You have no Bronze Tickets.', none['embed'].description)
+        self.assertEqual(await self.redemption_snapshot(), before)
+
+    async def test_confirm_screen_quotes_free_slots_and_added_encounters(self):
+        await self.ticket('silver')
+        await self.queue()
+        screens = self.screens()
+        with patch.object(service, 'redeem_quote', wraps=service.redeem_quote) as quoting, \
+                patch.object(screens, 'render_redeem', wraps=screens.render_redeem) as render:
+            rendered = await self.click('arena_redeem_silver')
+        quoting.assert_awaited_once_with(self.conn, self.pid, 'silver')
+        self.assertIn('2 of 3 slots free: +2 encounters', rendered['embed'].description)
+        self.assertIn('200 Stardust, 2 gym income rolls', rendered['embed'].description)
+        self.assertEqual(self.selection(), {'phase': 'arena_redeem', 'tier': 'silver', 'free': 2, 'add': 2})
+        self.assertEqual(self.button(rendered, 'arena_redeem_confirm').label, 'Confirm')
+        self.assertEqual(self.button(rendered, 'arena_tickets').label, 'Back')
+        with patch('builtins.open', side_effect=AssertionError('renderer I/O')), \
+                patch.object(self.conn, 'execute', side_effect=AssertionError('renderer SQL')):
+            self.assertEqual(screens.render_redeem(render.call_args.args[0])['embed'].description,
+                             rendered['embed'].description)
+        with patch.object(screens, 'limits', return_value={'encounter_queue': 9}):
+            changed_cap = await self.click('arena_redeem_silver')
+        self.assertIn('2 of 9 slots free: +2 encounters', changed_cap['embed'].description)
+
+    async def test_queue_full_explains_and_spends_nothing(self):
+        await self.ticket('diamond')
+        await self.click('arena_redeem_diamond')
+        preview = self.session['selection']
+        await self.queue(limits()['encounter_queue'])
+        before = await self.redemption_snapshot()
+        for action in ('arena_redeem_diamond', 'arena_redeem_confirm'):
+            self.session['selection'] = preview
+            shown = await self.click(action)
+            self.assertEqual(shown['embed'].title, 'Arena tickets')
+            self.assertIn('Your encounter queue is full (3/3). Open an encounter first. Nothing was spent.',
+                          shown['embed'].description)
+            self.assertEqual(await self.redemption_snapshot(), before)
+        with patch.object(self.screens(), 'limits', return_value={'encounter_queue': 9}):
+            shown = await self.click('arena_redeem_diamond')
+        self.assertIn('full (9/9)', shown['embed'].description)
+
+    async def test_quote_changed_between_confirm_and_press_shows_new_quote(self):
+        await self.ticket('silver')
+        await self.click('arena_redeem_silver')
+        await self.queue()
+        before = await self.redemption_snapshot()
+        changed = await self.click('arena_redeem_confirm')
+        self.assertIn('Your queue changed. Nothing was spent.', changed['embed'].description)
+        self.assertIn('2 of 3 slots free: +2 encounters', changed['embed'].description)
+        self.assertEqual(self.selection(), {'phase': 'arena_redeem', 'tier': 'silver', 'free': 2, 'add': 2})
+        self.assertEqual(await self.redemption_snapshot(), before)
+
+    async def test_confirm_without_preview_refused(self):
+        await self.ticket('bronze')
+        for selection in ({}, {'phase': 'arena_team'}, {'phase': 'arena_redeem', 'tier': 'invalid'}):
+            self.session['selection'] = json.dumps(selection)
+            before = await self.redemption_snapshot()
+            with patch.object(service, 'redeem', wraps=service.redeem) as redeeming:
+                with self.assertRaises(_Refused):
+                    await self.click('arena_redeem_confirm')
+            redeeming.assert_not_awaited()
+            self.assertEqual(await self.redemption_snapshot(), before)
+
+    async def test_redeemed_notice_and_count_drops_by_one(self):
+        await self.ticket('silver', 2)
+        await self.click('arena_redeem_silver')
+        with patch.object(service, 'redeem', wraps=service.redeem) as redeeming:
+            rendered = await self.click('arena_redeem_confirm')
+        redeeming.assert_awaited_once_with(self.conn, self.session, 'silver', expected_free=3, expected_add=2,
+                                          now=self.now, rng=self.walker.rng, content=test_arena.CONTENT)
+        self.assertIn('Redeemed a Silver Ticket: +2 encounters. Rewards are in your Inbox.', rendered['embed'].description)
+        self.assertIn('Silver ×1:', rendered['embed'].description)
+        self.assertEqual(await self.scalar('SELECT quantity FROM arena_tickets'), 1)
+        self.assertEqual(await self.scalar('SELECT COUNT(*) FROM encounters'), 2)
+        self.assertEqual(self.button(await self.click('arena'), 'arena_tickets').label, 'Tickets (1)')
+        await self.conn.execute('DELETE FROM encounters')
+        await self.click('arena_redeem_silver')
+        await self.conn.execute('UPDATE arena_tickets SET quantity=0')
+        before = await self.redemption_snapshot()
+        none = await self.click('arena_redeem_confirm')
+        self.assertIn('You have no Silver Tickets.', none['embed'].description)
+        self.assertEqual(await self.redemption_snapshot(), before)
+
+    async def test_tickets_redeemable_with_arena_off_and_during_live_run(self):
+        await self.ticket('bronze', 2)
+        await self.conn.execute('UPDATE guilds SET arena_enabled=0')
+        for live in (False, True):
+            # Direct handlers bypass the router's new revision for each press.
+            self.session['_original_revision'] += 1
+            if live:
+                await self.conn.execute('UPDATE guilds SET arena_enabled=1')
+                await self.start_run()
+                await self.conn.execute('UPDATE guilds SET arena_enabled=0')
+            home = await self.click('arena')
+            self.assertFalse(self.button(home, 'arena_tickets').disabled)
+            await self.click('arena_tickets')
+            await self.click('arena_redeem_bronze')
+            shown = await self.click('arena_redeem_confirm')
+            self.assertIn('Redeemed a Bronze Ticket: +1 encounters.', shown['embed'].description)
+        self.assertEqual(await self.scalar('SELECT quantity FROM arena_tickets'), 0)
+        self.assertIsNone((await self.run_state())['ended_at'])
+
+    async def test_diamond_counts_each_reward_as_inbox_entry(self):
+        from pokewalker.services import milestones
+        await self.ticket('diamond')
+        await self.click('arena_redeem_diamond')
+        await self.click('arena_redeem_confirm')
+        self.assertEqual(await milestones.pending_count(self.conn, self.pid), 28)
