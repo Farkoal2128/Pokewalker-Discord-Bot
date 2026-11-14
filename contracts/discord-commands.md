@@ -976,6 +976,29 @@ Manage Server, guild only, reason required. Writes `guilds.gym_legendary_defende
 naming the current state. The private gym screens mark Legendary/Mythical Pokémon as unable to
 defend and omit them as claim options only while the setting is off.
 
+## C5: Arena `/walker-admin arena on|off reason` (ARENA-14)
+
+AR-35 and AR-35a add this direct walker-admin subcommand, with required on/off
+choices and reason. It defers ephemerally, requires Manage Server in a guild and
+an actor who is not excluded, then strips the reason. Empty reasons say "A reason
+is required." Invalid on values say "Choose on or off." Neither writes state.
+The writer rechecks the actor before inserting a missing guild, changing only
+guilds.arena_enabled and inserting one guild-target arena_on/arena_off audit row
+with the stripped reason and Walker.clock time. The update and audit are atomic.
+Replies suppress mentions and follow commit/rollback.
+
+Success says "The Arena is now on in this server." or "The Arena is now off in
+this server. Runs already started can be finished, and tickets can still be
+redeemed." Off blocks new starts; live fights, healing, ordering and redemption
+continue. Re-enabling preserves cooldowns, best floor and tickets. The default
+remains on for new and migrated guilds.
+
+This is additive command metadata; permissions, intents and persisted formats
+remain unchanged. WalkerBot's existing registration includes it in the local
+command manifest. Deployment needs an owner-authorized command sync at G-F;
+this row performs no Discord sync. Tests: test_arena_admin and unchanged
+test_admin_channels, test_gym_legendary_setting, test_admin_reset_sharing.
+
 ## C5: D62b gym feeding
 The holder's gym view adds **Feed Razz Berry** (`gym_feed`) beside Recall and Rewards and
 shows the battle-HP factor including feeding. A press runs C3 `feed` and re-renders the gym

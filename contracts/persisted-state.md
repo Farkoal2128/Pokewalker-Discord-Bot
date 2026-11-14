@@ -1,5 +1,9 @@
 # Contract: persisted state (C3)
 
+ARENA-14: guild-target `mod_audit` actions `arena_on` / `arena_off` commit
+atomically with `guilds.arena_enabled`, recording the actor, guild target,
+stripped nonempty reason and Walker.clock time; no schema change.
+
 ## M4.4 share reservation (additive)
 Migration 0010 adds nullable profiles.last_share_at REAL, preserving existing rows.
 It stores the UTC epoch time of the latest committed share reservation, not proof
