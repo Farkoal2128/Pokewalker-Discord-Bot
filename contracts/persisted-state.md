@@ -1425,3 +1425,44 @@ are unchanged: the acceptance recheck uses the injected clock in the same writer
 transaction. Producers: trading; consumers: trade picker, offer and acceptance.
 Tests: test_trading, test_trade_screens; unchanged test_trading_schema and
 test_trade_command. Native/live acceptance remains separate.
+
+
+## Arena lifecycle service (ARENA-8)
+services.arena mutators, including lazy-expiring state, require the caller's
+writer transaction and validate session_owner (stale/excluded). state returns
+{status: none|live|ended, run, cooldown_left, enabled, best_floor, tickets}; run
+is the latest profile-owned row with decoded team and enemy JSON, or None, and
+tickets maps held tiers to quantities. Authorized access ends a run at or after
+started_at + run_seconds with ended_at=now, end_reason=expired and revision+1,
+without rewards or a receipt. This happens before other action refusals, including
+paused start. cooldown_left is nonnegative whole seconds, rounded up, from the
+latest started_at + cooldown_seconds, regardless of when that run ended.
+
+start(conn,session,team,now,rng,content,multipliers) first calls state, then refuses
+paused (until in the check-in ISO format), off, live, cooldown (seconds_left),
+invalid team shape/distinctness, stale ownership/revision, or deployed. Otherwise
+exactly three owned members, including companions and specials, are snapshotted
+through gyms._battle_snapshot with uid, family_id, special, full_hp and hp.
+The stored floor-1 entry enemy comes from domain.roll_enemy through the real
+Pokemon/form row builder and the same snapshot helper. It stores snapshot,
+battle_hp (domain.enemy_hp) and special. Run starts at floor=1, slot=0, revision=0.
+The arena_start:<session_id>:<_original_revision> receipt (session revision fallback)
+returns started with run; repeat presses cannot create another run or reroll one.
+
+set_order(conn,session,run_id,revision,order,now) takes a permutation of (0,1,2),
+saves that team order, increments revision and returns ordered with run, without
+a receipt or resource cost. heal(conn,session,run_id,revision,positions,berry,now)
+takes nonempty distinct valid positions and a heal_items berry, else invalid.
+Both call state first; no live run or a mismatching ID/revision returns stale
+with the current run, spending nothing. Paused members and members in a server
+where Arena was switched off may still order and heal live runs; excluded
+members cannot continue. Each selected heal position must be below full_hp
+(else full). Insufficient selected berries returns missing with short, with no
+debit. arena_heal:<run_id>:<revision> restores each selected hp to full_hp, debits
+one berry per position and increments revision, returning healed with run. Its
+ledger line is item / berry / -n / arena_heal. Every Arena receipt supplies
+profile_id to with_receipt. Snapshot identity, stats, enemy and current HP persist
+across restarts and do not change with a storage power-up or evolution.
+Producers: services.arena; consumers: later Arena screens and fight actions.
+No schema or gym snapshot changes. Tests: test_arena. Full M1 and native/live
+acceptance remain separate.
