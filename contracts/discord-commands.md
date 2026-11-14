@@ -1452,3 +1452,51 @@ and acceptance refusal ("Your Pokémon can't be traded: it is on an Arena team."
 or "Their Pokémon can't be traded: it is on an Arena team.", according to side).
 Producers: bot.trade; consumers: trade participants. No custom-ID or schema change.
 Tests: test_trade_screens and test_trading. Native/live acceptance remains separate.
+
+
+## Arena screens (ARENA-11)
+
+AR-1..AR-8, AR-14a, AR-15 and AR-35a add private Arena renderers and
+handlers(walker) in bot.arena. This row does not register their action map;
+ARENA-15 supplies navigation/router integration. Producers are the Arena
+service and owned-storage queries; consumers are pure Discord renderers.
+No existing command or router behavior changes. All custom IDs reuse
+screens_catch.custom_id, and action names contain only letters/underscores.
+
+arena calls service.state (including lazy expiry), then shows status, best
+floor and held ticket counts. Off says "The Arena is turned off in this
+server." A live run shows "Run in progress: floor N, entry|middle|boss fight."
+and Resume (arena_resume), including while off or paused. Without a live run,
+Start run (arena_team) is enabled only when on, unpaused and off cooldown.
+Cooldown says "Next run in Xh Ym." An ended run says "Your last run ended on
+floor N." Tickets (n) (arena_tickets) is always present but disabled until
+ARENA-13; Back uses home. Excluded/stale owners use the existing refusal path.
+
+Team selection is {phase:arena_team,team:[[uid,revision],...],offset,
+favorites_first}. arena_team starts an empty picker. arena_team_prev/next
+page storage.page for that profile, ten rows at a time; arena_team_sort uses
+the gym sort_label and resets the offset while preserving picks. Each row
+shows name, CP and types. Gym defenders say "unavailable: deployed"; companions
+and specials remain selectable. arena_team_pick accepts exactly one eligible,
+distinct UID on the current page, up to three. arena_team_clear empties picks.
+Start (arena_start) is disabled until three valid members are selected. Each
+picked special adds "<name> is a special Pok?mon: it only earns Candy from boss
+knockouts." This warning does not block starting. The picker uses rows 0-2:
+navigation/sort/Back, the select, then Clear/Start.
+
+arena_start passes the saved list to service.start. started/live opens the
+read-only break screen. Other refusals retain the picker with a notice: stale
+says "A Pok?mon changed. Pick your team again." and clears picks; deployed
+says "A gym defender can't join an Arena team."; cooldown shows the wait;
+paused uses check-in wording ("Check-ins are paused indefinitely." or
+"Check-ins are paused until <until>."); off uses the off line. All start
+eligibility remains authoritative in the service transaction.
+
+arena_resume and successful start store {phase:arena_break,run_id,run_revision}.
+The break screen shows the stored next enemy's species, types, CP and exact
+sprite when available, never level or IVs, plus party members in saved order
+with HP / full HP. Back out uses arena and changes no run/enemy/HP or clock.
+Resuming after expiry returns Arena home. ARENA-12 adds break actions. Views
+stay within five rows, five component widths per row and existing embed/custom
+ID limits. Render functions do no I/O. Tests: test_arena_screens; full M1 and
+live Discord acceptance remain separate.
