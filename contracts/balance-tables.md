@@ -489,3 +489,32 @@ additive key. The economy report does not model these monthly rewards: at most
 3 Master Balls, 2 Shiny Lures and 1 World Legendary Ticket per server and month.
 Only its manifest hash and arena.json version input lines change. Tests:
 test_balance_tables, test_content_integrity and report regeneration comparison.
+
+## Arena X-item rules (version 3)
+
+Arena requirements section 6.4 (owner ruling 2026-11-14, AR-42 through AR-46)
+adds `rules.x_items` after `leaderboard`. Repository authors produce `arena.json`
+version 3 and its manifest balance hash; existing consumers ignore the additive
+key. No persisted data, other balance tables or artifact bytes change.
+
+| Key | Payload and units |
+|---|---|
+| `fights` | 3 fights of effect per use, a positive integer count |
+| `multiplier` | 2 times the named party stat while its counter is above 0, a positive integer factor |
+| `items.x_attack` | `{"stat": "attack", "stardust": 300}` |
+| `items.x_defense` | `{"stat": "defense", "stardust": 300}` |
+
+Each `items` key is an inventory item ID. `stat` names a `battle.Combatant`
+field: attack and defense each occur once. Each `stardust` is the positive integer
+price of one item in Stardust. Both items count in `bag_units`; neither is a
+`capacities.json` rare pocket or a `conversion_rates.json` `stardust_per_unit` or
+`purchase_stardust` key, so neither can be converted. Consumers are `buy_x` and
+`use_x` (ARENA-26), `fight` (ARENA-27), and the Arena screens (ARENA-28).
+
+`source` gains section 6.4 (owner ruling 2026-11-14) and retains section 6.3;
+`checked` remains 2026-11-13 because species references were not rechecked.
+`artifact_sha256` stays unchanged. The economy report does not model this
+Stardust sink; AR-46's figures come from an uncommitted scratch simulation.
+Only the report's manifest hash and `arena.json` version input lines change.
+Tests: `test_balance_tables`, `test_content_integrity` and report regeneration
+comparison.
