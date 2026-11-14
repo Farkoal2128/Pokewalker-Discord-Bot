@@ -85,8 +85,10 @@ class TradingSchemaTests(unittest.IsolatedAsyncioTestCase):
                 profile = after['profiles'][0]
                 # Later migrations may add guild settings; D63's starts off for existing servers.
                 self.assertEqual(after['guilds'][0].pop('gym_legendary_defenders', 0), 0)
+                self.assertEqual(after['guilds'][0].pop('arena_enabled', 'missing'), 1)
                 # D64's Shiny Charm switch starts on (0) for existing players.
                 self.assertEqual(profile.pop('shiny_charm_off', 0), 0)
+                self.assertEqual(profile.pop('arena_best_floor', 'missing'), 0)
                 self.assertEqual((profile.pop('last_trade_at', 'missing'),
                                   profile.pop('last_trade_ping_at', 'missing')), (None, None))
                 self.assertEqual(after, before)
