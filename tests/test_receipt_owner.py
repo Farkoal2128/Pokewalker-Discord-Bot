@@ -56,7 +56,7 @@ class ReceiptOwnerTests(unittest.IsolatedAsyncioTestCase):
 
     async def legacy_schema(self):
         # Keep real producer results while restoring every pre-0003 table and column.
-        for table in ('arena_runs', 'arena_tickets'):
+        for table in ('arena_month_places', 'arena_months', 'arena_month_scores', 'arena_runs', 'arena_tickets'):
             await self.conn.execute(f'DROP TABLE {table}')
         await self.conn.execute('ALTER TABLE guilds DROP COLUMN arena_enabled')
         await self.conn.execute('ALTER TABLE profiles DROP COLUMN arena_best_floor')
