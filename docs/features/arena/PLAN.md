@@ -130,7 +130,7 @@ Every build row is `seam` (PIPELINE.md:13): at most 2 production files and 300 p
 | 28 | [ARENA-26](tickets/ARENA-26.md) M4 state: migration 0028, `state` keys, buy and use | build | seam | M | ✅ done · 6eb9d3e · GO review r1 |
 | 29 | [ARENA-27](tickets/ARENA-27.md) M4 fights: boosted party combatants and the per-fight countdown | build | seam | S | ✅ done · 84383cd · GO review r1 |
 | 30 | [ARENA-28](tickets/ARENA-28.md) M4 screens: buy and use on the home and break screens; help | build | seam | M | ✅ done · 403c751 · GO review r2 |
-| 31 | G-F final verification and delivery decisions | 🚦 | — | — | pending |
+| 31 | G-F final verification and delivery decisions | 🚦 | — | — | technical ✅ 2026-11-14 · 57129c4 · test_cmd PASS (1992 OK) · integration GO · delivery awaits owner |
 
 ## 5. Briefs
 
