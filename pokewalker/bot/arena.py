@@ -19,7 +19,8 @@ CHANGED = 'A Pokémon changed. Pick your team again.'
 FIGHTS = ('entry', 'middle', 'boss')
 BERRIES = ('razz_berry', 'pinap_berry')
 HEALS = ('arena_heal_one', 'arena_heal_two', 'arena_heal_three')
-BREAK_ACTIONS = ('arena_fight', 'arena_heal_fight', *HEALS, 'arena_berry', 'arena_order')
+BREAK_ACTIONS = ('arena_fight', 'arena_heal_fight', *HEALS, 'arena_berry', 'arena_order',
+                 'arena_auto_order', 'arena_stop_pct')
 STALE = 'The run changed on another screen. This is its current state.'
 REDEEM = {f'arena_redeem_{tier}': tier for tier in ('bronze', 'silver', 'gold', 'platinum', 'diamond')}
 
@@ -110,6 +111,16 @@ def render_team(state):
     view.add_item(discord.ui.Button(label='Clear', custom_id=custom_id(state, 'arena_team_clear'), row=2))
     view.add_item(discord.ui.Button(label='Start', custom_id=custom_id(state, 'arena_start'), row=2,
                                    disabled=len(state['members']) != 3 or any(not item or item['reason'] for item in state['members'])))
+    skip = selection.get('skip', 0)
+    if skip:
+        paid = ', '.join(f'{copies} {tier.title()}' for tier, copies in state['skip_tickets'].items()) or 'nothing'
+        lines.append(f'Skipping {skip} floors pays now: {paid}.')
+    for action, row, start, end in (('arena_skip', 3, 0, min(state['max_skip'], 24)),
+                                    ('arena_skip_more', 4, 25, state['max_skip'])):
+        if state['max_skip'] > 0 and start <= end:
+            view.add_item(discord.ui.Select(placeholder='Skip floors', custom_id=custom_id(state, action), row=row,
+                          options=[discord.SelectOption(label='No skip' if k == 0 else f'Skip {k} floors: start at floor {k + 1}',
+                                                        value=str(k), default=skip == k) for k in range(start, end + 1)]))
     return {'embed': discord.Embed(title='Arena team', description='\n'.join(lines)), 'view': view}
 
 
@@ -146,7 +157,8 @@ def render_break(state):
     if state['sprite'] is not None:
         embed.set_image(url=state['sprite'])
     view = discord.ui.View(timeout=None)
-    for label, action in [('Fight', 'arena_fight'), ('Heal all & fight', 'arena_heal_fight'), ('Back out', 'arena')]:
+    for label, action in [('Fight', 'arena_fight'), ('Heal all & fight', 'arena_heal_fight'),
+                          ('Auto-order: ' + ('on' if state['auto_order'] else 'off'), 'arena_auto_order'), ('Back out', 'arena')]:
         view.add_item(discord.ui.Button(label=label, custom_id=custom_id(state, action), row=0))
     for member, action in zip(run['team'], HEALS):
         view.add_item(discord.ui.Button(label=f"Heal {member['snapshot']['combatant']['name']}",
@@ -159,6 +171,9 @@ def render_break(state):
                                                                               for i in order)[:100],
                                                                  value=''.join(map(str, order)), default=order == (0, 1, 2))
                                             for order in permutations(range(3))]))
+    view.add_item(discord.ui.Select(placeholder='Stop threshold', custom_id=custom_id(state, 'arena_stop_pct'), row=4,
+                  options=[discord.SelectOption(label=f'Stop below {pct}%', value=str(pct), default=state['stop_pct'] == pct)
+                           for pct in service.STOP_PCTS]))
     return {'embed': embed, 'view': view}
 
 
@@ -223,7 +238,7 @@ def handlers(walker):
         return {**item, 'reason': 'deployed' if pokemon['gym_deployment_id'] is not None else None,
                 'special': domain.is_special(item['identity'], rules)}
 
-    async def team_state(conn, session, selection, notice=None):
+    async def team_state(conn, session, selection, best_floor, notice=None):
         rows, total = await storage.page(conn, session['profile_id'], selection['offset'],
                                          favorites_first=selection['favorites_first'])
         if selection['offset'] and not rows:
@@ -238,9 +253,10 @@ def handlers(walker):
                 item['reason'] = 'changed'
             members.append(item)
         return {'session': session, 'selection': selection, 'rows': [pokemon_state(row) for row in rows],
-                'members': members, 'total': total, 'notice': notice}
+                'members': members, 'total': total, 'notice': notice, 'max_skip': domain.max_skip(best_floor, rules),
+                'skip_tickets': domain.skip_tickets(selection.get('skip', 0), rules)}
 
-    async def open_break(conn, session, run, result=None, notice=None):
+    async def open_break(conn, session, run, current, result=None, notice=None):
         async with conn.execute('SELECT item_id,quantity FROM inventory WHERE profile_id=? AND item_id IN (?,?)',
                                 (session['profile_id'], *BERRIES)) as cursor:
             stock = {row['item_id']: row['quantity'] for row in await cursor.fetchall()}
@@ -250,7 +266,8 @@ def handlers(walker):
         live = run['ended_at'] is None
         session['selection'] = json.dumps({'phase': 'arena_break' if live else 'arena_defeat',
                                             'run_id': run['run_id'], 'run_revision': run['revision'], 'berry': berry})
-        state = {'session': session, 'run': run, 'stock': stock, 'berry': berry, 'result': result, 'notice': notice}
+        state = {'session': session, 'run': run, 'stock': stock, 'berry': berry, 'result': result, 'notice': notice,
+                 'stop_pct': current['stop_pct'], 'auto_order': current['auto_order']}
         if not live:
             return render_defeat(state)
         _, sprite = storage.identify(walker.bot.content, run['enemy']['snapshot'])
@@ -277,6 +294,12 @@ def handlers(walker):
             if len(values) != 1 or values[0] not in {''.join(map(str, order)) for order in permutations(range(3))}:
                 raise _Refused(REOPEN)
             result = await service.set_order(*args, [int(i) for i in values[0]], now)
+        elif action == 'arena_stop_pct':
+            if len(values) != 1 or values[0] not in [str(pct) for pct in service.STOP_PCTS]:
+                raise _Refused(REOPEN)
+            result = await service.set_stop_pct(*args, int(values[0]), now)
+        elif action == 'arena_auto_order':
+            result = await service.set_auto_order(*args, not current['auto_order'], now)
         elif action in HEALS:
             result = await service.heal(*args, [HEALS.index(action)], berry, now)
         else:
@@ -289,10 +312,10 @@ def handlers(walker):
         elif status == 'missing':
             name = berry.replace('_', ' ').title()
             notice = f'You need {result["short"]} more {name}. Nothing was spent.' if action == 'arena_heal_fight' else f'You have no {name}.'
-        elif status not in ('won', 'defeated', 'healed', 'ordered', 'full', 'selected'):
+        elif status not in ('won', 'defeated', 'healed', 'ordered', 'full', 'selected', 'set'):
             raise _Refused(EXCLUDED if status == 'excluded' else REOPEN)
-        run = (await service.state(conn, session, now))['run']
-        return await open_break(conn, session, run, result if status in ('won', 'defeated') else None, notice)
+        current = await service.state(conn, session, now)
+        return await open_break(conn, session, current['run'], current, result if status in ('won', 'defeated') else None, notice)
 
     async def dispatch(action, conn, session, interaction):
         now = walker.clock()
@@ -306,7 +329,7 @@ def handlers(walker):
         selection = json.loads(session['selection'])
         if (action == 'arena_resume' and current['run'] or action == 'arena'
                 and current['status'] == 'ended' and selection.get('phase') == 'arena_break'):
-            return await open_break(conn, session, current['run'])
+            return await open_break(conn, session, current['run'], current)
         if action in ('arena', 'arena_resume'):
             flags = await profiles.restrictions(conn, session['guild_id'], session['user_id'])
             session['selection'] = json.dumps({'berry': selection['berry']} if selection.get('berry') in BERRIES else {})
@@ -314,9 +337,15 @@ def handlers(walker):
                                 'until': flags.paused_until.isoformat() if flags.paused_until else None})
         selection = json.loads(session['selection'])
         if action == 'arena_team':
-            selection = {'phase': 'arena_team', 'team': [], 'offset': 0, 'favorites_first': False}
+            selection = {'phase': 'arena_team', 'team': [], 'offset': 0, 'favorites_first': False, 'skip': 0}
         elif selection.get('phase') != 'arena_team':
             raise _Refused(REOPEN)
+        selection.setdefault('skip', 0)
+        if action in ('arena_skip', 'arena_skip_more'):
+            values = interaction.data.get('values', [])
+            if len(values) != 1 or values[0] not in [str(k) for k in range(domain.max_skip(current['best_floor'], rules) + 1)]:
+                raise _Refused(REOPEN)
+            selection['skip'] = int(values[0])
         if action in ('arena_team_prev', 'arena_team_next'):
             _, total = await storage.page(conn, session['profile_id'], 0)
             selection['offset'] = max(0, min(selection['offset'] + (10 if action == 'arena_team_next' else -10),
@@ -325,7 +354,7 @@ def handlers(walker):
             selection.update(favorites_first=not selection['favorites_first'], offset=0)
         if action == 'arena_team_clear':
             selection['team'] = []
-        state = await team_state(conn, session, selection)
+        state = await team_state(conn, session, selection, current['best_floor'])
         notice = None
         if action == 'arena_team_pick':
             values = interaction.data.get('values', [])
@@ -335,10 +364,14 @@ def handlers(walker):
                 raise _Refused('Choose a distinct eligible Pokémon on this page.')
             selection['team'].append([values[0], item['pokemon']['revision']])
         if action == 'arena_start':
-            result = await service.start(conn, session, selection['team'], now, walker.rng, walker.bot.content, walker.multipliers)
+            result = await service.start(conn, session, selection['team'], now, walker.rng, walker.bot.content,
+                                         walker.multipliers, skip=selection['skip'])
             status = result['status']
             if status in ('started', 'live'):
-                return await open_break(conn, session, result['run'])
+                if status == 'started' and selection['skip']:
+                    paid = ', '.join(f'+{copies} {tier.title()}' for tier, copies in domain.skip_tickets(selection['skip'], rules).items())
+                    notice = f"Skipped {selection['skip']} floors: " + (f'{paid} Tickets.' if paid else 'no Tickets.')
+                return await open_break(conn, session, result['run'], current, notice=notice)
             if status == 'excluded':
                 raise _Refused(EXCLUDED)
             notice = {'stale': CHANGED, 'deployed': "A gym defender can't join an Arena team.",
@@ -352,9 +385,9 @@ def handlers(walker):
             if notice is None:
                 raise _Refused(REOPEN)
         session['selection'] = json.dumps(selection)
-        return render_team(await team_state(conn, session, selection, notice))
+        return render_team(await team_state(conn, session, selection, current['best_floor'], notice))
 
     return {name: partial(dispatch, name) for name in
             ('arena', 'arena_resume', 'arena_team', 'arena_team_prev', 'arena_team_next',
-             'arena_team_sort', 'arena_team_pick', 'arena_team_clear', 'arena_start', *BREAK_ACTIONS,
+             'arena_team_sort', 'arena_team_pick', 'arena_team_clear', 'arena_start', 'arena_skip', 'arena_skip_more', *BREAK_ACTIONS,
              'arena_tickets', *REDEEM, 'arena_redeem_confirm')}

@@ -1614,3 +1614,31 @@ runs, tickets, owned receipts, ledger lines and inbox rows, including deletion-m
 replay after restore. Re-enrollment has no Arena progress, cooldown or tickets.
 Deletion services and persisted formats are unchanged. Focused tests establish
 local source behavior; full M1 and live Discord acceptance remain separate.
+
+
+## Arena skip and settings controls (ARENA-18)
+AR-34 extends the team selection with skip=0; older saved selections without
+skip read as zero. The existing rows 0-2 remain. For max_skip S>0, row 3 is
+arena_skip, values 0..min(S,24): No skip, then Skip k floors: start at floor
+k+1. At S>=25, row 4 is arena_skip_more with 25..S. The saved value is default
+in its containing select. Neither appears at S=0. Each action requires the
+team phase and exactly one integer value in 0..S; malformed/out-of-range input
+uses REOPEN. Changing skip preserves picks, page and sort.
+With k>0, show Skipping k floors pays now: <counts>. Counts come from the
+shared domain.skip_tickets schedule, e.g. 2 Bronze, 4 Silver, 2 Gold, or nothing.
+Start passes skip to the existing service. Only started with k>0 shows
+Skipped k floors: +2 Bronze, +4 Silver, +2 Gold Tickets. A live result shows
+no payment notice. The service remains authoritative for validation/payment.
+
+AR-10b/AR-10d add Auto-order: off|on (arena_auto_order) before Back out in row
+0, and arena_stop_pct in row 4, Stop below 10% through Stop below 90%, using
+service.STOP_PCTS with the saved value defaulted. Rows 1-3 remain unchanged.
+Break state carries stop_pct/auto_order from service.state. Both actions use
+the saved run ID/revision and existing service setters; auto-order passes the
+opposite current flag. Threshold requires one STOP_PCTS value, else REOPEN.
+set redraws and saves the new run revision; stale redraws with STALE without
+changing settings. Other open screens must redraw before fighting. Settings
+survive subsequent runs. Producers: bot.arena; consumers: Discord session
+router and private Arena views. Services own all writes. Additive controls,
+no service/schema change; Fight until hurt is ARENA-24. Tests:
+test_arena_screens. Offline tests do not establish live Discord acceptance.
