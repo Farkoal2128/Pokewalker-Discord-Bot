@@ -58,7 +58,7 @@ def handlers(walker):
         previous = json.loads(session["selection"])
         selection = {"picks": [], "offset": 0} if reset else previous
         offset = max(0, selection.get("offset", 0) + delta)
-        rows, total = await service.candidates(conn, session["profile_id"], walker.bot.content, offset)
+        rows, total = await service.candidates(conn, session["profile_id"], walker.bot.content, offset, walker.clock())
         picks = dict(selection.get("picks", []))
         if toggle is not None:
             binding = selection.get("toggles", {}).get(toggle)
@@ -70,7 +70,8 @@ def handlers(walker):
                 raise _Refused(REOPEN)
             identity, _ = storage.identify(walker.bot.content, pokemon)
             profile = await profiles.get_profile(conn, session["guild_id"], session["user_id"])
-            if service.protected_reason(identity, pokemon, profile) is not None:
+            arena_team = await profiles.arena_team(conn, session["profile_id"], walker.clock())
+            if service.protected_reason(identity, pokemon, profile, arena_team) is not None:
                 raise _Refused(REOPEN)
             if uid in picks:
                 del picks[uid]
@@ -83,7 +84,8 @@ def handlers(walker):
         for letter, item in zip("abcde", rows):
             pokemon, identity = item["pokemon"], item["identity"]
             selected = pokemon["pokemon_uid"] in picks
-            reason = "deployed at a gym" if item["reason"] == "deployed" else item["reason"] or "available"
+            reason = {"in_arena": "on your Arena team", "deployed": "deployed at a gym"}.get(
+                item["reason"], item["reason"] or "available")
             text.append(f"{identity['name_en']} · {pokemon['pokemon_uid']} · {reason}")
             buttons.append((f"{'✓ ' if selected else ''}{identity['name_en']}", "research_toggle_" + letter,
                             item["reason"] is not None or len(picks) >= 20 and not selected, 0))
@@ -111,13 +113,14 @@ def handlers(walker):
         selection = json.loads(session["selection"])
         picks, text, families, sprite = [], [], Counter(), None
         profile = await profiles.get_profile(conn, session["guild_id"], session["user_id"])
+        arena_team = await profiles.arena_team(conn, session["profile_id"], walker.clock())
         for uid, revision in selection.get("picks", []):
             pokemon = await _pick(conn, session, uid)
             if pokemon is None or pokemon["revision"] != revision:
                 return notice(session, "Selection changed; start a new review.")
             info = storage.stats(walker.bot.content, pokemon, walker.multipliers)
             identity, sprite = info["identity"], info["sprite"]
-            reason = service.protected_reason(identity, pokemon, profile)
+            reason = service.protected_reason(identity, pokemon, profile, arena_team)
             if reason and not (selection.get("single") and unlock and reason in ("shiny", "legendary_or_mythical")):
                 return notice(session, "Protected Pokémon; start a new review.")
             picks.append((uid, pokemon["revision"]))
@@ -144,8 +147,11 @@ def handlers(walker):
             raise _Refused(REOPEN)
         profile = await profiles.get_profile(conn, session["guild_id"], session["user_id"])
         identity, sprite = storage.identify(walker.bot.content, pokemon)
-        reason = service.protected_reason(identity, pokemon, profile)
-        if reason in ("deployed", "favorite", "companion"):
+        arena_team = await profiles.arena_team(conn, session["profile_id"], walker.clock())
+        reason = service.protected_reason(identity, pokemon, profile, arena_team)
+        if reason in ("in_arena", "deployed", "favorite", "companion"):
+            if reason == "in_arena":
+                raise _Refused("This Pokémon is on your Arena team. It can't be sent until the run ends.")
             if reason == "deployed":
                 raise _Refused("Recall it from the gym first")
             raise _Refused(f"This Pokémon is protected: {reason}.")

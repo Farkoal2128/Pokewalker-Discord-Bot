@@ -1,5 +1,9 @@
 # Contract: persisted state (C3)
 
+ARENA-14: guild-target `mod_audit` actions `arena_on` / `arena_off` commit
+atomically with `guilds.arena_enabled`, recording the actor, guild target,
+stripped nonempty reason and Walker.clock time; no schema change.
+
 ## M4.4 share reservation (additive)
 Migration 0010 adds nullable profiles.last_share_at REAL, preserving existing rows.
 It stores the UTC epoch time of the latest committed share reservation, not proof
@@ -1329,6 +1333,412 @@ consumed, produced}; replays return the saved result. Bag units only fall, so th
 never refuses a trade-up, and no Master Ball is involved. No schema change. Tests:
 tests/test_ball_trade_up.py.
 
+## Arena schema (0025)
+
+Requirements AR-1..AR-4b, AR-6a, AR-25, AR-33 and AR-35 add migration
+0025 without changing existing rows. Guilds gain arena_enabled (0/1, NOT NULL,
+default 1). Profiles gain arena_best_floor (nonnegative integer, NOT NULL,
+default 0).
+
+arena_runs stores run_id (primary key), profile_id, started_at, nullable
+ended_at and end_reason, revision (default 0), floor (integer >= 1), slot
+(0/1/2), team and enemy. Times are UTC epoch seconds. end_reason is loss,
+draw or expired, and is set exactly when ended_at is set. team and enemy
+are NOT NULL, valid JSON. The partial unique index arena_runs_live permits
+one unended row per profile; arena_runs_profile indexes (profile_id,started_at)
+for cooldown lookup and cascade deletion.
+
+team is an array in party order of {uid, family_id, special, full_hp, hp,
+snapshot}. Each snapshot is the dictionary produced by gyms._battle_snapshot,
+including the Pokemon identity, revision, content version, level, IVs, gender,
+shiny flag, combatant and CP. full_hp preserves full battle HP; hp carries the
+remaining battle HP. enemy is {snapshot, battle_hp, special}, with the same
+snapshot format. These frozen snapshots survive restarts and content changes.
+The Arena start and enemy-generation services produce these JSON shapes.
+
+arena_tickets stores profile_id, tier (bronze/silver/gold/platinum/diamond)
+and quantity (nonnegative integer), with primary key (profile_id,tier).
+Both tables reference profiles(profile_id) ON DELETE CASCADE, so profile
+deletion and reset remove runs, snapshots and ticket balances. Arena writes
+must also pass profile_id to with_receipt so their receipts are deleted.
+
+profiles.arena_team(conn, profile_id, now) is a read-only query returning a
+frozenset of team uid values when ended_at IS NULL and
+started_at > now - load_table('arena')['rules']['run_seconds'], otherwise an
+empty frozenset. Thus the live-team block lifts at exactly hour 18 without a
+write or timer, even while an unended row still occupies the unique index.
+Gym, trading and research consumers use this shared profile-scoped check.
+
+Older binaries refuse schema 25 through open_db's newer-schema check;
+rollback requires a compatible backup, never lowering user_version.
+Verification: test_arena_schema and the ticket-named migration regressions.
+
+## Arena gym restrictions (AR-6a, AR-6b)
+
+For a new gym deploy, services.gyms.deploy checks the owned Pokemon and its
+revision, then uses profiles.arena_team(conn, profile_id, now) before checking
+companion status. Membership returns {'status': 'in_arena'} without a receipt
+or any state write. A companion on the live team reports in_arena; a companion
+off it still reports companion. Saved successful receipts retain their replay
+semantics.
+
+services.gyms.battle refuses any live-team attacker with in_arena after its
+ownership/revision checks and before companion/deployment checks or simulation.
+The nominee must be an attacker, so the same check protects gym claims. The
+existing battle savepoint rolls back settlement on this refusal: no defender
+change, payout, battle row, receipt or cooldown is committed. The shared check
+is scoped to the caller's profile and stops blocking at exactly run_seconds
+without ending the Arena row or opening the Arena. Ended runs never block.
+Producer: services.gyms; consumers: private gym screens. No schema or trigger
+change. Tests: test_arena_gym_block and the four existing gym regression modules.
+
+## Arena research protection (AR-7a)
+
+research.protected_reason(identity,pokemon,profile,arena_team=frozenset())
+returns in_arena before deployed, favorite, companion, shiny and
+legendary_or_mythical when the Pokemon UID is in the supplied live team. The
+empty default preserves callers that do not supply a team (including storage
+and the trading adapter). Research candidates(conn,profile_id,content,offset,now)
+loads profiles.arena_team once for its profile and injected epoch clock, and
+returns this protection with each owned row.
+
+Research send loads the same live team with its now before validating all picks.
+Any in_arena pick returns changed for the entire batch with no Pokemon, Candy,
+ledger or receipt write. It cannot be bypassed by a single reviewed pick's
+Shiny/Legendary unlock. Authorized receipt replay keeps its existing semantics.
+The block lifts at run_seconds or when ended_at is set, without a run-state write.
+Pending catches cannot be Arena members: send_pending, send_pending_reviewed and
+auto_send retain their existing behavior. No schema change. Tests: test_research,
+test_storage and test_trading.
+
+
+## Arena trade protection (ARENA-7, AR-7a)
+tradable_reason(identity,pokemon,profile,arena_team=frozenset()) includes in_arena
+from research.protected_reason ahead of deployed/favorite/companion for an owned
+Pokemon on that profile's live Arena team. offer loads that team with its now
+and refuses with {status: ineligible, reason: in_arena}, without writes.
+eligible_page(conn,profile_id,offset,now) loads the team once and excludes its
+UIDs from both the SQL eligible count and page; the total-owned count is unchanged.
+At acceptance, _recheck(conn,sides,owners,content,now) loads each owner's team
+and reports {side, reason: in_arena}; confirm clears that side's offer and both
+confirmations, bumps the trade revision and extends activity as for other invalid
+offers. An offer made before a run started cannot complete during that run.
+Protection ends at hour 18 without a write, or when the run ends, and another
+profile's team never blocks the owner. The swap and pokemon_trade_guard trigger
+are unchanged: the acceptance recheck uses the injected clock in the same writer
+transaction. Producers: trading; consumers: trade picker, offer and acceptance.
+Tests: test_trading, test_trade_screens; unchanged test_trading_schema and
+test_trade_command. Native/live acceptance remains separate.
+
+
+## Arena lifecycle service (ARENA-8)
+services.arena mutators, including lazy-expiring state, require the caller's
+writer transaction and validate session_owner (stale/excluded). state returns
+{status: none|live|ended, run, cooldown_left, enabled, best_floor, tickets}; run
+is the latest profile-owned row with decoded team and enemy JSON, or None, and
+tickets maps held tiers to quantities. Authorized access ends a run at or after
+started_at + run_seconds with ended_at=now, end_reason=expired and revision+1,
+without rewards or a receipt. This happens before other action refusals, including
+paused start. cooldown_left is nonnegative whole seconds, rounded up, from the
+latest started_at + cooldown_seconds, regardless of when that run ended.
+
+start(conn,session,team,now,rng,content,multipliers) first calls state, then refuses
+paused (until in the check-in ISO format), off, live, cooldown (seconds_left),
+invalid team shape/distinctness, stale ownership/revision, or deployed. Otherwise
+exactly three owned members, including companions and specials, are snapshotted
+through gyms._battle_snapshot with uid, family_id, special, full_hp and hp.
+The stored floor-1 entry enemy comes from domain.roll_enemy through the real
+Pokemon/form row builder and the same snapshot helper. It stores snapshot,
+battle_hp (domain.enemy_hp) and special. Run starts at floor=1, slot=0, revision=0.
+The arena_start:<session_id>:<_original_revision> receipt (session revision fallback)
+returns started with run; repeat presses cannot create another run or reroll one.
+
+set_order(conn,session,run_id,revision,order,now) takes a permutation of (0,1,2),
+saves that team order, increments revision and returns ordered with run, without
+a receipt or resource cost. heal(conn,session,run_id,revision,positions,berry,now)
+takes nonempty distinct valid positions and a heal_items berry, else invalid.
+Both call state first; no live run or a mismatching ID/revision returns stale
+with the current run, spending nothing. Paused members and members in a server
+where Arena was switched off may still order and heal live runs; excluded
+members cannot continue. Each selected heal position must be below full_hp
+(else full). Insufficient selected berries returns missing with short, with no
+debit. arena_heal:<run_id>:<revision> restores each selected hp to full_hp, debits
+one berry per position and increments revision, returning healed with run. Its
+ledger line is item / berry / -n / arena_heal. Every Arena receipt supplies
+profile_id to with_receipt. Snapshot identity, stats, enemy and current HP persist
+across restarts and do not change with a storage power-up or evolution.
+Producers: services.arena; consumers: later Arena screens and fight actions.
+No schema or gym snapshot changes. Tests: test_arena. Full M1 and native/live
+acceptance remain separate.
+
+
+## Arena fight and rewards (ARENA-9)
+fight(conn,session,run_id,revision,now,rng,content,multipliers,battle_rules,chart)
+uses the ARENA-8 writer/session/expiry and stale-run guards before any battle.
+Paused members and live runs in a server now switched off may continue; excluded
+members cannot. Its profile-owned receipt is arena_fight:<run_id>:<floor>:<slot>.
+It builds Combatants from the stored snapshots, replacing each party member's
+starting HP with current hp in party order. The stored enemy and battle_hp feed
+battle.simulate with the injected gym rules and type chart; party_max does not
+restrict the Arena's three members. No current-storage stats or event text are
+used to derive carried HP. On loss/draw, store exact Result.party_hp, end the run
+at now with that reason and revision+1, and pay nothing (earlier tickets stay).
+On win, store domain.revive(Result.party_hp), keeping order and reviving zeros
+at 1 HP. The snapshot finisher's family earns domain.candy_for(special,slot)
+Candy through the normal additive upsert and candy / family / +n / arena_candy
+ledger line. No current-storage identity is consulted for that reward.
+
+Entry and middle wins advance slot; every boss win advances floor and sets
+slot=0, and updates best_floor=max(best_floor,floor), even with no ticket due.
+Only scheduled boss floors grant arena_tickets: one, plus one on a first clear
+above the prior best for silver or better, never bronze. Their additive upsert
+and arena_ticket / tier / +copies / arena_floor ledger line share the fight
+transaction. Wins roll and store the next enemy once and increment revision.
+The compact result contains status (won|defeated), outcome, reason, ticks, engine,
+the fought floor and slot, enemy {name,cp,types}, party_hp before revival, revived
+(zero-based positions), finisher, candy ({family_id,quantity} or None), and tickets
+({tier,copies,first_clear} or None). It contains neither events nor full snapshots.
+A repeated stale press spends nothing and never resolves or rewards a fight twice.
+
+heal_all_and_fight(conn,session,run_id,revision,berry,now,rng,content,multipliers,
+battle_rules,chart) uses those same guards. Berry must be in heal_items. It calls
+heal for all positions below full HP, then fight at the healed revision in the
+same transaction. When all are full it skips heal. A short stock returns missing
+with short, without spending anything or fighting. Any exception rolls back the
+heal, fight, receipts and rewards together. Every receipt supplies profile_id.
+No engine, gym, stepping or schema changes. Tests: test_arena and test_battle;
+full M1 and native/live acceptance remain separate.
+
+## Arena tickets and redemption (ARENA-10)
+
+AR-25..AR-30 and AR-35a add redemption without a schema change. Ticket quantities
+have no storage cap. services.arena produces encounters and inbox rewards;
+Arena confirmation screens consume quotes, and milestones.claim delivers rewards.
+Existing gym payouts and Claim semantics remain compatible.
+
+redeem_quote(conn,profile_id,tier) is read-only and returns {held,free,add}.
+free is limits().encounter_queue minus profiles.queue_size; add is min(free,
+the tier's encounters), with fill meaning the queue capacity. Missing ticket
+rows mean held=0. Only the named profile's ordinary queued/revealed encounters
+count, using the existing raid isolation.
+
+redeem(conn,session,tier,expected_free,expected_add,now,rng,content) requires
+the caller's writer transaction and the usual session_owner/expiry guard.
+Paused members and members of servers with Arena off may redeem; stale sessions
+and excluded members cannot. An unknown tier is invalid. For a valid tier,
+held<1 returns none, free<1 returns queue_full, then a differing free or add
+returns {status:quote_changed,free,add}. These refusals spend no ticket or
+Lure/Mirror charge and create no receipt/reward (usual lazy expiry may persist).
+
+Success uses arena_redeem:<session_id>:<_original_revision> (session revision
+fallback), action arena_redeem, and profile_id. Inside the receipt, generate a
+UUID redeem_id, debit one ticket, record arena_ticket / tier / -1 / arena_redeem,
+and call stepping.spawn_encounter add times on the profile's current route.
+Walking's Lure, Mirror and Shiny Charm behavior applies unchanged. Add one flat
+Stardust row under arena:<redeem_id>:stardust, then the tier's income_rolls
+under arena:<redeem_id>:income:<n> and survivor_rolls under
+arena:<redeem_id>:survivor:<n> (zero-based n). Return redeemed with redeem_id,
+encounters, stardust, income_rolls and survivor_rolls counts. Repeated presses
+cannot spend twice: changed preconditions refuse; matching ones replay the
+receipt. Every receipt and debit ledger line carries profile_id. Encounter,
+effect, ticket, inbox, receipt and ledger writes commit or roll back together.
+
+gyms.income_roll(conn,profile_id,key,now,rng,content) rolls the live
+gym_income_table once, resolves evolution items through items.resolve_item,
+inserts one inbox row under key and returns {item,quantity}.
+gyms.survivor_roll(conn,profile_id,key,now,rng) rolls the live survivor_table
+once and inserts its item and stardust_flat as two rows sharing key. Both
+require a writer transaction. pay_hours and end_deployment reuse them with
+their existing payout keys and unchanged RNG call order. Reward resources are
+item/named resource_id or stardust/NULL; remaining holds the rolled quantity.
+No resource is directly granted or converted. Full bags and occupied rare
+pockets leave items waiting in the existing lossless inbox until Claim has
+room. Tests: test_arena, unchanged test_gyms, test_gym_mod, test_gym_screens,
+test_milestones. Full M1 and native/live acceptance remain separate.
+
+## Arena settings (0026)
+AR-10b/AR-10d add two per-profile columns: arena_stop_pct INTEGER NOT NULL
+DEFAULT 50 CHECK(arena_stop_pct IN (10,20,30,40,50,60,70,80,90)) and
+arena_auto_order INTEGER NOT NULL DEFAULT 0 CHECK(arena_auto_order IN (0,1)).
+Migration 0026 preserves existing rows; older binaries refuse schema 26 through
+open_db's newer-schema check. Settings survive run endings and later starts.
+
+services.arena.state adds stop_pct and auto_order (a bool) from the profile.
+STOP_PCTS = range(10,100,10) is the shared Python range for consumers.
+set_stop_pct(conn,session,run_id,revision,pct,now) and
+set_auto_order(conn,session,run_id,revision,on,now) call state then _live_run:
+no live run or a mismatching ID/revision returns {status: stale, run}, with no
+settings write (state still lazily expires overdue runs). Session ownership
+refusals remain stale/excluded. Paused members may change settings.
+pct must be an int (not bool) in STOP_PCTS; on must be bool; otherwise invalid.
+Success updates the profile column and increments the live run revision in the
+same caller-owned writer transaction, returning {status: set, run} with the new
+revision, even when setting the current value again. Other screens and chains
+must then redraw under AR-4a. No resource moves, receipt or ledger line occurs.
+Producers: migration 0026 and services.arena; consumers: Arena state/screens and
+fight actions. This is additive for current callers; schema rollback requires
+restoring a pre-migration backup. Tests: test_arena_schema and test_arena.
+
+
+## Arena skip and chain step (ARENA-17)
+AR-34 extends services.arena.start with optional skip=0. An int (not bool)
+from zero through min(best_floor // rules.skip.divisor, rules.skip.max) is
+required alongside team validation after start guards; otherwise invalid, no writes.
+The existing profile-owned arena_start receipt creates a full-HP team at floor
+skip+1, slot zero, with that floor's stored entry enemy. Skipped floors pay
+only their scheduled tickets, through additive arena_tickets upserts and
+arena_ticket / tier / +copies / arena_skip ledger lines in the same receipt.
+No Candy, first-clear bonus or best_floor change. The result remains started
+with run; replay never pays twice. Default zero preserves the prior RNG calls.
+
+Pure domain helpers max_skip and skip_tickets consume the injected rules and
+reuse ticket_for. hurt returns the first position strictly below the supplied
+percentage, or None; hp_order sorts descending exact Fraction(hp,full_hp),
+keeping the current order for ties.
+
+chain_step takes fight's arguments and resolves at most one fight inside the
+caller-owned writer transaction. State/ownership/expiry and live-run revision
+checks precede HP checks or reordering. A member already below stop_pct returns
+hurt with position and run, without fighting. If auto_order is enabled, reuse
+set_order only when hp_order differs, then fight at its new revision. Paused
+members and disabled-Arena live runs may continue; excluded members cannot.
+Return the fight result with the saved run. A win also has stop: hurt with
+position after a revive or below-threshold HP, otherwise ticket when tickets
+were earned, otherwise None. A defeat needs no stop. These fields are outside
+the unchanged compact fight receipt. No berries are spent. Producers: Arena
+domain/service; consumers: later Arena screens and chain coordinator. Additive
+API with no schema change; tests: test_arena_domain and test_arena. Full G-F
+and live-platform acceptance remain separate.
+
+
+## Arena monthly leaderboard schema (0027)
+AR-36, AR-37, AR-39 and AR-40 add three tables without changing existing rows.
+Older binaries refuse schema 27 through open_db's existing newer-schema guard;
+rollback requires restoring a pre-migration backup.
+
+arena_month_scores(guild_id,month,profile_id,floor,reached_at) has primary key
+(profile_id,month), a (guild_id,month) index, and a composite foreign key
+(profile_id,guild_id) to profiles with ON DELETE CASCADE.
+arena_months(guild_id,month,settled_at) has primary key (guild_id,month) and a
+guild foreign key with ON DELETE CASCADE. It has no player reference: a settled
+month survives player deletion/reset and disappears only with its guild.
+arena_month_places(guild_id,month,place,profile_id,floor) has primary key
+(guild_id,month,place), UNIQUE(profile_id,month) (also its profile cascade index),
+and the same composite profile foreign key with ON DELETE CASCADE.
+All months are NOT NULL UTC YYYY-MM text, GLOB-checked with months 01 through 12;
+floors and places are NOT NULL integers at least 1. Times are NOT NULL epoch seconds.
+
+services.arena.month_key(now) returns the UTC YYYY-MM of epoch now. Only fight's
+boss-win compute writes a monthly score, in the same caller-owned transaction
+and existing profile-owned arena_fight receipt as Candy, tickets and best floor.
+The upsert inserts the cleared floor and reached_at=now, or replaces both only
+for a strictly higher floor; an equal/lower floor preserves the original time.
+The guild comes from the session. Skipped floors never score: after skip 40,
+the first possible score is floor 41. chain_step and heal_all_and_fight use
+fight and score normally. Boss wins across UTC month boundaries score in their
+respective months. Replayed fights write nothing. Fight results, compact receipt
+fields, resource ledger and state output stay unchanged.
+
+Producers: migration 0027 and services.arena; consumers: monthly ranking and
+settlement (subsequent rows), profile deletion/reset and guild deletion.
+Compatibility: additive schema and service helper; existing callers keep their
+results. Tests: test_arena_schema, test_arena, test_deletion and
+test_admin_reset_sharing, with db/forms/route migration regressions.
+
+
+## Arena monthly settlement (ARENA-22)
+AR-37 through AR-41 add settle(conn,guild_id,now) and the read-only
+leaderboard(conn,guild_id,profile_id,now) in services.arena. No schema or fight
+receipt changes. Settlement requires an active caller-owned writer transaction,
+otherwise RuntimeError. It reads no session or arena_enabled flag.
+
+One private ranking read joins this guild/month's score rows to profiles and
+orders floor descending, then reached_at, profiles.created_at and profile_id
+ascending. Excluded profiles (restrictions by guild/user) are omitted; paused
+profiles remain. Settlement and the current-month board share this ordering.
+
+settle processes scored months strictly before UTC month_key(now), oldest first,
+when no arena_months guard exists. It returns those month keys in that order.
+Place n is rank n up to len(rules.leaderboard.rewards); only scores at least
+min_floor pay. Unpaid places stay empty. Each paid place gets one profile-owned
+arena_month_places row and one inbox_items row per configured item, remaining=1,
+resource=item, created_at=now, milestone_id=arena_month:<YYYY-MM>:<place>.
+The settled-month guard is inserted even when nobody qualifies. All these writes
+commit or roll back together. Repeated settlement writes nothing. There is no
+settlement receipt or ledger entry; existing claim receipts/ledger and rare-pocket
+limits apply when claiming, retaining rewards until their pockets have room.
+
+leaderboard returns exactly month, rows, viewer, reset_at, last_month and last.
+rows is the current UTC month's top shown entries as place/user_id/floor.
+viewer is place/floor only when this profile ranks below shown, otherwise None.
+reset_at is the next month's 00:00 UTC epoch; last_month is the previous UTC month.
+last reads that month's stored paid places in place order with user_id and floor,
+excluding now-excluded profiles. Profile deletion cascades scores/paid places;
+after payout it leaves a gap and nobody is promoted. The guild-owned month guard
+survives, preventing repayment. Before payout, deletion/exclusion removes a
+competitor from ranking and the next rank moves up. Reads never write or settle.
+
+Producers: services.arena and Walker.home; consumers: the later leaderboard and
+inbox screens, existing claim and deletion. Additive boundaries; older receipt
+and result shapes stay compatible. Tests: test_arena and test_arena_screens;
+regressions: test_walker_router, test_milestones and test_deletion.
+
+
+## Arena X items (0028)
+AR-43 through AR-45 add arena_runs.x_attack_left and x_defense_left, each
+INTEGER NOT NULL DEFAULT 0 CHECK(typeof(column)='integer' AND column>=0).
+Migration 0028 preserves existing rows with both counters zero. Older binaries
+refuse schema 28; rollback requires a pre-migration backup. New runs start at 0.
+No table or deletion boundary changes; effects belong to their run.
+
+services.arena.state adds stardust from the profile and x_items, mapping every
+rules.x_items.items id to its inventory quantity (0 when absent).
+buy_x(conn,session,item) returns invalid for an unknown id; otherwise it calls
+items._buy unchanged with the configured Stardust price. It uses the router's
+already-bumped session.revision in buy:<session_id>:<revision>, never
+_original_revision. Ownership refusals stale/excluded pass through; insufficient
+precedes bag_full and neither spends anything. Success returns exactly
+{status: bought, item, stardust}, with stardust the price paid. It requires no run,
+ignores Arena off, cooldown and pause, and never changes a run revision.
+
+use_x(conn,session,run_id,revision,item,now) calls state then _live_run, retaining
+lazy expiry and stale/excluded refusals. Unknown ids return invalid; an active
+same-kind counter returns {status: active, left}; no held item returns missing.
+Those refusals spend nothing. Paused members may use; excluded members may not.
+Success returns {status: used, run}: inside the caller-owned writer transaction,
+inventory decreases by 1, that counter becomes rules.x_items.fights and the run
+revision increases by 1. The other counter stays unchanged. Receipt
+arena_use:<run_id>:<revision>, action arena_use, carries profile_id; its ledger
+line is item / <item> / -1 / arena_use with the same profile_id. Buying retains
+the existing buy receipt and Stardust/item ledger lines. Fights ignore counters
+until ARENA-27.
+
+Producers: migration 0028, services.arena and items._buy; consumers: Arena
+state/screens and later fight countdowns. Additive service/state boundaries;
+existing snapshots and receipt formats stay unchanged. Tests: test_arena_schema
+and test_arena; regressions cover screens/admin, receipt ownership and deletion.
+
+
+## Arena boosted fights (ARENA-27)
+AR-42, AR-44 and AR-45 extend services.arena.fight: each active X-item counter
+multiplies its configured party Combatant stat (attack or defense) by
+rules.x_items.multiplier. Both active kinds combine. Starting HP still comes
+from the run; the enemy Combatant, battle_hp, rules and chart are unchanged.
+Stored party/enemy snapshots, C7 and ENGINE_VERSION remain unchanged.
+
+The same UPDATE that stores each fought win, loss or draw decrements both
+x_attack_left and x_defense_left by one, clamped at zero. Three charges boost
+three fought fights; the fourth is unboosted. Defeat ends the effect with its
+run and refunds nothing. Expiry does not decrement or refund either counter.
+chain_step and heal_all_and_fight share fight; an exhausted boost adds no chain
+stop reason. Replayed/stale fights do not simulate or decrement again.
+
+Counters, carried HP, progression, rewards, receipts and ledger writes commit
+or roll back together, including on a ledger failure. A restart retains the
+last committed count. Fight result/receipt keys and fields and ledger formats
+stay unchanged. Producers: services.arena.fight; consumers: Arena screens and
+chain/heal callers. Tests: test_arena; regressions: test_arena_screens,
+test_battle, test_gym_battle, test_deletion and test_receipt_owner.
 ## Owner amendment: member prune (2026-11-14)
 No schema or marker-format change. `/walker-admin prune` writes `delete` markers that carry
 `actor_id` and `reason` (already valid fields; `fold` ignores them for delete), so each

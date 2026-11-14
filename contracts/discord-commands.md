@@ -976,6 +976,29 @@ Manage Server, guild only, reason required. Writes `guilds.gym_legendary_defende
 naming the current state. The private gym screens mark Legendary/Mythical Pokémon as unable to
 defend and omit them as claim options only while the setting is off.
 
+## C5: Arena `/walker-admin arena on|off reason` (ARENA-14)
+
+AR-35 and AR-35a add this direct walker-admin subcommand, with required on/off
+choices and reason. It defers ephemerally, requires Manage Server in a guild and
+an actor who is not excluded, then strips the reason. Empty reasons say "A reason
+is required." Invalid on values say "Choose on or off." Neither writes state.
+The writer rechecks the actor before inserting a missing guild, changing only
+guilds.arena_enabled and inserting one guild-target arena_on/arena_off audit row
+with the stripped reason and Walker.clock time. The update and audit are atomic.
+Replies suppress mentions and follow commit/rollback.
+
+Success says "The Arena is now on in this server." or "The Arena is now off in
+this server. Runs already started can be finished, and tickets can still be
+redeemed." Off blocks new starts; live fights, healing, ordering and redemption
+continue. Re-enabling preserves cooldowns, best floor and tickets. The default
+remains on for new and migrated guilds.
+
+This is additive command metadata; permissions, intents and persisted formats
+remain unchanged. WalkerBot's existing registration includes it in the local
+command manifest. Deployment needs an owner-authorized command sync at G-F;
+this row performs no Discord sync. Tests: test_arena_admin and unchanged
+test_admin_channels, test_gym_legendary_setting, test_admin_reset_sharing.
+
 ## C5: D62b gym feeding
 The holder's gym view adds **Feed Razz Berry** (`gym_feed`) beside Recall and Rewards and
 shows the battle-HP factor including feeding. A press runs C3 `feed` and re-renders the gym
@@ -1413,6 +1436,308 @@ to the client constructor, so Discord shows "/walker" as the bot's custom status
 every connect and reconnect (identify and resume carry it). No command, intent or
 manifest change. Tests: tests/test_client_lifecycle.py.
 
+## C5: Arena team restrictions in gym screens
+
+The deploy and attacker pickers label the caller's own live Arena team members
+"in the Arena", ahead of the companion reason. Such attackers are unavailable,
+Start is disabled, and claim options omit them. Team membership uses the same
+profile-scoped, read-only run_seconds rule as C3, including exact expiry.
+
+Starting with a saved team member or receiving C3 in_arena keeps the party
+screen with "That Pokémon is on your Arena team. Pick another attacker."
+It does not show a result screen or the "you already hold a gym" claim result.
+A deploy confirmation returning in_arena refuses with "This Pokémon is on your
+Arena team and can't defend a gym until the run ends."
+Producer: bot.gyms; consumers: private Walker interactions and C3 gym services.
+No action ID or slash command changes. Tests: test_arena_gym_block and the
+existing gym screen, battle, lifecycle and Legendary-setting regressions.
+
+## C5: Arena team restrictions in research screens
+
+Bulk research rows label in_arena as "on your Arena team" and disable their
+toggles. Toggle, review, unlock and confirm recheck the live team using the
+injected Walker clock; a run started after selection cannot be bypassed.
+Single-send refuses with "This Pokémon is on your Arena team. It can't be sent
+until the run ends." before the Shiny/Legendary unlock screen, including a
+Legendary or Shiny team member. The existing Storage detail Send button is
+unchanged; its handler applies this hard refusal, like companion/favorite guards.
+Producer: bot.research; consumers: private Walker interactions and C3 research.
+No component IDs or slash commands change. Tests: test_research, test_storage,
+test_trading. Native/live acceptance remains separate.
+
+
+## Arena trade refusal (ARENA-7, AR-7a)
+The trade picker omits the caller's live Arena team members from both its options
+and tradable count, retaining the total-owned count. All picker queries use
+Walker.clock(). Trade reason in_arena reads "it is on an Arena team" in the
+existing offer refusal ("That Pokémon can't be traded: it is on an Arena team.")
+and acceptance refusal ("Your Pokémon can't be traded: it is on an Arena team."
+or "Their Pokémon can't be traded: it is on an Arena team.", according to side).
+Producers: bot.trade; consumers: trade participants. No custom-ID or schema change.
+Tests: test_trade_screens and test_trading. Native/live acceptance remains separate.
+
+
+## Arena screens (ARENA-11)
+
+AR-1..AR-8, AR-14a, AR-15 and AR-35a add private Arena renderers and
+handlers(walker) in bot.arena. ARENA-15 registers their action map through
+Walker and supplies home navigation. Producers are the Arena
+service and owned-storage queries; consumers are pure Discord renderers.
+Other command and router actions retain their behavior. All custom IDs reuse
+screens_catch.custom_id, and action names contain only letters/underscores.
+
+arena calls service.state (including lazy expiry), then shows status, best
+floor and held ticket counts. Off says "The Arena is turned off in this
+server." A live run shows "Run in progress: floor N, entry|middle|boss fight."
+and Resume (arena_resume), including while off or paused. Without a live run,
+Start run (arena_team) is enabled only when on, unpaused and off cooldown.
+Cooldown says "Next run in Xh Ym." An ended run says "Your last run ended on
+floor N." Tickets (n) (arena_tickets) is always enabled; Back uses home.
+Excluded/stale owners use the existing refusal path.
+
+Team selection is {phase:arena_team,team:[[uid,revision],...],offset,
+favorites_first}. arena_team starts an empty picker. arena_team_prev/next
+page storage.page for that profile, ten rows at a time; arena_team_sort uses
+the gym sort_label and resets the offset while preserving picks. Each row
+shows name, CP and types. Gym defenders say "unavailable: deployed"; companions
+and specials remain selectable. arena_team_pick accepts exactly one eligible,
+distinct UID on the current page, up to three. arena_team_clear empties picks.
+Start (arena_start) is disabled until three valid members are selected. Each
+picked special adds "<name> is a special Pokémon: it only earns Candy from boss
+knockouts." This warning does not block starting. The picker uses rows 0-2:
+navigation/sort/Back, the select, then Clear/Start.
+
+arena_start passes the saved list to service.start. started/live opens the
+read-only break screen. Other refusals retain the picker with a notice: stale
+says "A Pokémon changed. Pick your team again." and clears picks; deployed
+says "A gym defender can't join an Arena team."; cooldown shows the wait;
+paused uses check-in wording ("Check-ins are paused indefinitely." or
+"Check-ins are paused until <until>."); off uses the off line. All start
+eligibility remains authoritative in the service transaction.
+
+arena_resume and successful start store {phase:arena_break,run_id,run_revision,berry}.
+The break screen shows the stored next enemy's species, types, CP and exact
+sprite when available, never level or IVs, plus party members in saved order
+with HP / full HP. Back out uses arena and changes no run/enemy/HP or clock.
+Resuming after expiry opens the defeat screen (ARENA-12). Views
+stay within five rows, five component widths per row and existing embed/custom
+ID limits. Render functions do no I/O. Tests: test_arena_screens; full M1 and
+live Discord acceptance remain separate.
+
+
+## Arena break actions and results (ARENA-12)
+
+AR-3a, AR-4a, AR-10a, AR-10c, AR-11a and AR-12..AR-15 extend the
+unregistered Arena handler map; services remain authoritative for all writes.
+Row 0 is Fight (arena_fight), Heal all & fight (arena_heal_fight), Back out
+(arena). Row 1 has Heal <name> in party order (arena_heal_one/two/three),
+disabled at full HP. Row 2 is arena_berry, with Razz Berry and Pinap Berry
+stock counts. Row 3 is arena_order, six permutations labelled with party
+positions/names and the current order defaulted. Row 4 remains unused and
+row 0 retains capacity for Phase 2.
+
+Every break redraw saves run_id, run_revision and berry. Initial berry is the
+larger stock, Razz on a tie; a saved choice survives stock changes, actions
+and backing out/resuming and changes only through a valid arena_berry choice.
+Mutation actions pass the saved run ID/revision to heal, set_order, fight or
+heal_all_and_fight. The local berry selection uses the same current-state
+ID/revision guard without writing the run. Stale actions spend/fight nothing,
+redraw the current run and say "The run changed on another screen. This is its
+current state." Invalid berry/order selections use the existing refusal path.
+
+A single heal spends the selected berry through service.heal; missing says
+"You have no <berry>." Full HP just redraws. Heal all & fight uses its atomic
+service; missing says "You need n more <berry>. Nothing was spent." Party
+order uses service.set_order and redraws in that order without resource cost.
+After a win, a result block precedes the next enemy: fought enemy name/CP,
+outcome/ticks, each member's final fight HP, revived-at-1 names and Candy.
+Scheduled boss rewards show "Floor N cleared: <Tier> Ticket" and the separate
+"First clear: +1 <Tier> Ticket" when due. The next break shows revived members
+at 1 HP in their original positions. No event log, enemy level or IVs is shown.
+
+Defeated results and resumed/acted-on expired runs open Arena defeat: reached
+floor/fight and lost, double knockout or time limit, or 18 hours passed.
+Immediate draw results distinguish double knockout from time limit; a later
+resume of a stored draw uses "double knockout or time limit" because the run
+stores only draw. Tickets (arena_tickets) opens the tickets submenu;
+Back (arena) returns home. There is no give-up action. Backing out of a live
+run does not write the run or pause its clock. Renderers remain free of I/O;
+state/inventory queries happen before rendering. Tests: test_arena_screens.
+Full M1 and live Discord acceptance remain separate.
+
+## Arena tickets and inbox labels (ARENA-13)
+
+AR-25..AR-29a and AR-35a add a compatible private submenu without changing
+persisted formats or the redemption service. The Arena service produces counts
+and quotes; bot.arena renders them. ARENA-15 registers them with Walker.
+arena_tickets lists all five tiers with counts and contents from arena.json.
+arena_redeem_bronze/silver/gold/platinum/diamond are disabled at zero; Back
+uses arena. Tickets remain redeemable while off, paused or in a live run.
+
+A tier press calls service.redeem_quote. No held ticket says "You have no
+<Tier> Tickets." A full queue says "Your encounter queue is full (3/3). Open
+an encounter first. Nothing was spent." Both numbers use limits().encounter_queue.
+Otherwise a pure confirmation renderer shows the contents and "2 of 3 slots
+free: +2 encounters" using the current quote and configured capacity. Selection
+is {phase:arena_redeem,tier,free,add}. Confirm uses arena_redeem_confirm;
+Back uses arena_tickets and clears the preview.
+
+Confirm requires that preview and passes expected_free and expected_add to
+service.redeem. redeemed returns the submenu with "Redeemed a <Tier> Ticket:
++n encounters. Rewards are in your Inbox." quote_changed saves and displays
+the new quote with "Your queue changed. Nothing was spent." queue_full/none
+return the submenu with the notices above. Stale/excluded follow the existing
+refusal path. No screen writes rewards itself.
+
+The shared inbox/claim label step recognizes arena:<redeem_id>:income:<n>,
+arena:<redeem_id>:survivor:<n> and arena:<redeem_id>:stardust as "Arena ticket:
+income roll", "Arena ticket: survivor reward" and "Arena ticket: Stardust".
+Malformed arena: keys say "Arena ticket reward"; raw keys never appear.
+This requires no lookup query and preserves gym labels. Each roll remains its
+own inbox key: a Diamond contributes 28 to Inbox (n), per D17; pending_count
+and lossless claim behavior are unchanged. Tests: test_arena_screens,
+test_milestones and unchanged test_gym_screens. Full M1 and live Discord
+acceptance remain separate.
+
+## Arena navigation and player help (ARENA-15)
+
+Walker registers bot.arena.handlers with the existing action map and session
+authorization. Home shows Arena (action arena) immediately after Gyms, enabled
+exactly when that handler is available; the view stays within five rows.
+The registered action opens the private Arena home through the normal router.
+content/help.md describes the Phase 1 team, fights, HP, healing, timing, tickets,
+Candy and live-team restrictions, plus the admin switch. Its opening page stays
+unchanged and each page stays within 4096 UTF-16 units.
+
+Before registration, real-service deletion/reset coverage proves removal of Arena
+runs, tickets, owned receipts, ledger lines and inbox rows, including deletion-marker
+replay after restore. Re-enrollment has no Arena progress, cooldown or tickets.
+Deletion services and persisted formats are unchanged. Focused tests establish
+local source behavior; full M1 and live Discord acceptance remain separate.
+
+
+## Arena skip and settings controls (ARENA-18)
+AR-34 extends the team selection with skip=0; older saved selections without
+skip read as zero. The existing rows 0-2 remain. For max_skip S>0, row 3 is
+arena_skip, values 0..min(S,24): No skip, then Skip k floors: start at floor
+k+1. At S>=25, row 4 is arena_skip_more with 25..S. The saved value is default
+in its containing select. Neither appears at S=0. Each action requires the
+team phase and exactly one integer value in 0..S; malformed/out-of-range input
+uses REOPEN. Changing skip preserves picks, page and sort.
+With k>0, show Skipping k floors pays now: <counts>. Counts come from the
+shared domain.skip_tickets schedule, e.g. 2 Bronze, 4 Silver, 2 Gold, or nothing.
+Start passes skip to the existing service. Only started with k>0 shows
+Skipped k floors: +2 Bronze, +4 Silver, +2 Gold Tickets. A live result shows
+no payment notice. The service remains authoritative for validation/payment.
+
+AR-10b/AR-10d add Auto-order: off|on (arena_auto_order) before Back out in row
+0, and arena_stop_pct in row 4, Stop below 10% through Stop below 90%, using
+service.STOP_PCTS with the saved value defaulted. Rows 1-3 remain unchanged.
+Break state carries stop_pct/auto_order from service.state. Both actions use
+the saved run ID/revision and existing service setters; auto-order passes the
+opposite current flag. Threshold requires one STOP_PCTS value, else REOPEN.
+set redraws and saves the new run revision; stale redraws with STALE without
+changing settings. Other open screens must redraw before fighting. Settings
+survive subsequent runs. Producers: bot.arena; consumers: Discord session
+router and private Arena views. Services own all writes. Additive controls,
+no service/schema change; Fight until hurt is ARENA-24. Tests:
+test_arena_screens. Offline tests do not establish live Discord acceptance.
+
+
+## Arena Fight until hurt (ARENA-24)
+
+Additive private break action arena_until_hurt fills row 0 before Auto-order.
+The producer bot.arena returns only after_commit with the pressed run ID/revision;
+the existing Walker router runs it under the session lock after dispatch commits.
+Each chain_step gets a fresh clock and its own writer transaction, which saves the
+new run_revision in sessions.selection along with the fight and rewards. Only a
+won step with no stop continues at the committed revision. Existing single Fight
+and Heal all & fight result blocks stay unchanged.
+
+A chain lists each floor/fight, enemy name and CP, outcome, ticks and any Candy
+with its recipient, in order. Paying bosses retain the floor-ticket and first-clear
+lines; party lines show the order left. Level and IVs stay hidden. A paying floor
+stops a chain, bounding it to 15 fights. Below threshold before any fight says
+"<name> is below P%. Heal first, or use Fight." After a fight it says
+"Stopped: <name> is below P%." or "Stopped: <name> was revived at 1 HP."
+Ticket stops say "Stopped: floor N paid a ticket." Live stale runs redraw with
+STALE; ended runs show defeat. Without a run, stale/excluded returns REOPEN/EXCLUDED
+without saving the session. Every step rechecks expiry, exclusion and revision;
+a setting change elsewhere stops the chain. Pauses do not stop it.
+
+When a closed writer raises RuntimeError during bot shutdown, return the last
+committed rendering (if any) plus RESTARTING; otherwise propagate the error.
+Committed fights survive interruptions and cannot repeat. Consumers are private
+Discord views and the session router; no schema or service API changes.
+Tests: test_arena_screens, test_readme, test_walker_router. Offline evidence does
+not establish live Discord acceptance.
+
+
+## Arena monthly settlement on walker home (ARENA-22)
+After the enrolled profile is revalidated, Walker.home calls services.arena.settle
+once with the session guild and Walker.clock(), inside its existing writer job,
+before building home state or counting pending rewards. A newly paid month's
+inbox milestone therefore appears immediately in Rewards waiting and enables the
+Inbox button. Settlement also runs when Arena is off or the player is paused.
+Onboarding and a recovered terminal return before this call and do not settle.
+Existing exclusion/profile authorization remains before settlement. No new home
+result fields or Discord side effects; the normal private response follows commit.
+Producer: Walker.home; consumers: home rewards count/Inbox navigation and C3's
+monthly payout. Existing command/session shapes remain compatible. Tests:
+test_arena_screens ArenaRouterTests and existing test_walker_router.
+
+## Arena leaderboard (ARENA-23)
+AR-35a and AR-38..41 add the private arena_leaderboard action. Arena home puts
+its always-enabled Leaderboard button between Tickets and Back, including off,
+live, cooldown and paused states. After the stale/excluded state check every
+Arena dispatch settles the guild at Walker.clock(); arena_until_hurt returns
+its existing post-commit callback first. A later refusal rolls settlement back.
+The leaderboard keeps selection and renders without I/O from service.leaderboard
+and arena.json rules.leaderboard: UTC month, reset countdown rounded up to minutes,
+top ten mention/floor rows, the viewer below ten, rewards and minimum floor, and
+last month's paid places without promoting missing winners. Empty months and
+unpaid last months say so. Back uses arena. Walker suppresses all mention pings.
+Inbox open settles before reading waiting rows. arena_month:<YYYY-MM>:<1|2|3>
+labels read Arena leaderboard <YYYY-MM>: 1st/2nd/3rd place; malformed keys read
+Arena leaderboard reward, without queries or raw keys. Existing arena: labels
+and claim behavior stay unchanged. Help documents the UTC monthly best-floor
+ranking, tie order, minimum and Inbox rewards. This is additive; no persisted
+format or slash command changes. Producers: bot.arena and bot.milestones;
+consumers: Walker sessions, private views and help. Tests: test_arena_screens,
+test_milestones, test_readme, test_walker_router. Live Discord remains unverified.
+
+
+## Arena X items (ARENA-28)
+AR-43 through AR-45 add private actions arena_buy_x_attack, arena_buy_x_defense,
+arena_use_x_attack and arena_use_x_defense; both use actions require arena_break.
+Names are X-Attack and X-Defense. Home and break show Stardust <n> · X-Attack ×n ·
+X-Defense ×n from current state. Prices, duration and multipliers come from
+arena.json rules.x_items. Renderers receive these values without doing I/O.
+
+Home row 1 has Buy X-Attack · 300 and Buy X-Defense · 300, enabled while off,
+paused, in cooldown or in a live run. Home displays purchase notices. After
+settlement, a buy uses services.arena.buy_x and refreshes state. It redraws the
+break when pressed from arena_break with a run (defeat if ended), otherwise home.
+Success says Bought 1 <name> for <price> Stardust. Insufficient says You need
+<price> Stardust for <name>. Nothing was spent. Full bag says Your bag is full.
+Nothing was spent. Existing stale/excluded ownership refusals remain unchanged.
+
+Break row 1 keeps its three heals, followed by one button per kind: active is
+disabled <name>: n fights left; otherwise held items show Use <name> (n), or an
+empty stock shows Buy <name> · <price>. Active lines after party and stock say
+<name>: ×<multiplier> <stat> · n fights left (1 fight left for one).
+Use calls services.arena.use_x at the saved run revision. Notices say <name>
+used: ×<multiplier> <stat> for the next <duration> fights.; <name> is already
+active. Nothing was spent.; or You have no <name>. Stale presses redraw with STALE
+and spend nothing. Refreshed selection keeps the current run revision.
+
+Chain renderings show committed counters after each fight. Defeat has no stock
+or active-effect lines. Five rows and five component widths per row, custom-id
+limits and the 4096 UTF-16-unit description limit still apply, including a
+15-fight chain. Help documents buying, using, duration, one active item per kind,
+and loss of unused fights when a run ends. Producers: bot.arena and content/help;
+consumers: Walker sessions, private views and help. Tests: test_arena_screens,
+test_readme and test_walker_router. Offline evidence is not live Discord acceptance.
 ## Owner amendment: member prune (2026-11-14)
 `/walker-admin prune reason [confirm=false]` deletes the game data of this server's
 profiles whose Discord user is no longer a member. It defers privately before any writer

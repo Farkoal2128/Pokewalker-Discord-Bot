@@ -34,6 +34,72 @@ class BattleTests(unittest.TestCase):
             defender if defender is not None else self.fighter("D"), hp,
             rules=dict(self.rules, **rules), chart=self.chart)
 
+    def test_party_hp_lists_end_hp_in_party_order_with_zero_for_fainted(self):
+        party = [self.fighter(hp=4), self.fighter("B", hp=13), self.fighter("C", hp=29)]
+        result = self.run_battle(party, tick_limit=3)
+        self.assertEqual(result.party_hp, (0, 5, 29))
+        self.assertEqual(result.survivors, (1, 2))
+
+    def test_bench_member_keeps_starting_hp(self):
+        party = [self.fighter(hp=10), self.fighter("B", hp=23), self.fighter("C", hp=41)]
+        result = self.run_battle(party, hp=4)
+        self.assertEqual(result.outcome, "win")
+        self.assertEqual(result.party_hp, (6, 23, 41))
+
+    def test_starting_hp_below_canonical_is_used_as_given(self):
+        multipliers = load_table("cpm")["multipliers"]
+        attack, defense, canonical_hp = self.battle.combat_stats(
+            (100, 100, 100), (0, 0, 0), 80, multipliers)
+        self.assertLess(5, canonical_hp)
+        fighter = self.fighter(attack=attack, defense=defense, hp=5)
+        defender = self.fighter("D", attack=attack, defense=defense)
+        result = self.run_battle([fighter], defender, tick_limit=2)
+        self.assertEqual((result.outcome, result.reason, result.ticks),
+                         ("loss", "party_fainted", 2))
+        self.assertEqual(result.party_hp, (0,))
+        full = self.run_battle([self.fighter(attack=attack, defense=defense, hp=canonical_hp)],
+                               defender, tick_limit=2)
+        self.assertEqual((full.outcome, full.party_hp), ("draw", (canonical_hp - 8,)))
+        self.assertEqual(fighter.hp, 5)
+
+    def test_finisher_is_position_of_the_knockout_hit_after_substitution(self):
+        party = [self.fighter(hp=4), self.fighter("B", hp=4), self.fighter("C", hp=100)]
+        result = self.run_battle(party, hp=12)
+        self.assertEqual((result.outcome, result.ticks, result.finisher), ("win", 3, 2))
+        self.assertEqual(result.party_hp, (0, 0, 96))
+        result = self.run_battle([self.fighter(hp=4), self.fighter("B", hp=23)], hp=4)
+        self.assertEqual((result.outcome, result.finisher, result.party_hp),
+                         ("win", 0, (0, 23)))
+
+    def test_finisher_set_on_double_knockout_draw(self):
+        result = self.run_battle([self.fighter(hp=4)], hp=4)
+        self.assertEqual((result.outcome, result.reason, result.finisher, result.party_hp),
+                         ("draw", "defender_fainted", 0, (0,)))
+
+    def test_finisher_none_on_loss_and_tick_limit(self):
+        loss = self.run_battle([self.fighter(hp=4)], hp=5)
+        limit = self.run_battle([self.fighter(hp=100000)], hp=100000)
+        pending = self.run_battle([self.fighter(hp=100000)], hp=57, tick_limit=6)
+        for result, reason in ((loss, "party_fainted"), (limit, "tick_limit"),
+                               (pending, "tick_limit")):
+            with self.subTest(reason=reason, ticks=result.ticks):
+                self.assertEqual(result.reason, reason)
+                self.assertIsNone(result.finisher)
+        self.assertEqual(loss.party_hp, (0,))
+        self.assertEqual(pending.party_hp, (99980,))
+
+    def test_result_positional_constructor_still_valid(self):
+        for version in ((), ("legacy",)):
+            with self.subTest(version=version):
+                result = self.battle.Result("win", "defender_fainted", 1, (0,), ("event",),
+                                            *version)
+                self.assertEqual((result.outcome, result.reason, result.ticks,
+                                  result.survivors, result.events, result.engine_version),
+                                 ("win", "defender_fainted", 1, (0,), ("event",),
+                                  version[0] if version else "1"))
+                self.assertEqual(result.party_hp, ())
+                self.assertIsNone(result.finisher)
+
     def test_damage_equal_stats_fast_4_charged_37(self):
         self.assertEqual(self.battle.damage(6, 100, 100, 1.2, 1), 4)
         self.assertEqual(self.battle.damage(60, 100, 100, 1.2, 1), 37)

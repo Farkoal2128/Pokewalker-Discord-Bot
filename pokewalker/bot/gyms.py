@@ -13,6 +13,7 @@ from pokewalker.services import gyms as service, profiles, storage
 
 CHANGED = 'This gym changed. Reopen it.'
 RECALL = 'Income for full hours is paid; the survivor roll is forfeited'
+ARENA_ATTACKER = 'That Pokémon is on your Arena team. Pick another attacker.'
 
 
 def buttons(state, actions):
@@ -206,7 +207,9 @@ def handlers(walker):
             state['battle_hp'] = defender_hp(state['hp'], hours, dep['heal_x10'])
         return state
 
-    def reason(pokemon, identity, profile, attacking=False, legendary_ok=False):
+    def reason(pokemon, identity, profile, arena_team, attacking=False, legendary_ok=False):
+        if pokemon['pokemon_uid'] in arena_team:
+            return 'in the Arena'
         if profile['companion_uid'] == pokemon['pokemon_uid']:
             return 'companion'
         if not attacking and service.blocked_defender(identity, legendary_ok):
@@ -215,7 +218,7 @@ def handlers(walker):
             return 'deployed'
         return None
 
-    async def party_state(conn, session, selection, profile, notice=None):
+    async def party_state(conn, session, selection, profile, arena_team, notice=None):
         legendary_ok = await service.legendary_defenders_allowed(conn, session['guild_id'])
         rows, total = await storage.page(conn, session['profile_id'], selection['offset'],
                                          favorites_first=selection.get('favorites_first', False))
@@ -224,13 +227,13 @@ def handlers(walker):
             pokemon = await storage.detail(conn, session['profile_id'], slot[0]) if slot else None
             item = pokemon_state(pokemon) if pokemon else None
             if item:
-                item['reason'] = reason(pokemon, item['identity'], profile, attacking=True)
+                item['reason'] = reason(pokemon, item['identity'], profile, arena_team, attacking=True)
                 if pokemon['revision'] != slot[1]:
                     item['reason'] = 'changed; choose again'
             members.append(item)
         items = [pokemon_state(row) for row in rows]
         for item in items:
-            item['reason'] = reason(item['pokemon'], item['identity'], profile, attacking=True)
+            item['reason'] = reason(item['pokemon'], item['identity'], profile, arena_team, attacking=True)
         valid = bool(members[0]) and all(not slot or item and not item['reason'] for slot, item in zip(selection['party'], members))
         nominee = selection['nominee']
         if nominee:
@@ -271,7 +274,8 @@ def handlers(walker):
             selection['slot'] = ('one', 'two', 'three').index(action.rsplit('_', 1)[1]) + 1
             if selection['slot'] > battle_rules['party_max']:  # a slot button from before D62a
                 raise _Refused(REOPEN)
-        state = await party_state(conn, session, selection, profile)
+        arena_team = await profiles.arena_team(conn, session['profile_id'], now)
+        state = await party_state(conn, session, selection, profile, arena_team)
         values = interaction.data.get('values', [])
         if action == 'gym_party_pick':
             item = next((item for item in state['rows'] if len(values) == 1 and item['pokemon']['pokemon_uid'] == values[0]), None)
@@ -288,6 +292,8 @@ def handlers(walker):
                 raise _Refused(REOPEN)
             selection['nominee'] = None if values[0] == 'clear' else values[0]
         elif action == 'gym_battle_start':
+            if any(item and item['reason'] == 'in the Arena' for item in state['members']):
+                return render_party({**state, 'notice': ARENA_ATTACKER})
             if not state['valid']:
                 raise _Refused('Choose an eligible attacker and check your claim choice; '
                                'Legendary/Mythical claims need this server to allow them.')
@@ -297,12 +303,13 @@ def handlers(walker):
             if result['status'] == 'completed':
                 session['selection'] = json.dumps({'gym_id': gym['gym_id'], 'phase': 'gym_result', 'result': result})
                 return render_result({'session': session, 'result': result, 'content': walker.bot.content})
-            if result['status'] not in ('stale', 'cooldown'):
+            if result['status'] not in ('stale', 'cooldown', 'in_arena'):
                 raise _Refused(REOPEN)
             minutes = battle_rules['cooldown_seconds'] // 60
-            state['notice'] = CHANGED if result['status'] == 'stale' else f'Battle cooldown: wait {minutes} minutes after your last completed battle.'
+            state['notice'] = {'stale': CHANGED, 'in_arena': ARENA_ATTACKER,
+                               'cooldown': f'Battle cooldown: wait {minutes} minutes after your last completed battle.'}[result['status']]
         session['selection'] = json.dumps(selection)
-        return render_party(await party_state(conn, session, selection, profile, state.get('notice')))
+        return render_party(await party_state(conn, session, selection, profile, arena_team, state.get('notice')))
 
     async def dispatch(action, conn, session, interaction):
         now = walker.clock()
@@ -343,6 +350,7 @@ def handlers(walker):
                 offset = 0
             rows, total = await storage.page(conn, session['profile_id'], offset, favorites_first=favorites_first)
             legendary_ok = await service.legendary_defenders_allowed(conn, guild)
+            arena_team = await profiles.arena_team(conn, session['profile_id'], now)
             if offset and not rows:
                 offset = max(0, (total - 1) // 10 * 10)
                 rows, total = await storage.page(conn, session['profile_id'], offset, favorites_first=favorites_first)
@@ -352,7 +360,7 @@ def handlers(walker):
                 if pokemon is None:
                     raise _Refused(REOPEN)
                 item = pokemon_state(pokemon)
-                if reason(pokemon, item['identity'], profile, legendary_ok=legendary_ok):
+                if reason(pokemon, item['identity'], profile, arena_team, legendary_ok=legendary_ok):
                     raise _Refused('This Pokémon cannot defend a gym.')
                 selection.update(phase='gym_deploy_confirm', pokemon_uid=pokemon['pokemon_uid'], pokemon_revision=pokemon['revision'])
                 session['selection'] = json.dumps(selection)
@@ -361,7 +369,7 @@ def handlers(walker):
                                                'favorites_first': favorites_first})
             items = [pokemon_state(row) for row in rows]
             for item in items:
-                item['reason'] = reason(item['pokemon'], item['identity'], profile, legendary_ok=legendary_ok)
+                item['reason'] = reason(item['pokemon'], item['identity'], profile, arena_team, legendary_ok=legendary_ok)
             return render_deploy({'session': session, 'rows': items, 'total': total, 'offset': offset,
                                   'favorites_first': favorites_first})
         notice = None
@@ -371,6 +379,8 @@ def handlers(walker):
             result = await service.deploy(conn, session, gym['gym_id'], selection.get('pokemon_uid'),
                                           selection.get('pokemon_revision'), now, walker.bot.content)
             if result['status'] != 'deployed':
+                if result['status'] == 'in_arena':
+                    raise _Refused("This Pokémon is on your Arena team and can't defend a gym until the run ends.")
                 raise _Refused(CHANGED if result['status'] == 'stale' else 'This Pokémon cannot defend this gym.')
         else:
             dep = await deployment(conn, session, gym)

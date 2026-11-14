@@ -101,6 +101,14 @@ async def queue_size(conn, profile_id):
         return (await cursor.fetchone())[0]
 
 
+async def arena_team(conn, profile_id, now):
+    """Return this profile's live Arena team UIDs; expiry needs no write or timer."""
+    async with conn.execute("SELECT team FROM arena_runs WHERE profile_id=? AND ended_at IS NULL "
+                            "AND started_at>?", (profile_id, now - load_table('arena')['rules']['run_seconds'])) as cursor:
+        row = await cursor.fetchone()
+    return frozenset(member['uid'] for member in json.loads(row['team'])) if row else frozenset()
+
+
 async def channel_policy(conn, guild_id, channel_id, parent_id=None):
     async with conn.execute("SELECT * FROM guild_channels WHERE guild_id=? AND channel_id=?",
                             (str(guild_id), str(parent_id if parent_id is not None else channel_id))) as cursor:

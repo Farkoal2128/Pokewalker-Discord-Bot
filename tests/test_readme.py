@@ -41,11 +41,45 @@ class ReadmeTests(IsolatedAsyncioTestCase):
     def test_approved_text_verbatim(self):
         content = Path('content/help.md').read_bytes()
         self.assertEqual(hashlib.sha256(content).hexdigest(),
-                         '5674ee2e21b9b689bf7f9a9ecd188bc60caeb570c3daa0d4cace8c0bf8737f63')
+                         '8f6b2a198ad8c2eac172209583d09841b965a3e8816fd925238fbf675c2c3fa6')
+
+    def test_help_describes_x_items(self):
+        player = next(page for page in self.pages() if '**Arena.**' in page)
+        for phrase in ('X-Attack', 'X-Defense', 'doubles', 'attack', 'defense', '3 fights',
+                       '300 Stardust', 'Arena home', 'break screen', 'one of each kind',
+                       'unused fights are lost', 'run ends'):
+            self.assertIn(phrase, player)
+
+    def test_help_describes_monthly_leaderboard(self):
+        player = next(page for page in self.pages() if '**Arena.**' in page)
+        for phrase in ('monthly server leaderboard', 'best floor', 'UTC', 'first', 'older profile',
+                       'profile ID', 'floor 10', '1st: Master Ball, Shiny Lure, World Legendary Ticket',
+                       '2nd: Master Ball, Shiny Lure', '3rd: Master Ball', 'Inbox'):
+            self.assertIn(phrase, player)
+
+    def test_help_describes_skip_and_fight_until_hurt(self):
+        player = next(page for page in self.pages() if '**Arena.**' in page)
+        for phrase in ('Skip', 'best floor', '40', 'Fight until hurt', '10%', '90%', '50%',
+                       'Auto-order', 'highest HP percentage', 'revived', 'ticket', 'defeat', 'berry'):
+            self.assertIn(phrase, player)
 
     def test_page_one_is_current_opening_verbatim(self):
         page = self.pages()[0]
         self.assertEqual(hashlib.sha256(page.encode('utf-8')).hexdigest(), PAGE_ONE_SHA256)
+
+    def test_help_describes_arena_and_admin_switch_within_page_limits(self):
+        pages = self.pages()
+        arena_pages = [page for page in pages[:-1] if '**Arena.**' in page]
+        self.assertEqual(len(arena_pages), 1)
+        player = arena_pages[0]
+        for fragment in ('**Arena.**', 'team of 3', 'three fights per floor', 'HP carries',
+                         'berry healing', '18-hour run', '18-hour cooldown', 'Tickets', 'knockout', 'Candy',
+                         'gym', 'trade', 'research'):
+            self.assertIn(fragment, player)
+        self.assertIn('/walker-admin arena on|off reason', pages[-1])
+        self.assertTrue(all(units(page) <= 4096 for page in pages))
+        self.assertEqual(hashlib.sha256(pages[0].encode('utf-8')).hexdigest(), PAGE_ONE_SHA256)
+        self.assertNotIn(b'\r', Path('content/help.md').read_bytes())
 
     def test_pages_within_limit_last_is_admin(self):
         pages = self.pages()
@@ -120,7 +154,7 @@ class ReadmeTests(IsolatedAsyncioTestCase):
         self.assertIn('**`/walker-admin`** (needs Manage Server)', page)
         self.assertIn('**`/walker-mod`** (needs Moderate Members)', page)
         self.assertNotRegex(page, r'(?<![\w-])/admin\b')
-        self.assertEqual(len(documented), 26)  # D63 gyms legendary; member-prune prune
+        self.assertEqual(len(documented), 27)  # ARENA-14 arena; member-prune prune
         listed = {span.split()[0] for line in page.splitlines() if line.startswith('- ')
                   for span in re.findall(r'`([^`]+)`', line)}
         self.assertEqual(listed, children)

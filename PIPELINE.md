@@ -36,7 +36,8 @@ The project adapter is `active`: `scripts/verify.py` runs the two configured che
 in `.project/commands.json`: the application unit suite (`unit`) and the offline
 committed-artifact integrity suite (`contract`). Other checks remain unconfigured;
 there is no separate lint command yet. `test_cmd` runs the unit suite once, through
-the `verify.py` `unit` check (owner ruling 2026-11-14).
+the `verify.py` `unit` check (owner decision 2026-11-14: the separate unittest leg
+duplicated it and doubled the run time).
 
 Passing `test_cmd` proves application unit tests, the committed artifact's integrity,
 and framework checks. It does not establish live Discord acceptance (G-3 smoke

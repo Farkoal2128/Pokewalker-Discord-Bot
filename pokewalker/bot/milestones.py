@@ -1,12 +1,13 @@
 """Private reward inbox with durable Claim and detached rendering."""
 
 import json
+import re
 
 import discord
 
 from content.balance import load_table
 from pokewalker.bot.screens_catch import custom_id
-from pokewalker.services import items, milestones as service
+from pokewalker.services import arena, items, milestones as service
 
 
 def _entries(content):
@@ -81,10 +82,31 @@ def _reward_name(row, content):
 
 
 async def _gym_labels(conn, session, details):
+    labels = {}
+    for row in details:
+        key = row['milestone_id']
+        if key.startswith('arena_month:'):
+            parts = key.split(':')
+            label = 'Arena leaderboard reward'
+            if (len(parts) == 3 and re.fullmatch(r'[0-9]{4}-(0[1-9]|1[0-2])', parts[1])
+                    and parts[2] in ('1', '2', '3')):
+                place = {'1': '1st', '2': '2nd', '3': '3rd'}[parts[2]]
+                label = f'Arena leaderboard {parts[1]}: {place} place'
+            labels[key] = label
+        if key.startswith('arena:'):
+            parts = key.split(':')
+            label = 'Arena ticket reward'
+            if len(parts) >= 3 and parts[1]:
+                if len(parts) == 3 and parts[2] == 'stardust':
+                    label = 'Arena ticket: Stardust'
+                elif (len(parts) == 4 and parts[2] in ('income', 'survivor')
+                      and parts[3].isascii() and parts[3].isdecimal()):
+                    label = 'Arena ticket: ' + ('income roll' if parts[2] == 'income' else 'survivor reward')
+            labels[key] = label
     rewards = {row['milestone_id']: row['milestone_id'].split(':') for row in details
                if row['milestone_id'].startswith(('gym_income:', 'survivor:'))}
-    labels = {milestone_id: 'Gym income reward' if parts[0] == 'gym_income' else 'Gym survivor reward'
-              for milestone_id, parts in rewards.items()}
+    labels.update({milestone_id: 'Gym income reward' if parts[0] == 'gym_income' else 'Gym survivor reward'
+                   for milestone_id, parts in rewards.items()})
     rewards = {milestone_id: parts for milestone_id, parts in rewards.items() if parts[1] and (
         (parts[0] == 'gym_income' and len(parts) == 3 and parts[2] in ('1', '2', '3', '4', '5', '6', '7', '8'))
         or (parts[0] == 'survivor' and len(parts) == 2))}
@@ -166,6 +188,7 @@ def handlers(walker):
     from pokewalker.bot.walker import _Refused, REOPEN, EXCLUDED
 
     async def inbox(conn, session, interaction):
+        await arena.settle(conn, session['guild_id'], walker.clock())
         if json.loads(session['selection']).get('back') == 'inbox':
             session['selection'] = '{}'
         details = await service.waiting_details(conn, session['profile_id'])

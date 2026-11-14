@@ -488,6 +488,54 @@ class MilestoneTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('Gym survivor reward: Park: Stardust ×500', description)
         self.assertNotIn('uuid', description)
 
+    async def test_inbox_and_claim_label_arena_rows_without_raw_keys(self):
+        session = await self.ready()
+        keys = ['arena:private-redemption:income:0', 'arena:private-redemption:survivor:1',
+                'arena:private-redemption:stardust']
+        await self.seed_gym_inbox([(key, 'stardust', None, 100) for key in keys])
+        queries = []
+        await self.conn.set_trace_callback(queries.append)
+        for action in ('inbox', 'claim'):
+            shown = await self.click(await self.current(session), action)
+            description = shown.edit_original_response.await_args.kwargs['embed'].description
+            for label in ('Arena ticket: income roll', 'Arena ticket: survivor reward', 'Arena ticket: Stardust'):
+                self.assertIn(label + ': Stardust ×100', description)
+            self.assertNotIn('arena:', description)
+            self.assertNotIn('private-redemption', description)
+        await self.conn.set_trace_callback(None)
+        self.assertFalse(any('JOIN gyms' in sql for sql in queries))
+        screen = importlib.import_module('pokewalker.bot.milestones')
+        with patch.object(self.conn, 'execute', side_effect=AssertionError('Arena label lookup')):
+            labels = await screen._gym_labels(self.conn, session, [{'milestone_id': key} for key in keys])
+        self.assertEqual(set(labels), set(keys))
+
+    async def test_malformed_arena_key_gets_generic_label(self):
+        session = await self.ready()
+        keys = ['arena:', 'arena:private', 'arena:private:unknown', 'arena::income:0',
+                'arena:private:income', 'arena:private:survivor:-1', 'arena:private:income:bad',
+                'arena:private:stardust:0', 'arena:private:income:0:extra']
+        await self.seed_gym_inbox([(key, 'stardust', None, 1) for key in keys])
+        for action in ('inbox', 'claim'):
+            shown = await self.click(await self.current(session), action)
+            description = shown.edit_original_response.await_args.kwargs['embed'].description
+            self.assertEqual(description.count('Arena ticket reward: Stardust ×1'), len(keys))
+            self.assertNotIn('arena:', description)
+            self.assertNotIn('private', description)
+
+    async def test_gym_labels_unchanged(self):
+        session = await self.ready()
+        await self.seed_gym_deployment('mixed-uuid')
+        await self.seed_gym_inbox([('gym_income:mixed-uuid:1', 'item', 'great_ball', 1),
+                                  ('survivor:mixed-uuid', 'stardust', None, 500),
+                                  ('arena:private:income:0', 'stardust', None, 100)])
+        for action in ('inbox', 'claim'):
+            shown = await self.click(await self.current(session), action)
+            description = shown.edit_original_response.await_args.kwargs['embed'].description
+            for line in ('Gym income: Park hour 1: Great Ball ×1',
+                         'Gym survivor reward: Park: Stardust ×500',
+                         'Arena ticket: income roll: Stardust ×100'):
+                self.assertIn(line, description)
+
     async def test_home_rewards_waiting_line_has_no_milestones_word(self):
         await self.seed_gold()
         before = await self.snapshot()
@@ -533,6 +581,32 @@ class MilestoneTests(unittest.IsolatedAsyncioTestCase):
         await self.walker.route(self.interaction(), claim_button.custom_id)
         self.assertEqual(await self.snapshot(), after)
         self.assertEqual(len(await self.rows("SELECT * FROM action_receipts WHERE action='claim'")), 1)
+
+    async def test_inbox_open_settles_and_lists_reward(self):
+        session = await self.ready()
+        await self.conn.execute('INSERT INTO arena_month_scores VALUES (?,?,?,?,?)',
+                                ('123', '1969-12', self.profile['profile_id'], 10, 100))
+        await self.conn.execute('UPDATE guilds SET arena_enabled=0')
+        shown = await self.click(session, 'inbox')
+        text = shown.edit_original_response.await_args.kwargs['embed'].description
+        self.assertIn('Arena leaderboard 1969-12: 1st place', text)
+        self.assertIn('Master Ball \u00d71, Shiny Lure \u00d71, World Legendary Ticket \u00d71', text)
+        self.assertNotIn('arena_month:', text)
+        self.assertEqual(len(await self.rows('SELECT * FROM inbox_items')), 3)
+        await self.click(await self.current(session), 'inbox')
+        self.assertEqual(len(await self.rows('SELECT * FROM inbox_items')), 3)
+
+    async def test_arena_month_keys_get_place_labels_else_generic(self):
+        from pokewalker.bot import milestones as screen
+        keys = ['arena_month:2026-11:' + p for p in ('1', '2', '3', '4', '01', 'x')]
+        keys += ['arena_month:', 'arena_month:2026-13:1', 'arena_month:2026-00:1',
+                 'arena_month:26-11:1', 'arena_month:2026-1:1', 'arena_month:2026-11:1:extra',
+                 'arena_month:\uff12\uff10\uff12\uff16-11:1']
+        with patch.object(self.conn, 'execute', side_effect=AssertionError('label query')):
+            labels = await screen._gym_labels(self.conn, {}, [{'milestone_id': k} for k in keys])
+        self.assertEqual([labels[k] for k in keys[:3]],
+                         [f'Arena leaderboard 2026-11: {p} place' for p in ('1st', '2nd', '3rd')])
+        self.assertTrue(all(labels[k] == 'Arena leaderboard reward' for k in keys[3:]))
 
     async def test_inbox_lists_named_milestones_and_partial_claim_details(self):
         session = await self.ready()

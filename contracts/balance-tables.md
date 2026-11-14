@@ -378,3 +378,143 @@ owner decision 2026-11-12). Item effects and storage are C3. Each changed table 
 output, then Great Ball to Ultra Ball with 2 inputs per output. No rule produces or
 consumes a Master Ball. C3 `items.trade_up` and the C5 Bag picker read only this list.
 Tests: tests/test_balance_tables.py, tests/test_ball_trade_up.py.
+
+## Arena table (`arena.json`)
+
+Approved by [Arena requirements](../docs/features/arena/REQUIREMENTS.md), owner
+approval 2026-11-13 (AR-14a, AR-16 through AR-34). Repository authors produce this
+additive version-1 table; the Arena domain/service and offline content build are
+consumers. Existing tables, artifact bytes and `artifact_sha256` stay unchanged.
+The sorted manifest `balance_sha256` gains the SHA-256 of `arena.json` file bytes.
+
+The common envelope applies. `source` cites the approved requirements and the
+published [Serebii Ultra Beasts](https://www.serebii.net/pokemon/ultrabeasts.shtml)
+Sub-Legendary list and [Serebii Paradox Pokemon](https://www.serebii.net/scarletviolet/paradoxpokemon.shtml)
+past/future lists, checked 2026-11-13. Legendary/Mythical classification continues
+to use the pinned artifact flags; those species are special regardless of lists.
+
+`rules` contains exactly these authored values. Durations are real seconds;
+levels are whole levels; IV ranges are inclusive; floor numbers, stat counts,
+reward quantities and percentages are integers. HP factors use integer tenths,
+so 10 means 1.0x; boss BST caps use `cap * pct // 100`.
+
+| Key | Payload and units |
+|---|---|
+| `run_seconds`, `cooldown_seconds` | 64800 each (18 hours) |
+| `team_size`, `level_cap` | 3 members, level 40 |
+| `heal_items` | `["razz_berry", "pinap_berry"]` |
+| `iv_ranges` | `entry: [0,5]`, `middle: [5,10]`, `boss: [10,15]` |
+| `late` | `after_floor: 40`, `step_floors: 5`, `iv_steps_max: 15`, `hp_step_x10: 1`, `hp_cap_x10: 20`, `uncapped_after_floor: 115`, `uncapped_step_x10: 1` |
+| `bst` | `base: 300`, `span: 420`, `span_floors: 31`, `full: 720`, `full_floor: 32`, `boss_pct: 115`, `decade_boss_pct: 150` |
+| `special.ultra_beast_species` | 793-799 and 803-806, in ascending species-ID order |
+| `special.paradox_species` | 984-995, 1005, 1006, 1009, 1010, 1020-1023, in ascending species-ID order |
+| `special.boss_chance_pct`, `special.decade_boss_chance_pct` | 5 and 25 percent |
+| `candy` | `per_knockout: 1`, `special_boss_only: true` (special finishers earn Candy only against bosses) |
+| `tickets.tiers` | Keys `bronze`, `silver`, `gold`, `platinum`, `diamond`; each has the four fields below |
+| tier `encounters` | 1, 2, `"fill"`, `"fill"`, `"fill"` respectively; `"fill"` uses current free queue slots |
+| tier `stardust` | 100, 200, 400, 1000, 3000 respectively |
+| tier `income_rolls` | 0, 2, 4, 8, 24 respectively |
+| tier `survivor_rolls` | 0, 0, 0, 1, 3 respectively |
+| `tickets.schedule` | `bronze: {floors: [5,15]}`, `silver: {floors: [10,20,30,40]}`, `gold: {from: 25, every: 10}`, `platinum: {floors: [50,60,70]}`, `diamond: {from: 80, every: 10}` |
+| `tickets.first_clear_tiers` | `["silver", "gold", "platinum", "diamond"]` |
+| `skip` | `divisor: 2`, `max: 40` floors; read by Phase 2 |
+
+The special predicate is Legendary OR Mythical OR listed Ultra Beast OR listed
+Paradox, giving 128 special and 966 regular pinned identities. The Ultra Beast
+list equals `milestones.json` `ultra_beast_first_catches`. Schedule entries refer
+to known tiers and award at most one tier per floor. No migration or changes to
+existing table consumers are required; removing this table before its consumers
+land requires removing its manifest hash and corresponding tests/contract too.
+
+
+## Arena analytic economy output (ARENA-19, C4)
+
+The offline economy model produces additive arena_income(balances) and the
+arena_income field of run_scenario; the report CLI and economy tests consume it.
+No player data, balance values, existing scenario metrics or migrations change.
+The Arena section appears between the gym item table and Checks, without adding
+an Arena PASS/FAIL expectation.
+
+arena_income contains income_roll_value and survivor_roll_value in Stardust:
+weighted row quantity times conversion_rates.stardust_per_unit, with Stardust
+rows valued directly. The survivor value also includes stardust_flat. Missing
+item prices count zero and appear by name in the sorted unpriced list.
+runs_per_day is 86400 / arena.rules.cooldown_seconds, independent of activity.
+
+runs contains these (skip, floor cleared) assumptions in order:
+(0,10), (0,20), (0,30), (0,40), (40,40), (40,60), (40,80), (40,100).
+Each run has skip, floor, fights = 3 * (floor - skip), tickets = skip_tickets(floor),
+at_start = skip_tickets(skip), encounters_max, stardust, income_rolls,
+survivor_rolls, stardust_equivalent and at_start_stardust_equivalent.
+Payout totals use the live Arena ticket tier contents; fill uses the encounter
+queue capacity. Stardust equivalents add flat Stardust and both types of rolls
+at their weighted values, excluding encounters and unpriced items. A skip changes
+fights and when tickets pay, not the total payout for floors 1..floor.
+(40,40) means start and back out, with zero fights and all payout at start.
+
+The report lists every run field plus Stardust-equivalent per day (run equivalent
+times runs_per_day), both roll values and every unpriced item. These are repeat
+payouts without first-clear bonuses; floors are reference assumptions from Arena
+requirements sections 6.1 and 8, not predictions of player reach. No battle is
+simulated. Encounter totals assume room for every redemption and are upper bounds;
+roll values precede inventory limits and exclude encounter value and berry costs.
+The analytic payout is separate from existing walking/catching scenario income
+and existing PASS/FAIL checks. Tests: test_economy_arena and the existing economy
+model, D47 and report CLI suites.
+
+
+## Arena leaderboard rules (version 2)
+Owner ruling 2026-11-14, Arena requirements section 6.3 (AR-38, AR-40, AR-41),
+adds rules.leaderboard after skip. min_floor = 10 is the lowest cleared floor
+eligible for a monthly reward; shown = 10 is the number of board rows rendered.
+Both are positive integer counts. rewards is ordered by place, starting at 1:
+
+| Place | One of each item |
+|---|---|
+| 1 | master_ball, shiny_lure, world_legendary_ticket |
+| 2 | master_ball, shiny_lure |
+| 3 | master_ball |
+
+The paid-place count is len(rewards), exactly 3; nothing below those places pays.
+Items cannot repeat within a place. All are capacities.limits.rare_pockets keys
+with cap 1, so existing inbox claim retains rewards while their pocket is full.
+shiny_lure is the consumable; Shiny Charm is not a reward.
+
+Repository authors produce arena.json version 2 and its manifest balance hash.
+source also cites section 6.3 and the 2026-11-14 owner ruling; checked remains
+2026-11-13 because the species references were not rechecked. Existing rules,
+other tables and artifact_sha256 remain unchanged. Consumers are settle
+(ARENA-22) and the leaderboard screen (ARENA-23); existing consumers ignore the
+additive key. The economy report does not model these monthly rewards: at most
+3 Master Balls, 2 Shiny Lures and 1 World Legendary Ticket per server and month.
+Only its manifest hash and arena.json version input lines change. Tests:
+test_balance_tables, test_content_integrity and report regeneration comparison.
+
+## Arena X-item rules (version 3)
+
+Arena requirements section 6.4 (owner ruling 2026-11-14, AR-42 through AR-46)
+adds `rules.x_items` after `leaderboard`. Repository authors produce `arena.json`
+version 3 and its manifest balance hash; existing consumers ignore the additive
+key. No persisted data, other balance tables or artifact bytes change.
+
+| Key | Payload and units |
+|---|---|
+| `fights` | 3 fights of effect per use, a positive integer count |
+| `multiplier` | 2 times the named party stat while its counter is above 0, a positive integer factor |
+| `items.x_attack` | `{"stat": "attack", "stardust": 300}` |
+| `items.x_defense` | `{"stat": "defense", "stardust": 300}` |
+
+Each `items` key is an inventory item ID. `stat` names a `battle.Combatant`
+field: attack and defense each occur once. Each `stardust` is the positive integer
+price of one item in Stardust. Both items count in `bag_units`; neither is a
+`capacities.json` rare pocket or a `conversion_rates.json` `stardust_per_unit` or
+`purchase_stardust` key, so neither can be converted. Consumers are `buy_x` and
+`use_x` (ARENA-26), `fight` (ARENA-27), and the Arena screens (ARENA-28).
+
+`source` gains section 6.4 (owner ruling 2026-11-14) and retains section 6.3;
+`checked` remains 2026-11-13 because species references were not rechecked.
+`artifact_sha256` stays unchanged. The economy report does not model this
+Stardust sink; AR-46's figures come from an uncommitted scratch simulation.
+Only the report's manifest hash and `arena.json` version input lines change.
+Tests: `test_balance_tables`, `test_content_integrity` and report regeneration
+comparison.

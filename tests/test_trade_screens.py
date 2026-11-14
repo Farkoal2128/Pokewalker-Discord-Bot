@@ -142,7 +142,7 @@ class TradeScreenTests(unittest.IsolatedAsyncioTestCase):
         await self.offer(789, "theirs")
         session, view = await self.snapshot(456, trade_id)
         rows, eligible, owned = await self.writer.run(lambda conn: trading.eligible_page(
-            conn, session["profile_id"], 0))
+            conn, session["profile_id"], 0, self.now))
         picker = {"session": session, "rows": [storage.stats(CONTENT, row, self.walker.multipliers)
                                                for row in rows], "eligible": eligible, "owned": owned, "offset": 0}
         completed = {**view, "session": session, "state": "completed", "received": {"name": "Articuno", "cp": 99}}
@@ -219,6 +219,52 @@ class TradeScreenTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(f"their {theirs}", line)
             self.assertIn("Shiny", line)
             self.assertIn("Legendary", line)
+
+    async def arena_run(self, user, uid):
+        await self.writer.run(lambda conn: conn.execute(
+            'INSERT INTO arena_runs(run_id,profile_id,started_at,floor,slot,team,enemy) '
+            'VALUES (?,?,?,1,0,?,?)',
+            ('arena-' + str(user), self.profiles[user]['profile_id'], self.now,
+             json.dumps([{'uid': uid, 'family_id': 1, 'special': False, 'full_hp': 40,
+                          'hp': 40, 'snapshot': {}}]),
+             json.dumps({'snapshot': {}, 'battle_hp': 40, 'special': False}))))
+
+    async def test_picker_omits_team_member_and_offer_text_names_arena(self):
+        trade_id = await self.pair()
+        await self.mon(456, 'busy')
+        await self.mon(456, 'spare')
+        await self.arena_run(456, 'busy')
+        text, view = self.shown(await self.press(456, 'trade_pick'))
+        self.assertIn('1 tradable of 3 owned', text)
+        self.assertEqual([o.value for o in self.controls(view)['trade_offer'].options], ['spare'])
+        before = await self.trade_state(trade_id)
+        self.assertEqual(self.refused(await self.press(456, 'trade_offer', ['busy'])), TRADE_REOPEN)
+        self.assertEqual(await self.trade_state(trade_id), before)
+        # The picker rejects busy UIDs first; exercise the service-refusal notice separately.
+        with patch.object(trading, 'offer', new=AsyncMock(return_value={'status': 'ineligible', 'reason': 'in_arena'})):
+            text, _ = self.shown(await self.press(456, 'trade_offer', ['spare']))
+        self.assertIn("That Pokémon can't be traded: it is on an Arena team.", text)
+
+    async def test_acceptance_refusal_text_names_arena_for_either_side(self):
+        await self.pair()
+        await self.mon(456, 'mine')
+        await self.mon(789, 'theirs')
+        await self.mon(789, 'spare')
+        await self.offer(456, 'mine')
+        await self.offer(789, 'theirs')
+        await self.press(456, 'trade_refresh')
+        await self.press(456, 'trade_confirm')
+        await self.arena_run(789, 'theirs')
+        await self.press(789, 'trade_refresh')
+        text, _ = self.shown(await self.press(789, 'trade_confirm'))
+        self.assertIn("Your Pokémon can't be traded: it is on an Arena team.", text)
+        await self.offer(789, 'spare')
+        await self.press(456, 'trade_refresh')
+        await self.press(456, 'trade_confirm')
+        await self.arena_run(456, 'mine')
+        await self.press(789, 'trade_refresh')
+        text, _ = self.shown(await self.press(789, 'trade_confirm'))
+        self.assertIn("Their Pokémon can't be traded: it is on an Arena team.", text)
 
     async def test_picker_lists_only_eligible_ten_per_page(self):
         await self.pair()

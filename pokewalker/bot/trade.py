@@ -16,7 +16,8 @@ from pokewalker.services.deletion import opted_out
 
 ENDED = "This trade ended. Use /trade member to start again."
 REASONS = {"favorite": "it is a favorite", "companion": "it is a companion", "deployed": "it is defending a gym",
-           "not_owned": "it is no longer in storage", "changed": "it changed after it was offered"}
+           "not_owned": "it is no longer in storage", "changed": "it changed after it was offered",
+           "in_arena": "it is on an Arena team"}
 
 
 def _offer_line(offer):
@@ -129,10 +130,10 @@ def handlers(walker):
         if state["state"] != "open":
             save(session, trade_id, state["revision"], "result")
             return render_result(state)
-        rows, eligible, owned = await trading.eligible_page(conn, session["profile_id"], offset)
+        rows, eligible, owned = await trading.eligible_page(conn, session["profile_id"], offset, walker.clock())
         if offset and not rows:
             offset = max(0, (eligible - 1) // 10 * 10)
-            rows, eligible, owned = await trading.eligible_page(conn, session["profile_id"], offset)
+            rows, eligible, owned = await trading.eligible_page(conn, session["profile_id"], offset, walker.clock())
         save(session, trade_id, state["revision"], "pick", offset)
         return render_picker({"session": session, "offset": offset, "eligible": eligible, "owned": owned,
                               "rows": [storage.stats(walker.bot.content, row, walker.multipliers) for row in rows]})
@@ -156,7 +157,7 @@ def handlers(walker):
 
     async def trade_offer(conn, session, interaction):
         selection = selected(session, "pick")
-        rows, _, _ = await trading.eligible_page(conn, session["profile_id"], selection.get("offset", 0))
+        rows, _, _ = await trading.eligible_page(conn, session["profile_id"], selection.get("offset", 0), walker.clock())
         values = interaction.data.get("values", [])
         if len(values) != 1 or values[0] not in {row["pokemon_uid"] for row in rows}:
             raise _Refused(TRADE_REOPEN)

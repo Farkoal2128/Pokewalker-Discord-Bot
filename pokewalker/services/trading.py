@@ -8,8 +8,8 @@ from pokewalker.services import milestones, profiles, research, storage
 TRADE_SECONDS = 900
 CAP_SECONDS = 86400
 PING_SECONDS = 600
-REFUSED = ('deployed', 'favorite', 'companion')
-# protected_reason checks these three before Shiny and Legendary/Mythical, so a neutral
+REFUSED = ('deployed', 'favorite', 'companion', 'in_arena')
+# protected_reason checks these before Shiny and Legendary/Mythical, so a neutral
 # identity gives the same answer as the real one: only identity-free reasons refuse a trade.
 _NEUTRAL = {'is_legendary': False, 'is_mythical': False}
 _TRADABLE = ("state='owned' AND favorite=0 AND gym_deployment_id IS NULL "
@@ -21,20 +21,25 @@ def _writer(conn):
         raise RuntimeError('Trading requires an active writer transaction')
 
 
-def tradable_reason(identity, pokemon, profile):
+def tradable_reason(identity, pokemon, profile, arena_team=frozenset()):
     if pokemon is None or pokemon['state'] != 'owned' or pokemon['profile_id'] != profile['profile_id']:
         return 'not_owned'
-    reason = research.protected_reason(identity, pokemon, profile)
+    reason = research.protected_reason(identity, pokemon, profile, arena_team)
     return reason if reason in REFUSED else None
 
 
-async def eligible_page(conn, profile_id, offset):
+async def eligible_page(conn, profile_id, offset, now):
     args = {'pid': profile_id, 'offset': offset}
-    async with conn.execute(f'SELECT count(*) FROM pokemon WHERE profile_id=:pid AND {_TRADABLE}', args) as cursor:
+    team = await profiles.arena_team(conn, profile_id, now)
+    tradable = _TRADABLE
+    if team:
+        args.update({f'arena{i}': uid for i, uid in enumerate(team)})
+        tradable += ' AND pokemon_uid NOT IN (' + ','.join(f':arena{i}' for i in range(len(team))) + ')'
+    async with conn.execute(f'SELECT count(*) FROM pokemon WHERE profile_id=:pid AND {tradable}', args) as cursor:
         eligible = (await cursor.fetchone())[0]
     async with conn.execute("SELECT count(*) FROM pokemon WHERE profile_id=:pid AND state='owned'", args) as cursor:
         owned = (await cursor.fetchone())[0]
-    async with conn.execute(f'SELECT * FROM pokemon WHERE profile_id=:pid AND {_TRADABLE} '
+    async with conn.execute(f'SELECT * FROM pokemon WHERE profile_id=:pid AND {tradable} '
                             'ORDER BY caught_at DESC,pokemon_uid LIMIT 10 OFFSET :offset', args) as cursor:
         return [dict(row) for row in await cursor.fetchall()], eligible, owned
 
@@ -166,7 +171,8 @@ async def offer(conn, session, trade_id, pokemon_uid, now):
     if me is None:
         return trade
     pokemon = await storage.detail(conn, me['profile_id'], pokemon_uid)
-    reason = tradable_reason(_NEUTRAL, pokemon, me)
+    team = await profiles.arena_team(conn, me['profile_id'], now)
+    reason = tradable_reason(_NEUTRAL, pokemon, me, team)
     if reason is not None:
         return {'status': 'ineligible', 'reason': reason}
     await conn.execute('UPDATE trade_sides SET pokemon_uid=?,pokemon_revision=? WHERE trade_id=? AND profile_id=?',
@@ -185,7 +191,7 @@ async def cancel(conn, session, trade_id, now):
     return {'status': 'cancelled', 'trade_id': trade_id}
 
 
-async def _recheck(conn, sides, owners, content):
+async def _recheck(conn, sides, owners, content, now):
     """(rows, None) with both offered Pokemon, or (None, {side, reason}) for the first one no longer tradable
     at its pinned revision."""
     rows = []
@@ -193,7 +199,8 @@ async def _recheck(conn, sides, owners, content):
         owner = owners[side['profile_id']]
         pokemon = await storage.detail(conn, owner['profile_id'], side['pokemon_uid'])
         identity = storage.identify(content, pokemon)[0] if pokemon is not None else _NEUTRAL
-        reason = tradable_reason(identity, pokemon, owner)
+        team = await profiles.arena_team(conn, owner['profile_id'], now)
+        reason = tradable_reason(identity, pokemon, owner, team)
         if reason is None and pokemon['revision'] != side['pokemon_revision']:
             reason = 'changed'
         if reason is not None:
@@ -257,7 +264,7 @@ async def confirm(conn, session, trade_id, seen_revision, now, content):
     await _activity(conn, trade_id, now)
     if other['confirmed_revision'] != trade['revision']:
         return {'status': 'waiting', 'trade_id': trade_id}
-    pokemon, invalid = await _recheck(conn, sides, {me['profile_id']: me, partner['profile_id']: partner}, content)
+    pokemon, invalid = await _recheck(conn, sides, {me['profile_id']: me, partner['profile_id']: partner}, content, now)
     if invalid is not None:
         await conn.execute('UPDATE trade_sides SET pokemon_uid=NULL,pokemon_revision=NULL WHERE trade_id=? AND side=?',
                            (trade_id, invalid['side']))

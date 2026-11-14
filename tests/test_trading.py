@@ -80,6 +80,75 @@ class TradingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.open('v', 'u', now=1050))['status'], 'joined')
         return trade_id
 
+    async def arena_run(self, user='u', uids=('mon',), started_at=1150):
+        await self.writer.run(lambda conn: conn.execute(
+            'INSERT INTO arena_runs(run_id,profile_id,started_at,floor,slot,team,enemy) '
+            'VALUES (?,?,?,1,0,?,?)',
+            ('arena-' + user, self.ids[user], started_at,
+             json.dumps([{'uid': uid, 'family_id': 1, 'special': False, 'full_hp': 40,
+                          'hp': 40, 'snapshot': {}} for uid in uids]),
+             json.dumps({'snapshot': {}, 'battle_hp': 40, 'special': False}))))
+
+    async def test_eligible_page_omits_live_team_members_and_counts_agree(self):
+        for index in range(14):
+            await self.pokemon(f'p{index:02}', caught_at=index + 1)
+        before = await self.svc().eligible_page(self.conn, self.ids['u'], 0, 1200)
+        await self.arena_run(uids=('p11', 'p05', 'mon'))
+        pages = [await self.svc().eligible_page(self.conn, self.ids['u'], offset, 1200)
+                 for offset in (0, 10)]
+        self.assertEqual([row['pokemon_uid'] for page, _, _ in pages for row in page],
+                         [f'p{i:02}' for i in range(13, -1, -1) if i not in (5, 11)])
+        self.assertEqual([(eligible, owned) for _, eligible, owned in pages], [(12, 15), (12, 15)])
+        self.assertEqual(before[1:], (15, 15))
+        self.assertEqual(pages[0][2], before[2])
+
+    async def test_offer_refuses_team_member_in_arena_no_write(self):
+        await self.arena_run(started_at=1000)
+        before = await self.rows('SELECT * FROM arena_runs')
+        await self.refused_offer('in_arena')
+        self.assertEqual(await self.rows('SELECT * FROM arena_runs'), before)
+
+    async def test_offer_made_before_run_start_refused_at_acceptance_side_cleared(self):
+        trade_id = await self.ready()
+        await self.arena_run()
+        await self.invalid(trade_id, 0, 'in_arena')
+
+    async def test_partner_side_team_member_refused_names_their_side(self):
+        trade_id = await self.ready()
+        await self.arena_run('v', ('theirs',))
+        await self.invalid(trade_id, 1, 'in_arena')
+
+    async def test_team_member_tradable_after_hour_18_and_after_run_end(self):
+        for ended in (False, True):
+            with self.subTest(ended=ended):
+                await self.conn.execute('DELETE FROM trades')
+                await self.conn.execute('DELETE FROM arena_runs')
+                await self.arena_run(started_at=1000 if ended else 1200 - 18 * 3600)
+                if ended:
+                    await self.conn.execute("UPDATE arena_runs SET ended_at=1150,end_reason='loss'")
+                arena = await self.rows('SELECT * FROM arena_runs')
+                rows, eligible, owned = await self.svc().eligible_page(self.conn, self.ids['u'], 0, 1200)
+                self.assertEqual(([row['pokemon_uid'] for row in rows], eligible, owned), (['mon'], 1, 1))
+                trade_id = await self.joined_pair()
+                self.assertEqual((await self.offer('u', trade_id, now=1200))['status'], 'offered')
+                await self.pokemon('theirs-' + str(ended), user='v')
+                await self.offer('v', trade_id, 'theirs-' + str(ended), now=1200)
+                self.assertEqual((await self.confirm('u', trade_id, 2))['status'], 'waiting')
+                self.assertEqual((await self.confirm('v', trade_id, 2))['status'], 'completed')
+                self.assertEqual(await self.rows('SELECT * FROM arena_runs'), arena)
+                await self.conn.execute("UPDATE profiles SET last_trade_at=NULL")
+                await self.conn.execute("DELETE FROM pokemon WHERE pokemon_uid!='mon'")
+                await self.conn.execute("UPDATE pokemon SET profile_id=? WHERE pokemon_uid='mon'", (self.ids['u'],))
+
+    async def test_other_profiles_run_does_not_block_my_trade(self):
+        trade_id = await self.ready()
+        await self.arena_run('w', ('mon', 'theirs'))
+        rows, eligible, owned = await self.svc().eligible_page(self.conn, self.ids['u'], 0, 1200)
+        self.assertEqual(([row['pokemon_uid'] for row in rows], eligible, owned), (['mon'], 1, 1))
+        self.assertEqual((await self.offer('u', trade_id, now=1200))['status'], 'offered')
+        self.assertEqual((await self.confirm('u', trade_id, 3))['status'], 'waiting')
+        self.assertEqual((await self.confirm('v', trade_id, 3))['status'], 'completed')
+
     async def test_open_trade_same_server_partner_side_unjoined(self):
         self.assertEqual((self.svc().TRADE_SECONDS, self.svc().CAP_SECONDS, self.svc().PING_SECONDS),
                          (900, 86400, 600))
@@ -293,11 +362,11 @@ class TradingTests(unittest.IsolatedAsyncioTestCase):
         await self.pokemon('sent', caught_at=99, state='sent')
         await self.pokemon('theirs', user='v', caught_at=99)
         expected = ['p10', 'p08', 'p09', 'p06', 'p07', 'p04', 'p02', 'p03', 'p01']
-        rows, eligible, owned = await self.svc().eligible_page(self.conn, self.ids['u'], 0)
+        rows, eligible, owned = await self.svc().eligible_page(self.conn, self.ids['u'], 0, 1200)
         self.assertEqual(([row['pokemon_uid'] for row in rows], eligible, owned), (expected, 9, 12))
         await self.pokemon('p12', caught_at=50)
         await self.pokemon('p13', caught_at=50)
-        rows, eligible, owned = await self.svc().eligible_page(self.conn, self.ids['u'], 10)
+        rows, eligible, owned = await self.svc().eligible_page(self.conn, self.ids['u'], 10, 1200)
         self.assertEqual(([row['pokemon_uid'] for row in rows], eligible, owned), (['p01'], 11, 14))
 
     async def test_non_participant_or_unjoined_stale(self):
@@ -625,7 +694,7 @@ class TradingTests(unittest.IsolatedAsyncioTestCase):
         profile = (await self.rows("SELECT * FROM profiles WHERE user_id='u'"))[0]
         pokemon = (await self.rows("SELECT * FROM pokemon WHERE pokemon_uid='mon'"))[0]
         self.assertEqual(self.svc().tradable_reason(_NEUTRAL, pokemon, profile), 'not_owned')
-        rows, _, _ = await self.svc().eligible_page(self.conn, self.ids['u'], 0)
+        rows, _, _ = await self.svc().eligible_page(self.conn, self.ids['u'], 0, 1200)
         self.assertEqual([row['pokemon_uid'] for row in rows], ['theirs'])
         self.assertEqual((await storage.detail(self.conn, self.ids['v'], 'mon'))['revision'], 1)
         self.assertEqual((await self.writer.run(
