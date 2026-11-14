@@ -1671,3 +1671,17 @@ Committed fights survive interruptions and cannot repeat. Consumers are private
 Discord views and the session router; no schema or service API changes.
 Tests: test_arena_screens, test_readme, test_walker_router. Offline evidence does
 not establish live Discord acceptance.
+
+
+## Arena monthly settlement on walker home (ARENA-22)
+After the enrolled profile is revalidated, Walker.home calls services.arena.settle
+once with the session guild and Walker.clock(), inside its existing writer job,
+before building home state or counting pending rewards. A newly paid month's
+inbox milestone therefore appears immediately in Rewards waiting and enables the
+Inbox button. Settlement also runs when Arena is off or the player is paused.
+Onboarding and a recovered terminal return before this call and do not settle.
+Existing exclusion/profile authorization remains before settlement. No new home
+result fields or Discord side effects; the normal private response follows commit.
+Producer: Walker.home; consumers: home rewards count/Inbox navigation and C3's
+monthly payout. Existing command/session shapes remain compatible. Tests:
+test_arena_screens ArenaRouterTests and existing test_walker_router.

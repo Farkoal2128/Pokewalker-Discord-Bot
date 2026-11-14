@@ -1057,6 +1057,44 @@ class ArenaRouterTests(unittest.IsolatedAsyncioTestCase):
     click = _Fixture.click
     enroll = _Fixture.enroll
 
+    async def test_walker_open_settles_and_enables_inbox_also_arena_off(self):
+        await self.enroll()
+        pid = (await self.rows('SELECT profile_id FROM profiles'))[0]['profile_id']
+        for count, enabled in enumerate((1, 0), 1):
+            with self.subTest(arena_enabled=enabled):
+                await self.conn.execute('UPDATE guilds SET arena_enabled=?', (enabled,))
+                await self.conn.execute('INSERT INTO arena_month_scores VALUES (?,?,?,?,?)',
+                                        ('123', f'1969-{10 + count}', pid, 10, 100))
+                interaction, _ = await self.open()
+                rendered = interaction.edit_original_response.await_args.kwargs
+                self.assertIn(f'Rewards waiting: {count}', rendered['embed'].description)
+                inbox = [button for button in rendered['view'].children if button.label == f'Inbox ({count})']
+                self.assertEqual(len(inbox), 1)
+                self.assertFalse(inbox[0].disabled)
+                self.assertEqual(len(await self.rows('SELECT * FROM inbox_items')), count * 3)
+                self.assertEqual(len(await self.rows('SELECT * FROM arena_months')), count)
+                await self.open()
+                self.assertEqual(len(await self.rows('SELECT * FROM inbox_items')), count * 3)
+
+    async def test_onboarding_and_recovered_terminal_return_before_settlement(self):
+        await self.conn.execute("INSERT INTO guilds(guild_id) VALUES ('123')")
+        await self.conn.execute("INSERT INTO profiles(profile_id,guild_id,user_id,created_at) "
+                                "VALUES ('another','123','another',0)")
+        await self.conn.execute("INSERT INTO arena_month_scores VALUES ('123','1969-12','another',10,100)")
+        await self.open()
+        self.assertEqual(await self.rows('SELECT * FROM arena_months'), [])
+        await self.enroll()
+
+        async def recover(conn, session):
+            self.assertTrue(conn.in_transaction)
+            return {'embed': discord.Embed(title='Saved result'), 'view': discord.ui.View(timeout=None)}
+
+        self.walker.before_home = recover
+        interaction, _ = await self.open()
+        self.assertEqual(interaction.edit_original_response.await_args.kwargs['embed'].title, 'Saved result')
+        self.assertEqual(await self.rows('SELECT * FROM arena_months'), [])
+        self.assertEqual(await self.rows('SELECT * FROM inbox_items'), [])
+
     async def test_home_button_opens_arena_through_router(self):
         await self.enroll()
         opened, session = await self.open()

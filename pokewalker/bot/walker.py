@@ -17,6 +17,7 @@ from pokewalker.bot import screens, storage
 from pokewalker.bot import research, powerup, pokedex
 from pokewalker.bot import evolve, gyms, iv_items, arena
 from pokewalker.bot import milestones, bag, route, share, trade
+from pokewalker.services import arena as arena_service
 from pokewalker.services.milestones import pending_count
 from pokewalker.services.items import recent_finds
 from pokewalker.db import with_receipt
@@ -244,6 +245,7 @@ class Walker:
         profile = await profiles.get_profile(conn, session["guild_id"], session["user_id"])
         if profile is None or profile["profile_id"] != session["profile_id"]:
             raise _Refused(REOPEN)
+        await arena_service.settle(conn, session["guild_id"], self.clock())
         companion = None
         async with conn.execute("SELECT * FROM pokemon WHERE pokemon_uid=? AND profile_id=? AND state='owned'",
                                 (profile["companion_uid"], profile["profile_id"])) as cursor:
