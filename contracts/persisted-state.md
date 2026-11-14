@@ -1717,3 +1717,25 @@ Producers: migration 0028, services.arena and items._buy; consumers: Arena
 state/screens and later fight countdowns. Additive service/state boundaries;
 existing snapshots and receipt formats stay unchanged. Tests: test_arena_schema
 and test_arena; regressions cover screens/admin, receipt ownership and deletion.
+
+
+## Arena boosted fights (ARENA-27)
+AR-42, AR-44 and AR-45 extend services.arena.fight: each active X-item counter
+multiplies its configured party Combatant stat (attack or defense) by
+rules.x_items.multiplier. Both active kinds combine. Starting HP still comes
+from the run; the enemy Combatant, battle_hp, rules and chart are unchanged.
+Stored party/enemy snapshots, C7 and ENGINE_VERSION remain unchanged.
+
+The same UPDATE that stores each fought win, loss or draw decrements both
+x_attack_left and x_defense_left by one, clamped at zero. Three charges boost
+three fought fights; the fourth is unboosted. Defeat ends the effect with its
+run and refunds nothing. Expiry does not decrement or refund either counter.
+chain_step and heal_all_and_fight share fight; an exhausted boost adds no chain
+stop reason. Replayed/stale fights do not simulate or decrement again.
+
+Counters, carried HP, progression, rewards, receipts and ledger writes commit
+or roll back together, including on a ledger failure. A restart retains the
+last committed count. Fight result/receipt keys and fields and ledger formats
+stay unchanged. Producers: services.arena.fight; consumers: Arena screens and
+chain/heal callers. Tests: test_arena; regressions: test_arena_screens,
+test_battle, test_gym_battle, test_deletion and test_receipt_owner.
