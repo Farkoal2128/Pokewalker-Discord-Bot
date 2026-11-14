@@ -76,6 +76,10 @@ def render(state):
     star_piece = state.get('star_piece')
     if star_piece:
         text += f"\nStar Piece: {star_piece['remaining_rewards']} boosted Stardust rewards left"
+    charm = state.get('shiny_charm')
+    if charm:
+        text += (f"\nShiny Charm: On · {state.get('charm_multiplier', 4)}× shiny odds on every encounter"
+                 if charm == 'on' else '\nShiny Charm: Off')
     label = 'Stored — available after the current effect ends' if active and held else 'Shiny Lure'
     booster = bool(active) or bool(mirror)
     buttons = [('Convert', 'convert_pick', not held_items), ('Buy Vitamin', 'vitamin_buy_preview', False),
@@ -91,6 +95,8 @@ def render(state):
     if 'mirror' in state:
         buttons.insert(-1, ('Companion Mirror', 'mirror_confirm',
                             booster or inventory.get('companion_mirror', 0) < 1))
+    if charm:
+        buttons.insert(-1, (f"Turn Shiny Charm {'off' if charm == 'on' else 'on'}", 'shiny_charm_toggle', False))
     if state.get('can_expand'):
         buttons.insert(-1, ('Expand bag', 'expand_bag_preview', False))
     if mode in ('pick', 'qty', 'buy_pick'):
@@ -212,6 +218,8 @@ def handlers(walker):
                 'mirror_encounters': rules['mirror_encounters'],
                 'mirror_percent': round(rules['mirror_probability'] * 100),
                 'lure_multiplier': rules['lure_probability_multiplier'], 'lure_encounters': rules['lure_encounters'],
+                'shiny_charm': await items.shiny_charm(conn, session['profile_id']),
+                'charm_multiplier': rules['charm_probability_multiplier'],
                 'star_piece_multiplier': star['multiplier_numerator'] / star['multiplier_denominator'],
                 'star_piece_rewards': star['rewards'],
                 'stardust': profile['stardust'], 'rates': rates, 'notice': notice,
@@ -463,7 +471,16 @@ def handlers(walker):
         session['selection'] = '{}'
         return render(await state(conn, session))
 
-    return {'bag': bag, 'convert_pick': pick,
+    async def shiny_charm_toggle(conn, session, interaction):
+        charm = await items.shiny_charm(conn, session['profile_id'])
+        if charm is None:
+            raise _Refused('Complete the Pokédex to earn the Shiny Charm.')
+        await conn.execute('UPDATE profiles SET shiny_charm_off=? WHERE profile_id=?',
+                           (int(charm == 'on'), session['profile_id']))
+        session['selection'] = '{}'
+        return render(await state(conn, session))
+
+    return {'bag': bag, 'convert_pick': pick, 'shiny_charm_toggle': shiny_charm_toggle,
             'inbox_expand_bag': partial(expand_bag_preview, back='inbox'),
             'inbox_convert': partial(pick, back='inbox'),
             'expand_bag_preview': expand_bag_preview, 'expand_bag_confirm': expand_bag_confirm,

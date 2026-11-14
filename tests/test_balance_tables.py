@@ -300,15 +300,17 @@ class BalanceTableTests(unittest.TestCase):
                 self.assertTrue(table["source"])
                 date.fromisoformat(table["checked"])
                 versions = {"find_table": 2, "conversion_rates": 4, "capacities": 3, "routes": 2,
-                            "survivor_table": 3, "catch": 3, "gym_income_table": 2, "checkin_table": 2,
+                            "survivor_table": 3, "catch": 4, "gym_income_table": 2, "checkin_table": 2,
                             "battle": 2}
                 self.assertEqual(table["version"], versions.get(name, 1))
-                amended = {"survivor_table", "conversion_rates", "catch", "gym_income_table", "checkin_table"}
-                if name in amended:
+                amended = {"survivor_table", "conversion_rates", "gym_income_table", "checkin_table"}
+                if name == "catch":
+                    self.assertEqual(table["checked"], "2026-11-13")
+                    self.assertIn("owner amendment Shiny Charm D64 (owner decision 2026-11-13)", table["source"])
+                elif name in amended:
                     self.assertEqual(table["checked"], "2026-11-12")
-                    if name != "catch":
-                        self.assertIn("owner amendment Bottlecap and Vitamin (owner decision 2026-11-12)",
-                                      table["source"])
+                    self.assertIn("owner amendment Bottlecap and Vitamin (owner decision 2026-11-12)",
+                                  table["source"])
                 elif name == "battle":
                     self.assertEqual(table["checked"], "2026-11-12")
                     self.assertIn("D62 (owner decision 2026-11-12)", table["source"])
@@ -332,7 +334,8 @@ class BalanceTableTests(unittest.TestCase):
             "berry_multipliers": {"razz_berry": 1.5, "golden_razz_berry": 2.5, "silver_pinap_berry": 1.8, "pinap_berry": 1},
             "pinap_candy_multiplier": 2, "silver_pinap_candy": {"numerator": 7, "denominator": 3, "rounding": "floor"},
             "flee_probability": .1, "shiny_flee_probability": 0, "legendary_flee_probability": 0,
-            "shiny_probability": 1 / 256, "lure_probability_multiplier": 4, "lure_encounters": 10,
+            "shiny_probability": 1 / 256, "lure_probability_multiplier": 4, "charm_probability_multiplier": 4,
+            "lure_encounters": 10,
             "mirror_encounters": 10, "mirror_probability": .2,
             "wild_level_range": [1, 20], "raid_level_range": [20, 25], "wild_iv_range": [0, 15], "starter_level": 10, "starter_iv_range": [10, 15],
         })

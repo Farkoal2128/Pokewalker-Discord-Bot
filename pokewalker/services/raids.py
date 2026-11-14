@@ -11,7 +11,7 @@ from content.balance import load_table
 from pokewalker.db import with_receipt
 from pokewalker.domain import encounters
 from pokewalker.services import profiles
-from pokewalker.services.items import active_lure
+from pokewalker.services.items import active_lure, shiny_charm
 
 
 def _writer(conn):
@@ -49,7 +49,8 @@ async def join(conn, guild_id, user_id, now, rng, content):
         lure_id = await active_lure(conn, pid)
         rules = load_table('catch')['rules']
         gender, variety = encounters.roll_gender(identity, rng)
-        shiny = encounters.roll_shiny(rng, lure_id is not None, rules=rules)
+        shiny = encounters.roll_shiny(rng, lure_id is not None, rules=rules,
+                                      charm=await shiny_charm(conn, pid) == 'on')
         level_x2, ivs = encounters.roll_level_ivs(rng, rules=rules, level_range='raid_level_range')
         version, _ = profiles.content_facts(content)
         eid = str(uuid4())

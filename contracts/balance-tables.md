@@ -342,6 +342,11 @@ decision 2026-11-12). Its effect and storage are C3. Each changed table has
 whole-level range for World Legendary raid participants. `wild_level_range` stays
 [1, 20] for every other wild encounter.
 
+## D64 Shiny Charm (2026-11-13)
+`catch.json` (version 4, checked 2026-11-13) adds `charm_probability_multiplier: 4`. A
+shiny roll multiplies `shiny_probability` by `lure_probability_multiplier` while a lure is
+active and by `charm_probability_multiplier` while the Shiny Charm is on; both can apply.
+
 ## Owner amendment: Bottlecap and Vitamin (2026-11-12)
 
 The owner added a Bottlecap to the gym survivor roll and a Vitamin to the hourly gym

@@ -9,7 +9,7 @@ from uuid import uuid4
 from content.balance import limits, load_table
 from pokewalker.db import with_receipt
 from pokewalker.domain import encounters, steps
-from pokewalker.services.items import active_lure, active_mirror, apply_finds
+from pokewalker.services.items import active_lure, active_mirror, apply_finds, shiny_charm
 from pokewalker.services.profiles import content_facts, get_profile, queue_size, restrictions
 from pokewalker.services.storage import detail, identify
 
@@ -69,14 +69,15 @@ async def spawn_encounter(conn, profile, content, rng, at, channel_id=None, mess
     chances, rules = load_table("tier_chances")["chances"], load_table("catch")["rules"]
     lure_id = await active_lure(conn, pid)
     mirror_id = None if lure_id is not None else await active_mirror(conn, pid)
+    charm = await shiny_charm(conn, pid) == 'on'
     spec = None
     if mirror_id is not None and encounters.mirror_hit(rng, rules=rules):
         candidates = await companion_mirror_pools(conn, pid, content)
         if candidates:
-            spec = encounters.generate_mirror(candidates, rng, chances=chances, rules=rules)
+            spec = encounters.generate_mirror(candidates, rng, chances=chances, rules=rules, charm=charm)
     if spec is None:
         spec = encounters.generate(pools, content["routes"][profile["route_id"]], lure_id is not None, rng,
-                                   chances=chances, rules=rules)
+                                   chances=chances, rules=rules, charm=charm)
     eid = str(uuid4())
     await conn.execute(
         "INSERT INTO encounters(encounter_id,profile_id,source_channel_id,source_message_id,"

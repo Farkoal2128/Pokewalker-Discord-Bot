@@ -41,7 +41,7 @@ class ReadmeTests(IsolatedAsyncioTestCase):
     def test_approved_text_verbatim(self):
         content = Path('content/help.md').read_bytes()
         self.assertEqual(hashlib.sha256(content).hexdigest(),
-                         'bb626b09321f9011e5714ef9b18ff74c733755a06fc81bbea1c192fdf4093963')
+                         '0465fc8746b92d9c2b6645af85955c4ca4ecd420624b0504eaa53fa9d3f900cc')
 
     def test_page_one_is_current_opening_verbatim(self):
         page = self.pages()[0]

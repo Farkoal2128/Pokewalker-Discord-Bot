@@ -1089,6 +1089,16 @@ class RaidJoinTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.encounter['pokemon_id'], identity['pokemon_id'])
         self.assertIsNone(result.pokemon)
 
+    async def test_shiny_charm_applies_on_join(self):
+        import random
+        from unittest.mock import Mock
+        await self.active()
+        rng = Mock(wraps=random.Random(6))
+        rng.random.return_value = .01
+        await self.conn.execute("INSERT INTO milestone_awards VALUES (?,'pokedex:100',0)", (self.pid,))
+        await self.join(rng=rng)
+        self.assertEqual((await self.rows('SELECT shiny FROM encounters'))[0]['shiny'], 1)
+
     async def test_lure_applies_and_decrements_on_join(self):
         import random
         from unittest.mock import Mock

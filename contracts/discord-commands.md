@@ -952,6 +952,13 @@ I/O. Producer: bot.storage; consumers: private Walker details and companion acti
 No schema, service signature or component-ID changes. Tests: test_storage,
 test_companion and test_gym_screens. Focused evidence leaves G-F2/native gates open.
 
+## C5: D64 Shiny Charm in Bag
+Only a player who owns the charm sees the Bag line "Shiny Charm: On · 4× shiny odds on every
+encounter" (or "Shiny Charm: Off") and a **Turn Shiny Charm off|on** button
+(`shiny_charm_toggle`) before Back. A press flips `profiles.shiny_charm_off` and re-renders
+the Bag; without the charm it is refused ("Complete the Pokédex to earn the Shiny Charm.")
+and changes nothing. The Pokédex 100% milestone row reads "Diamond + Shiny Charm".
+
 ## C5: D63 `/walker-admin gyms legendary on|off reason`
 Manage Server, guild only, reason required. Writes `guilds.gym_legendary_defenders` and a
 `gym_legendary_on|off` mod_audit row, replying with the new state. `gyms list` adds a line

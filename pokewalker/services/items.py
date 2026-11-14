@@ -279,6 +279,19 @@ async def active_mirror(conn, profile_id):
     return await _active_encounter_effect(conn, profile_id, 'companion_mirror')
 
 
+# D64: the Shiny Charm is not an inventory item; earning this milestone grants it for good.
+SHINY_CHARM_MILESTONE = 'pokedex:100'
+
+
+async def shiny_charm(conn, profile_id):
+    """'on', 'off', or None when the player has not completed the Pokédex."""
+    async with conn.execute('SELECT p.shiny_charm_off FROM profiles p JOIN milestone_awards m '
+                            'ON m.profile_id=p.profile_id AND m.milestone_id=? WHERE p.profile_id=?',
+                            (SHINY_CHARM_MILESTONE, profile_id)) as cursor:
+        row = await cursor.fetchone()
+    return None if row is None else ('off' if row[0] else 'on')
+
+
 async def _activate_effect(conn, session, now, *, kind, action, label, active, remaining):
     """Spend one `kind` to start an effect unless `active(conn, pid)` says one is already running."""
     if not conn.in_transaction:

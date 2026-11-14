@@ -8,7 +8,7 @@ import discord
 
 from pokewalker.bot.screens_catch import custom_id
 from pokewalker.bot.milestones import _milestone_name
-from pokewalker.services import pokedex as service
+from pokewalker.services import items, pokedex as service
 from pokewalker.services import milestones as milestone_service
 
 
@@ -55,6 +55,8 @@ def render_milestones(state):
             previous_category = category
         tier = f" · {row['bundle'].title()}" if row['bundle'] else (
             ' · Evolution reward' if row['category'] == 'evolution_lines' else '')
+        if row['milestone_id'] == items.SHINY_CHARM_MILESTONE:
+            tier += ' + Shiny Charm'
         status = f"✅ completed · {_date(row['earned_at'])}" if row['earned'] else f"⬜ missing · {row['progress']}"
         lines.append(f"{_milestone_name(row['milestone_id'], state['content'])}{tier} · {status}")
     if not lines:

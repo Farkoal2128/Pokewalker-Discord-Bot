@@ -1,7 +1,7 @@
 {
-  "source": "docs/features/pokewalker-bot/README.md D38/D42/D47; docs/features/pokewalker-bot/PLAN.md P4/P5; docs/research/go-systems/items-and-catching.md, shinies-and-lures.md; owner amendment Companion Mirror (owner decision 2026-11-12); owner amendment raid boss minimum level (owner decision 2026-11-12)",
-  "checked": "2026-11-12",
-  "version": 3,
+  "source": "docs/features/pokewalker-bot/README.md D38/D42/D47; docs/features/pokewalker-bot/PLAN.md P4/P5; docs/research/go-systems/items-and-catching.md, shinies-and-lures.md; owner amendment Companion Mirror (owner decision 2026-11-12); owner amendment raid boss minimum level (owner decision 2026-11-12); owner amendment Shiny Charm D64 (owner decision 2026-11-13)",
+  "checked": "2026-11-13",
+  "version": 4,
   "rules": {
     "base_catch_rates": {
       "common": 0.5,
@@ -32,6 +32,7 @@
     "legendary_flee_probability": 0,
     "shiny_probability": 0.00390625,
     "lure_probability_multiplier": 4,
+    "charm_probability_multiplier": 4,
     "lure_encounters": 10,
     "mirror_encounters": 10,
     "mirror_probability": 0.2,

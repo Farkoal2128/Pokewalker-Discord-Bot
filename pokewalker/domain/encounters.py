@@ -73,10 +73,12 @@ def roll_gender(identity: Mapping, rng: random.Random) -> tuple[str | None, Mapp
     return ("female" if rng.random() < rate / 8 else "male"), identity
 
 
-def roll_shiny(rng: random.Random, lure_active: bool, *, rules: Mapping) -> bool:
+def roll_shiny(rng: random.Random, lure_active: bool, *, rules: Mapping, charm: bool = False) -> bool:
     probability = rules["shiny_probability"]
     if lure_active:
         probability *= rules["lure_probability_multiplier"]
+    if charm:  # D64: the Shiny Charm stacks with a lure.
+        probability *= rules["charm_probability_multiplier"]
     return rng.random() < probability
 
 
@@ -93,13 +95,13 @@ def starter_rolls(rng: random.Random, *, rules: Mapping) -> tuple[int, tuple[int
 
 def generate(identity_pools: Mapping[str, Sequence[Mapping]], route: Mapping,
              lure_active: bool, rng: random.Random, *, chances: Mapping,
-             rules: Mapping) -> EncounterSpec:
+             rules: Mapping, charm: bool = False) -> EncounterSpec:
     weights = route["weights"]
     eligible = {tier: [i for i in pool if tier == LEGENDARY or weights.get(i["identity_id"], 0) > 0]
                 for tier, pool in identity_pools.items()}
     tier = roll_tier(eligible, chances, rng)
     identity = pick_identity(eligible.get(tier, []), weights, rng)
-    return _spec(identity, tier, lure_active, rng, rules)
+    return _spec(identity, tier, lure_active, rng, rules, charm)
 
 
 def mirror_hit(rng: random.Random, *, rules: Mapping) -> bool:
@@ -122,16 +124,16 @@ def mirror_pools(identities: Sequence[Mapping], family_id: int) -> dict[str, lis
 
 
 def generate_mirror(pools: Mapping[str, Sequence[Mapping]], rng: random.Random, *,
-                    chances: Mapping, rules: Mapping) -> EncounterSpec:
+                    chances: Mapping, rules: Mapping, charm: bool = False) -> EncounterSpec:
     """Tier by roll_tier without the Legendary draw, then uniform; routes are ignored."""
     tier = roll_tier(pools, {**chances, "legendary": 0}, rng)
-    return _spec(rng.choice(pools[tier]), tier, False, rng, rules)
+    return _spec(rng.choice(pools[tier]), tier, False, rng, rules, charm)
 
 
 def _spec(identity: Mapping, tier: str, lure_active: bool, rng: random.Random,
-          rules: Mapping) -> EncounterSpec:
+          rules: Mapping, charm: bool = False) -> EncounterSpec:
     gender, variety = roll_gender(identity, rng)
-    shiny = roll_shiny(rng, lure_active, rules=rules)
+    shiny = roll_shiny(rng, lure_active, rules=rules, charm=charm)
     level_x2, ivs = roll_level_ivs(rng, rules=rules)
     return EncounterSpec(
         identity_id=identity["identity_id"], species_id=identity["species_id"],

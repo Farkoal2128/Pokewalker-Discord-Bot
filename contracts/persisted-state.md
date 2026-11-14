@@ -841,6 +841,13 @@ award or second revision increment. Profile deletion cascades deployments, recei
 and inbox rows, crediting nothing. No existing schema or Claim semantics change.
 Tests: test_gyms, test_milestones and test_screens. Full G-F2 and live gates remain.
 
+## D64 Shiny Charm (migration 0024)
+`profiles` gains `shiny_charm_off INTEGER NOT NULL DEFAULT 0` (0 or 1). A profile owns the
+charm exactly when `milestone_awards` holds its `pokedex:100` row; nothing is added to
+inventory. services.items `shiny_charm(conn, profile_id)` returns `on`, `off` or None (not
+owned). Encounter generation (stepping, Companion Mirror and raid join) passes
+`charm=True` to `roll_shiny` only when it returns `on`. Tests: tests/test_shiny_charm.py.
+
 ## D63 legendary gym defenders setting (migration 0023)
 `guilds` gains `gym_legendary_defenders INTEGER NOT NULL DEFAULT 0` (0 or 1). services.gyms
 `deploy` refuses `legendary_or_mythical` and `battle` refuses such a nominee as `invalid` only

@@ -460,7 +460,19 @@ gyms. Have it so they're not allowed by default but can be allowed." The approve
   until its tenure ends or it is recalled, defeated or sent home by a moderator.
 - `/walker-admin gyms list` shows the current setting.
 
-## Open questions
+### Shiny Charm (D64, owner decision 2026-11-13)
+
+The owner requested: "Include as a bonus permanent and toggleable item, the Shiny Charm.
+Permanently 4x the shiny odds for every encounter. This stacks on top of the shiny lure", and
+"this is a unique one of a kind reward only for completing the pokedex". The approved design:
+
+- **D64: Shiny Charm.** Earning the 100% Pokédex milestone (D59) also gives the Shiny Charm,
+  on top of the Diamond bundle. Nothing else gives it. It is not a bag item: it takes no bag
+  space and cannot be converted, traded, lost or earned twice.
+- While on, every wild, Companion Mirror and World Legendary encounter generated afterwards
+  rolls shiny at 4× the base odds. It multiplies with an active Shiny Lure (16× together).
+  The starter stays never shiny (D42). Encounters already queued keep their roll.
+- It starts **on**. The owner can switch it off and on again at any time from the Bag.
 
 - **Legendary pacing versus D59.** Under D38/D50 one *identity* in the Legendary/Mythical tier appears in about
   1 in 9,700 encounters (1% split over 97 identities). A species with two identities, such as

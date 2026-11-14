@@ -30,6 +30,7 @@ Open a Pokémon's details to Evolve; use Expand storage in Storage for 50 more s
 Buy evolution items in Bag for 500 Stardust each, or use Buy & evolve on a missing-item preview; use the paged Convert picker to free space for Stardust.
 
 **Shiny Lure.** Activate one from your bag for 4× shiny odds on your next 10 encounters.
+**Shiny Charm.** Complete the Pokédex to earn it: 4× shiny odds on every encounter, stacking with a Shiny Lure. Turn it off or on in Bag.
 **Star Piece.** Activate one from Bag for 1.5× Stardust on your next 10 catch or find Stardust rewards.
 
 **Vitamins and Bottlecaps.** Use one from a Pokémon's details on its lowest IV: a Vitamin raises it by 1 and a Bottlecap raises it to the max, which can raise its CP and Appraisal stars. Neither works once all its IVs are perfect. Buy Vitamins in Bag for 5,000 Stardust each; Bottlecaps come from gym survivor rewards.

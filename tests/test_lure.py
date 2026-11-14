@@ -123,8 +123,9 @@ class LureTests(unittest.IsolatedAsyncioTestCase):
         shiny_rng = random.Random(seed)
         original = encounters.roll_shiny
 
-        def seeded(rng, active, *, rules):
+        def seeded(rng, active, *, rules, charm=False):
             self.assertTrue(active)
+            self.assertFalse(charm)
             return original(shiny_rng, active, rules=rules)
 
         with patch.object(encounters, 'roll_shiny', side_effect=seeded):
