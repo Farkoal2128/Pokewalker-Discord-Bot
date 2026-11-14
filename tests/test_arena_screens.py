@@ -776,12 +776,27 @@ class ArenaScreenTests(unittest.IsolatedAsyncioTestCase):
         await self.click('arena_auto_order')
         run = await self.run_state()
         hp = (run['team'][0]['full_hp'] * 3 // 4, run['team'][1]['full_hp'], run['team'][2]['full_hp'])
-        await self.hurt_team(hp)
-        with patch.object(test_arena.battle_engine, 'simulate', return_value=self.outcome()) as simulated:
-            text = (await self.click('arena_until_hurt'))['embed'].description
-        self.assertEqual([m.name for m in simulated.call_args.args[0]], ['Charmander', 'Squirtle', 'Bulbasaur'])
-        self.assertIn('Candy +1 Charmander', text)
-        self.assertLess(text.index('1: Charmander'), text.index('3: Bulbasaur'))
+        for outcome in ('win', 'loss', 'draw'):
+            with self.subTest(outcome=outcome):
+                await self.conn.execute('UPDATE arena_runs SET team=?,ended_at=NULL,end_reason=NULL', (json.dumps(run['team']),))
+                await self.conn.execute('DELETE FROM action_receipts')
+                await self.hurt_team(hp)
+                await self.click('arena_resume')
+                result = self.outcome() if outcome == 'win' else test_arena.battle_engine.Result(
+                    outcome, 'party_fainted' if outcome == 'loss' else 'double_ko', 9, (), (), party_hp=(0, 0, 0))
+                with patch.object(test_arena.battle_engine, 'simulate', return_value=result) as simulated:
+                    rendered = await self.click('arena_until_hurt')
+                text = rendered['embed'].description
+                self.assertEqual(rendered['embed'].title, 'Arena break' if outcome == 'win' else 'Arena defeat')
+                self.assertEqual([m.name for m in simulated.call_args.args[0]], ['Charmander', 'Squirtle', 'Bulbasaur'])
+                if outcome == 'win':
+                    self.assertIn('Candy +1 Charmander', text)
+                else:
+                    self.assertIn('1: Charmander', text)
+                self.assertLess(text.index('1: Charmander'), text.index('2: Squirtle'))
+                self.assertLess(text.index('2: Squirtle'), text.index('3: Bulbasaur'))
+                saved = await self.run_state()
+                self.assertEqual([m['uid'] for m in saved['team']], ['m1', 'm2', 'm0'])
 
     async def test_crash_mid_chain_keeps_finished_fights_repeats_none(self):
         await self.start_run()

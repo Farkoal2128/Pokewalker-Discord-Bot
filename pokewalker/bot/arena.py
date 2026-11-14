@@ -200,6 +200,9 @@ def render_defeat(state):
     if state.get('result') and run['end_reason'] == 'draw':
         reason = 'time limit' if state['result']['reason'] == 'tick_limit' else 'double knockout'
     lines = result_lines(state) + [f"Floor {run['floor']} · {FIGHTS[run['slot']]} fight: {reason}."]
+    if state.get('fights'):
+        lines.extend(f"{index}: {member['snapshot']['combatant']['name']} · HP {member['hp']} / {member['full_hp']}"
+                     for index, member in enumerate(run['team'], 1))
     if state.get('notice'):
         lines.append(state['notice'])
     view = gyms.buttons(state, [('Tickets', 'arena_tickets'), ('Back', 'arena')])
