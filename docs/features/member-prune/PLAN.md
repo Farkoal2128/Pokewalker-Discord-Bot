@@ -1,7 +1,7 @@
 # Plan: member-prune — `/walker-admin prune` deletes game data of players who left
 
-**Status:** awaiting plan approval
-**Review:** none yet (authored 2026-11-14; independent plan review pending)
+**Status:** MP-1 built on feature/member-prune; awaiting owner smoke, delivery and command sync (G-F)
+**Review:** plan: Codex gpt-6-astra rounds 1-2 NO-GO, round 3 GO (MUST 0, SHOULD 0). Code: Codex ponytail-review on 045a620 GO, 1 SHOULD fixed in 81b9f19. Full `test_cmd` PASS on tree a173ee7 (1,695 tests, 1 skipped; guard; verify unit and contract), 2026-11-14.
 **Home:** feature/member-prune · D:\Projects\Pokewalker Discord Bot\.claude\worktrees\elegant-haibt-afa2c5
 **Inputs:** [README.md](README.md) (PR1–PR11, the authority) · [PIPELINE.md](../../../PIPELINE.md) · [AGENTS.md](../../../AGENTS.md)
 
