@@ -127,7 +127,7 @@ Every build row is `seam` (PIPELINE.md:13): at most 2 production files and 300 p
 | 25 | [ARENA-22](tickets/ARENA-22.md) M3 settlement: lazy month payout, ranking read, home-open call | build | seam | M | ✅ done · 2203f0b · GO review r1 |
 | 26 | [ARENA-23](tickets/ARENA-23.md) M3 screens: Leaderboard, Arena and inbox settlement calls, inbox label; help | build | seam | M | ✅ done · 5672447 · GO review r1 |
 | 27 | [ARENA-25](tickets/ARENA-25.md) M4 balance: `x_items` rules in `arena.json` and the manifest hash | build | seam | S | ✅ done · 053d4b1 · GO review r1 |
-| 28 | [ARENA-26](tickets/ARENA-26.md) M4 state: migration 0028, `state` keys, buy and use | build | seam | M | pending |
+| 28 | [ARENA-26](tickets/ARENA-26.md) M4 state: migration 0028, `state` keys, buy and use | build | seam | M | ❌ blocked: receipt_owner legacy upgrade: arena_month_scores already exists; WIP da9ff09; no review |
 | 29 | [ARENA-27](tickets/ARENA-27.md) M4 fights: boosted party combatants and the per-fight countdown | build | seam | S | pending |
 | 30 | [ARENA-28](tickets/ARENA-28.md) M4 screens: buy and use on the home and break screens; help | build | seam | M | pending |
 | 31 | G-F final verification and delivery decisions | 🚦 | — | — | pending |
