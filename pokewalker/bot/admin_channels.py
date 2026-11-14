@@ -251,6 +251,38 @@ class WalkerAdmin(app_commands.Group):
         await self.reply(interaction, f"Sharing is {on} for this server.")
 
 
+    @app_commands.command(name="arena", description="Enable or disable the Arena in this server")
+    @app_commands.choices(on=[app_commands.Choice(name="on", value="on"), app_commands.Choice(name="off", value="off")])
+    async def arena(self, interaction: discord.Interaction, on: str, reason: str):
+        await interaction.response.defer(ephemeral=True)
+        if not await self.authorize(interaction):
+            return
+        reason = reason.strip()
+        if not reason:
+            await self.reply(interaction, "A reason is required.")
+            return
+        if on not in {"on", "off"}:
+            await self.reply(interaction, "Choose on or off.")
+            return
+
+        async def mutation(conn):
+            await self.check_actor(conn, interaction)
+            guild_id, now = str(interaction.guild_id), self.bot.walker.clock()
+            await conn.execute("INSERT OR IGNORE INTO guilds(guild_id,created_at) VALUES (?,?)", (guild_id, now))
+            await conn.execute("UPDATE guilds SET arena_enabled=? WHERE guild_id=?", (int(on == "on"), guild_id))
+            await conn.execute("INSERT INTO mod_audit(guild_id,actor_id,target_kind,target_id,action,reason,created_at) "
+                               "VALUES (?,?,'guild',?,?,?,?)", (guild_id, str(interaction.user.id), guild_id,
+                               "arena_" + on, reason, now))
+
+        try:
+            await self.bot.writer.run(mutation)
+        except _Refused as error:
+            await self.reply(interaction, str(error))
+            return
+        await self.reply(interaction, "The Arena is now " + on + " in this server."
+                         + (" Runs already started can be finished, and tickets can still be redeemed."
+                            if on == "off" else ""))
+
     @app_commands.command(name="raids", description="Enable or disable World Legendary spawns in this server")
     @app_commands.choices(on=[app_commands.Choice(name="on", value="on"), app_commands.Choice(name="off", value="off")])
     async def raids(self, interaction: discord.Interaction, on: str, reason: str,
