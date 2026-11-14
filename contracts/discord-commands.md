@@ -1441,3 +1441,14 @@ unchanged; its handler applies this hard refusal, like companion/favorite guards
 Producer: bot.research; consumers: private Walker interactions and C3 research.
 No component IDs or slash commands change. Tests: test_research, test_storage,
 test_trading. Native/live acceptance remains separate.
+
+
+## Arena trade refusal (ARENA-7, AR-7a)
+The trade picker omits the caller's live Arena team members from both its options
+and tradable count, retaining the total-owned count. All picker queries use
+Walker.clock(). Trade reason in_arena reads "it is on an Arena team" in the
+existing offer refusal ("That Pokémon can't be traded: it is on an Arena team.")
+and acceptance refusal ("Your Pokémon can't be traded: it is on an Arena team."
+or "Their Pokémon can't be traded: it is on an Arena team.", according to side).
+Producers: bot.trade; consumers: trade participants. No custom-ID or schema change.
+Tests: test_trade_screens and test_trading. Native/live acceptance remains separate.
