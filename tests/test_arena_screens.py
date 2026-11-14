@@ -766,7 +766,8 @@ class ArenaScreenTests(unittest.IsolatedAsyncioTestCase):
         rendered = await self.start_run()
         self.assertEqual(self.selection()['berry'], 'pinap_berry')
         self.assertEqual([option.label for option in self.button(rendered, 'arena_berry').options],
-                         ['Razz Berry ×2', 'Pinap Berry ×3'])
+                         ['Razz Berry ×2', 'Pinap Berry ×3', 'Golden Razz Berry ×0 · heals party',
+                          'Silver Pinap Berry ×0 · heals party'])
         await self.click('arena_berry', ['razz_berry'])
         await self.inventory('pinap_berry', 10)
         await self.click('arena')
@@ -774,7 +775,7 @@ class ArenaScreenTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.selection()['berry'], 'razz_berry')
         self.assertTrue(next(option for option in self.button(resumed, 'arena_berry').options
                              if option.value == 'razz_berry').default)
-        for values in (['golden_razz_berry'], [], ['razz_berry', 'pinap_berry']):
+        for values in (['poke_ball'], [], ['razz_berry', 'pinap_berry']):
             with self.assertRaises(_Refused):
                 await self.click('arena_berry', values)
 
@@ -808,6 +809,23 @@ class ArenaScreenTests(unittest.IsolatedAsyncioTestCase):
                          [{'item_id': 'pinap_berry', 'quantity': 1}, {'item_id': 'razz_berry', 'quantity': 1}])
         self.assertEqual([line['resource_id'] for line in await self.rows("SELECT resource_id FROM resource_ledger WHERE reason='arena_heal'")],
                          ['razz_berry', 'pinap_berry'])
+
+    async def test_rare_berry_heal_button_heals_whole_party(self):
+        await self.inventory('razz_berry', 3)
+        await self.inventory('golden_razz_berry', 1)
+        await self.start_run()
+        self.assertEqual(self.selection()['berry'], 'razz_berry')
+        await self.hurt_team()
+        await self.click('arena_berry', ['golden_razz_berry'])
+        healed = await self.click('arena_heal_one')
+        run = await self.run_state()
+        self.assertTrue(all(member['hp'] == member['full_hp'] for member in run['team']))
+        self.assertEqual(await self.scalar("SELECT quantity FROM inventory WHERE item_id='golden_razz_berry'"), 0)
+        self.assertEqual(await self.scalar("SELECT quantity FROM inventory WHERE item_id='razz_berry'"), 3)
+        self.assertIn('Golden Razz Berry healed the whole party.', healed['embed'].description)
+        await self.hurt_team()
+        missing = await self.click('arena_heal_fight')
+        self.assertIn('You have no Golden Razz Berry. Nothing was spent.', missing['embed'].description)
 
     async def test_heal_all_and_fight_reports_missing_count_spends_nothing(self):
         await self.inventory('razz_berry', 1)

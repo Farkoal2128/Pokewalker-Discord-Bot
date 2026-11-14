@@ -1509,6 +1509,12 @@ heal, fight, receipts and rewards together. Every receipt supplies profile_id.
 No engine, gym, stepping or schema changes. Tests: test_arena and test_battle;
 full M1 and native/live acceptance remain separate.
 
+AR-12a (2026-11-14): heal and heal_all_and_fight also accept a party_heal_items
+berry (arena.py heals_party). Positions must still be valid, but the berry heals
+every member below full HP to full HP for one berry: full when nobody is hurt,
+missing with short 1 when none is held, and one ledger line of delta -1, reason
+arena_heal. heal_items berries are unchanged. No schema or receipt changes.
+
 ## Arena tickets and redemption (ARENA-10)
 
 AR-25..AR-30 and AR-35a add redemption without a schema change. Ticket quantities

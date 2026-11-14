@@ -1555,13 +1555,13 @@ AR-3a, AR-4a, AR-10a, AR-10c, AR-11a and AR-12..AR-15 extend the
 unregistered Arena handler map; services remain authoritative for all writes.
 Row 0 is Fight (arena_fight), Heal all & fight (arena_heal_fight), Back out
 (arena). Row 1 has Heal <name> in party order (arena_heal_one/two/three),
-disabled at full HP. Row 2 is arena_berry, with Razz Berry and Pinap Berry
-stock counts. Row 3 is arena_order, six permutations labelled with party
+disabled at full HP. Row 2 is arena_berry, with Razz Berry, Pinap Berry, Golden Razz Berry and Silver
+Pinap Berry stock counts; the two rare berries add " · heals party" (AR-12a). Row 3 is arena_order, six permutations labelled with party
 positions/names and the current order defaulted. Row 4 remains unused and
 row 0 retains capacity for Phase 2.
 
 Every break redraw saves run_id, run_revision and berry. Initial berry is the
-larger stock, Razz on a tie; a saved choice survives stock changes, actions
+larger stock of Razz and Pinap (never a rare berry), Razz on a tie; a saved choice survives stock changes, actions
 and backing out/resuming and changes only through a valid arena_berry choice.
 Mutation actions pass the saved run ID/revision to heal, set_order, fight or
 heal_all_and_fight. The local berry selection uses the same current-state
@@ -1571,7 +1571,10 @@ current state." Invalid berry/order selections use the existing refusal path.
 
 A single heal spends the selected berry through service.heal; missing says
 "You have no <berry>." Full HP just redraws. Heal all & fight uses its atomic
-service; missing says "You need n more <berry>. Nothing was spent." Party
+service; missing says "You need n more <berry>. Nothing was spent." With a rare
+berry, any Heal button or Heal all & fight spends one berry for the whole party;
+a heal says "<berry> healed the whole party." and Heal all & fight without one
+says "You have no <berry>. Nothing was spent." Party
 order uses service.set_order and redraws in that order without resource cost.
 After a win, a result block precedes the next enemy: fought enemy name/CP,
 outcome/ticks, each member's final fight HP, revived-at-1 names and Candy.

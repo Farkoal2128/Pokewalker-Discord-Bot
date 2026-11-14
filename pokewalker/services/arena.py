@@ -278,20 +278,31 @@ async def use_x(conn, session, run_id, revision, item, now):
     return {**result, 'run': run} if result['status'] == 'used' else result
 
 
+def heals_party(berry):
+    """AR-12a: a Golden Razz or Silver Pinap heals every hurt member for one berry."""
+    return berry in load_table('arena')['rules']['party_heal_items']
+
+
 async def heal(conn, session, run_id, revision, positions, berry, now):
     run, refusal = _live_run(await state(conn, session, now), run_id, revision)
     if refusal:
         return refusal
-    if (berry not in load_table('arena')['rules']['heal_items'] or not isinstance(positions, (list, tuple))
+    party = heals_party(berry)
+    if ((berry not in load_table('arena')['rules']['heal_items'] and not party) or not isinstance(positions, (list, tuple))
             or not positions or any(type(position) is not int or not 0 <= position < len(run['team'])
                                     for position in positions) or len(set(positions)) != len(positions)):
         return {'status': 'invalid'}
-    if any(run['team'][position]['hp'] >= run['team'][position]['full_hp'] for position in positions):
+    if party:
+        positions = [i for i, member in enumerate(run['team']) if member['hp'] < member['full_hp']]
+        if not positions:
+            return {'status': 'full'}
+    elif any(run['team'][position]['hp'] >= run['team'][position]['full_hp'] for position in positions):
         return {'status': 'full'}
+    cost = 1 if party else len(positions)
     async with conn.execute('SELECT quantity FROM inventory WHERE profile_id=? AND item_id=?',
                             (session['profile_id'], berry)) as cursor:
         held = await cursor.fetchone()
-    short = len(positions) - (held['quantity'] if held else 0)
+    short = cost - (held['quantity'] if held else 0)
     if short > 0:
         return {'status': 'missing', 'short': short}
 
@@ -299,13 +310,13 @@ async def heal(conn, session, run_id, revision, positions, berry, now):
         for position in positions:
             run['team'][position]['hp'] = run['team'][position]['full_hp']
         await conn.execute('UPDATE inventory SET quantity=quantity-? WHERE profile_id=? AND item_id=?',
-                           (len(positions), session['profile_id'], berry))
+                           (cost, session['profile_id'], berry))
         await conn.execute('UPDATE arena_runs SET team=?,revision=revision+1 WHERE run_id=?',
                            (json.dumps(run['team']), run_id))
         run['revision'] += 1
         return {'status': 'healed'}, [
             {'profile_id': session['profile_id'], 'resource': 'item', 'resource_id': berry,
-             'delta': -len(positions), 'reason': 'arena_heal'}]
+             'delta': -cost, 'reason': 'arena_heal'}]
 
     result = await with_receipt(conn, f'arena_heal:{run_id}:{revision}', 'arena_heal', compute,
                                 profile_id=session['profile_id'])
@@ -411,7 +422,7 @@ async def heal_all_and_fight(conn, session, run_id, revision, berry, now, rng, c
     run, refusal = _live_run(await state(conn, session, now), run_id, revision)
     if refusal:
         return refusal
-    if berry not in load_table('arena')['rules']['heal_items']:
+    if berry not in load_table('arena')['rules']['heal_items'] and not heals_party(berry):
         return {'status': 'invalid'}
     positions = [i for i, member in enumerate(run['team']) if member['hp'] < member['full_hp']]
     if positions:

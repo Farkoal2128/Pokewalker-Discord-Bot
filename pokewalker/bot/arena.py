@@ -17,7 +17,7 @@ from pokewalker.services import arena as service, profiles, storage
 OFF = 'The Arena is turned off in this server.'
 CHANGED = 'A Pokémon changed. Pick your team again.'
 FIGHTS = ('entry', 'middle', 'boss')
-BERRIES = ('razz_berry', 'pinap_berry')
+BERRIES = ('razz_berry', 'pinap_berry', 'golden_razz_berry', 'silver_pinap_berry')
 HEALS = ('arena_heal_one', 'arena_heal_two', 'arena_heal_three')
 X_ITEMS = ('x_attack', 'x_defense')
 BUY_X = {f'arena_buy_{item}': item for item in X_ITEMS}
@@ -236,7 +236,8 @@ def render_break(state):
                  else f"Buy {x_name(item)} · {state['x_rules']['items'][item]['stardust']}")
         view.add_item(discord.ui.Button(label=label, custom_id=custom_id(state, action), row=1, disabled=left > 0))
     view.add_item(discord.ui.Select(placeholder='Healing berry', custom_id=custom_id(state, 'arena_berry'), row=2,
-                                   options=[discord.SelectOption(label=f"{berry.replace('_', ' ').title()} ×{state['stock'].get(berry, 0)}",
+                                   options=[discord.SelectOption(label=f"{berry.replace('_', ' ').title()} ×{state['stock'].get(berry, 0)}"
+                                                                       + (' · heals party' if service.heals_party(berry) else ''),
                                                                  value=berry, default=state['berry'] == berry) for berry in BERRIES]))
     view.add_item(discord.ui.Select(placeholder='Party order', custom_id=custom_id(state, 'arena_order'), row=3,
                                    options=[discord.SelectOption(label=' → '.join(f"{i + 1}. {run['team'][i]['snapshot']['combatant']['name']}"
@@ -331,12 +332,12 @@ def handlers(walker):
                 'skip_tickets': domain.skip_tickets(selection.get('skip', 0), rules)}
 
     async def open_break(conn, session, run, current, result=None, notice=None, fights=None):
-        async with conn.execute('SELECT item_id,quantity FROM inventory WHERE profile_id=? AND item_id IN (?,?)',
+        async with conn.execute(f"SELECT item_id,quantity FROM inventory WHERE profile_id=? AND item_id IN ({','.join('?' * len(BERRIES))})",
                                 (session['profile_id'], *BERRIES)) as cursor:
             stock = {row['item_id']: row['quantity'] for row in await cursor.fetchall()}
         berry = json.loads(session['selection']).get('berry')
         if berry not in BERRIES:
-            berry = max(BERRIES, key=lambda item: stock.get(item, 0))
+            berry = max(BERRIES[:2], key=lambda item: stock.get(item, 0))  # never default to a rare berry
         live = run['ended_at'] is None
         session['selection'] = json.dumps({'phase': 'arena_break' if live else 'arena_defeat',
                                             'run_id': run['run_id'], 'run_revision': run['revision'], 'berry': berry})
@@ -393,7 +394,11 @@ def handlers(walker):
                       'missing': f'You have no {name}.'}[status]
         elif status == 'missing':
             name = berry.replace('_', ' ').title()
-            notice = f'You need {result["short"]} more {name}. Nothing was spent.' if action == 'arena_heal_fight' else f'You have no {name}.'
+            notice = (f'You have no {name}. Nothing was spent.' if service.heals_party(berry) and action == 'arena_heal_fight'
+                      else f'You need {result["short"]} more {name}. Nothing was spent.' if action == 'arena_heal_fight'
+                      else f'You have no {name}.')
+        elif status == 'healed' and service.heals_party(berry):
+            notice = f"{berry.replace('_', ' ').title()} healed the whole party."
         elif status not in ('won', 'defeated', 'healed', 'ordered', 'full', 'selected', 'set'):
             raise _Refused(EXCLUDED if status == 'excluded' else REOPEN)
         current = await service.state(conn, session, now)
