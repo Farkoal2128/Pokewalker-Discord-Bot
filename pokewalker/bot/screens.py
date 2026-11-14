@@ -31,7 +31,7 @@ def home(state):
     view = discord.ui.View(timeout=None)
     view.add_item(discord.ui.Button(label="Open encounter", custom_id=custom_id(state, "open_encounter"),
                                     disabled=state["queue_size"] == 0))
-    for label, action in (("Storage", "storage"), ("Bag", "bag"), ("Pokédex", "pokedex"), ("Route", "route"), ('Gyms', 'gyms')):
+    for label, action in (("Storage", "storage"), ("Bag", "bag"), ("Pokédex", "pokedex"), ("Route", "route"), ('Gyms', 'gyms'), ('Arena', 'arena')):
         view.add_item(discord.ui.Button(label=label, custom_id=custom_id(state, action), disabled=action not in state.get("available", ())))
     waiting = state.get('rewards_waiting', 0)
     view.add_item(discord.ui.Button(label=f"Inbox ({waiting})", custom_id=custom_id(state, "inbox"),

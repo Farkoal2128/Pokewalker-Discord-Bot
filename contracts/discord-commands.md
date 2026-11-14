@@ -1480,10 +1480,10 @@ Tests: test_trade_screens and test_trading. Native/live acceptance remains separ
 ## Arena screens (ARENA-11)
 
 AR-1..AR-8, AR-14a, AR-15 and AR-35a add private Arena renderers and
-handlers(walker) in bot.arena. This row does not register their action map;
-ARENA-15 supplies navigation/router integration. Producers are the Arena
+handlers(walker) in bot.arena. ARENA-15 registers their action map through
+Walker and supplies home navigation. Producers are the Arena
 service and owned-storage queries; consumers are pure Discord renderers.
-No existing command or router behavior changes. All custom IDs reuse
+Other command and router actions retain their behavior. All custom IDs reuse
 screens_catch.custom_id, and action names contain only letters/underscores.
 
 arena calls service.state (including lazy expiry), then shows status, best
@@ -1569,7 +1569,7 @@ Full M1 and live Discord acceptance remain separate.
 
 AR-25..AR-29a and AR-35a add a compatible private submenu without changing
 persisted formats or the redemption service. The Arena service produces counts
-and quotes; bot.arena renders them. Router registration remains ARENA-15.
+and quotes; bot.arena renders them. ARENA-15 registers them with Walker.
 arena_tickets lists all five tiers with counts and contents from arena.json.
 arena_redeem_bronze/silver/gold/platinum/diamond are disabled at zero; Back
 uses arena. Tickets remain redeemable while off, paused or in a live run.
@@ -1598,3 +1598,19 @@ own inbox key: a Diamond contributes 28 to Inbox (n), per D17; pending_count
 and lossless claim behavior are unchanged. Tests: test_arena_screens,
 test_milestones and unchanged test_gym_screens. Full M1 and live Discord
 acceptance remain separate.
+
+## Arena navigation and player help (ARENA-15)
+
+Walker registers bot.arena.handlers with the existing action map and session
+authorization. Home shows Arena (action arena) immediately after Gyms, enabled
+exactly when that handler is available; the view stays within five rows.
+The registered action opens the private Arena home through the normal router.
+content/help.md describes the Phase 1 team, fights, HP, healing, timing, tickets,
+Candy and live-team restrictions, plus the admin switch. Its opening page stays
+unchanged and each page stays within 4096 UTF-16 units.
+
+Before registration, real-service deletion/reset coverage proves removal of Arena
+runs, tickets, owned receipts, ledger lines and inbox rows, including deletion-marker
+replay after restore. Re-enrollment has no Arena progress, cooldown or tickets.
+Deletion services and persisted formats are unchanged. Focused tests establish
+local source behavior; full M1 and live Discord acceptance remain separate.

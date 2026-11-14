@@ -220,6 +220,27 @@ class AdminResetSharingTests(unittest.IsolatedAsyncioTestCase):
         await deletion.replay_markers(self.writer, self.path)
         self.assertEqual(await self.scalar("SELECT profile_id FROM profiles"), new["profile_id"])
 
+    async def test_reset_clears_arena_state_and_reenroll_starts_clean(self):
+        from test_deletion import populate_arena
+        from pokewalker.services import arena
+        profile_id = self.profile['profile_id']
+        await populate_arena(self.conn, self.writer, profile_id, '123', '789')
+        await self.conn.execute('UPDATE profiles SET arena_best_floor=50 WHERE profile_id=?', (profile_id,))
+        self.assertEqual(await self.scalar('SELECT COUNT(*) FROM arena_runs'), 1)
+        self.assertGreater(await self.scalar('SELECT quantity FROM arena_tickets'), 0)
+        await self.invoke(confirm=True)
+        for table in ('arena_runs', 'arena_tickets', 'action_receipts', 'resource_ledger', 'inbox_items'):
+            self.assertEqual(await self.scalar(f'SELECT COUNT(*) FROM {table} WHERE profile_id=?', (profile_id,)), 0, table)
+        new = await self.enroll()
+        self.assertNotEqual(new['profile_id'], profile_id)
+        await deletion.replay_markers(self.writer, self.path)
+        session = {'session_id': 'new-arena', 'profile_id': new['profile_id'], 'guild_id': '123', 'user_id': '789'}
+        await self.conn.execute("INSERT INTO sessions(session_id,guild_id,user_id,profile_id,expires_at) "
+                                "VALUES ('new-arena','123','789',?,999999)", (new['profile_id'],))
+        state = await self.writer.run(lambda conn: arena.state(conn, session, 100))
+        self.assertEqual((state['status'], state['run'], state['cooldown_left'], state['best_floor'], state['tickets']),
+                         ('none', None, 0, 0, {}))
+
     async def test_interrupted_reset_after_marker_replays_with_exactly_one_audit_entry(self):
         marker_log.append_marker(self.path, "reset", "123", "789", 100,
                                  profile_id=self.profile["profile_id"], actor_id="456", reason="moderation")

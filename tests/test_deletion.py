@@ -6,6 +6,7 @@ import importlib
 import json
 import os
 from pathlib import Path
+import random
 import sqlite3
 import tempfile
 import unittest
@@ -15,6 +16,43 @@ from uuid import UUID, uuid4
 from pokewalker.config import Secret, Settings
 from pokewalker.db import MIGRATIONS, Writer, open_db, with_receipt
 from pokewalker.services import marker_log
+
+
+async def populate_arena(conn, writer, profile_id, guild_id, user_id):
+    """Create owned Arena traces through the producers deletion must clean up."""
+    import test_arena
+    from pokewalker.services import arena
+    session = {'session_id': str(uuid4()), 'profile_id': profile_id, 'guild_id': guild_id,
+               'user_id': user_id, 'revision': 0, '_original_revision': 0}
+    await conn.execute('INSERT INTO sessions(session_id,guild_id,user_id,profile_id,expires_at) '
+                       'VALUES (?,?,?,?,1e12)', (session['session_id'], guild_id, user_id, profile_id))
+    team = [(str(uuid4()), 0) for _ in range(3)]
+    for uid, _ in team:
+        await conn.execute('INSERT INTO pokemon(pokemon_uid,profile_id,pokemon_id,level_x2,iv_attack,iv_defense,'
+                           'iv_stamina,gender,shiny,origin,content_version,caught_at) '
+                           "VALUES (?,?,1,20,10,10,10,'male',0,'catch','test',0)", (uid, profile_id))
+    await conn.execute("INSERT INTO arena_tickets VALUES (?,'silver',2)", (profile_id,))
+    await conn.execute("INSERT INTO inventory VALUES (?,'razz_berry',10) ON CONFLICT(profile_id,item_id) "
+                       'DO UPDATE SET quantity=quantity+10', (profile_id,))
+    rng, content, multipliers = random.Random(7), test_arena.CONTENT, test_arena.MULTIPLIERS
+    started = await writer.run(lambda conn: arena.start(conn, session, team, 10, rng, content, multipliers))
+    assert started['status'] == 'started', started
+    run = started['run']
+    battle = test_arena.battle_engine.Result('win', 'defender_fainted', 9, (0, 1, 2), (),
+                                           party_hp=(1, 2, 3), finisher=0)
+    with patch.object(test_arena.battle_engine, 'simulate', return_value=battle):
+        fought = await writer.run(lambda conn: arena.fight(
+            conn, session, run['run_id'], run['revision'], 20, rng, content, multipliers,
+            test_arena.load_table('battle')['rules'], content['type_chart']))
+    assert fought['status'] == 'won' and fought['candy'], fought
+    run = (await writer.run(lambda conn: arena.state(conn, session, 30)))['run']
+    healed = await writer.run(lambda conn: arena.heal(conn, session, run['run_id'], run['revision'], [0], 'razz_berry', 30))
+    assert healed['status'] == 'healed', healed
+    quote = await arena.redeem_quote(conn, profile_id, 'silver')
+    redeemed = await writer.run(lambda conn: arena.redeem(
+        conn, session, 'silver', quote['free'], quote['add'], 40, rng, content))
+    assert redeemed['status'] == 'redeemed', redeemed
+    return session
 
 
 class DeletionTests(unittest.IsolatedAsyncioTestCase):
@@ -208,10 +246,6 @@ class DeletionTests(unittest.IsolatedAsyncioTestCase):
 
     async def populate(self):
         profile = self.profile_id
-        await self.conn.execute("INSERT INTO restrictions(guild_id,user_id,paused,excluded,share_banned) "
-                                "VALUES ('1','2',1,1,1)")
-        await self.conn.execute("INSERT INTO mod_audit(guild_id,actor_id,target_kind,target_id,action,reason,created_at) "
-                                "VALUES ('1','3','user','2','exclude','kept',0)")
         statements = [
             ("INSERT INTO step_events VALUES ('message',?,'4',4,4,0,400,'fixture',0)", (profile,)),
             ("INSERT INTO encounters(encounter_id,profile_id,pokemon_id,level_x2,iv_attack,iv_defense,"
@@ -252,6 +286,11 @@ class DeletionTests(unittest.IsolatedAsyncioTestCase):
                                "('encounter',0,'poke_ball',NULL,0.5,1,0,'throw:encounter:0',0)")
 
         await self.writer.run(receipts)
+        await populate_arena(self.conn, self.writer, profile, '1', '2')
+        await self.conn.execute("INSERT INTO restrictions(guild_id,user_id,paused,excluded,share_banned) "
+                                "VALUES ('1','2',1,1,1)")
+        await self.conn.execute("INSERT INTO mod_audit(guild_id,actor_id,target_kind,target_id,action,reason,created_at) "
+                                "VALUES ('1','3','user','2','exclude','kept',0)")
 
     async def test_delete_cascades_all_rows_and_receipts_incl_run_keeps_restrictions_audit(self):
         await self.populate()
@@ -259,7 +298,8 @@ class DeletionTests(unittest.IsolatedAsyncioTestCase):
         await self.run_marker("opt_out")
         for table in ("step_events", "encounters", "catch_attempts", "pokemon", "inventory",
                       "candy", "pokedex", "reactions", "sessions", "action_receipts",
-                      "resource_ledger", "milestone_awards", "inbox_items", "finds", "active_effects"):
+                      "resource_ledger", "milestone_awards", "inbox_items", "finds", "active_effects",
+                      "arena_runs", "arena_tickets"):
             with self.subTest(table=table):
                 self.assertEqual(await self.scalar(f"SELECT count(*) FROM {table}"), 0)
         self.assertEqual(await self.scalar("SELECT profile_id FROM profiles"), other)
@@ -269,6 +309,36 @@ class DeletionTests(unittest.IsolatedAsyncioTestCase):
         new_id = await self.profile()
         self.assertNotEqual(new_id, self.profile_id)
         self.assertEqual(await self.scalar("SELECT paused+excluded+share_banned FROM restrictions"), 3)
+
+    async def assert_arena_traces_removed(self, conn):
+        for table in ('arena_runs', 'arena_tickets', 'action_receipts', 'resource_ledger', 'inbox_items'):
+            rows = await conn.execute_fetchall(f'SELECT * FROM {table} WHERE profile_id=?', (self.profile_id,))
+            self.assertEqual(rows, [], table)
+
+    async def test_delete_removes_arena_runs_tickets_receipts_ledger_and_inbox_rows(self):
+        await self.populate()
+        self.assertEqual(await self.scalar('SELECT COUNT(*) FROM arena_runs WHERE ended_at IS NULL'), 1)
+        self.assertGreater(await self.scalar('SELECT quantity FROM arena_tickets'), 0)
+        self.assertEqual(await self.scalar("SELECT COUNT(*) FROM action_receipts WHERE action LIKE 'arena_%'"), 4)
+        self.assertGreater(await self.scalar("SELECT COUNT(*) FROM resource_ledger WHERE reason='arena_candy'"), 0)
+        self.assertGreater(await self.scalar("SELECT COUNT(*) FROM inbox_items WHERE milestone_id LIKE 'arena:%'"), 0)
+        await self.run_marker()
+        await self.assert_arena_traces_removed(self.conn)
+
+    async def test_replay_after_restore_removes_arena_rows_and_receipts(self):
+        await self.populate()
+        backup = self.db_path.parent / 'before-delete.sqlite3'
+        with closing(sqlite3.connect(backup)) as destination:
+            await self.conn.backup(destination)
+        await self.run_marker()
+        restored = await open_db(backup)
+        self.addAsyncCleanup(restored.close)
+        writer = Writer(restored)
+        self.addAsyncCleanup(writer.close)
+        self.assertEqual(len(await restored.execute_fetchall('SELECT * FROM arena_runs')), 1)
+        for _ in range(2):
+            await self.service().replay_markers(writer, self.path)
+            await self.assert_arena_traces_removed(restored)
 
     async def holder(self):
         await self.conn.execute(
