@@ -32,12 +32,13 @@ async def owned_count(conn, profile_id):
         return (await cursor.fetchone())[0]
 
 
-async def page(conn, profile_id, offset, favorite_only=False):
+async def page(conn, profile_id, offset, favorite_only=False, favorites_first=False):
     where = "profile_id=? AND state='owned'" + (" AND favorite=1" if favorite_only else "")
+    order = ("favorite DESC," if favorites_first else "") + "caught_at DESC,pokemon_uid"
     async with conn.execute(f"SELECT COUNT(*) FROM pokemon WHERE {where}", (profile_id,)) as cursor:
         total = (await cursor.fetchone())[0]
     async with conn.execute(f"SELECT * FROM pokemon WHERE {where} "
-                            "ORDER BY caught_at DESC,pokemon_uid LIMIT 10 OFFSET ?",
+                            f"ORDER BY {order} LIMIT 10 OFFSET ?",
                             (profile_id, offset)) as cursor:
         return [dict(row) for row in await cursor.fetchall()], total
 

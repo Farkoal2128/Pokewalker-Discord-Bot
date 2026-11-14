@@ -452,6 +452,24 @@ class GymBattleScreenTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(_Refused):
             await self.click('gym_party_slot_two')
 
+    async def test_party_picker_sorts_favorites_first(self):
+        for i in range(12):
+            await self.pokemon(f'a{i:02}')
+        await self.conn.execute("UPDATE pokemon SET favorite=1 WHERE pokemon_uid='a11'")
+        shown = await self.preview()
+        self.assertEqual(self.component(shown, 'gym_party_sort').label, 'Favorites first')
+        self.assertNotEqual(self.component(shown, 'gym_party_pick').options[0].value, 'a11')
+        await self.click('gym_party_next')
+        shown = await self.click('gym_party_sort')
+        self.assertEqual(self.selection()['offset'], 0)
+        self.assertEqual(self.component(shown, 'gym_party_sort').label, 'Newest first')
+        self.assertEqual(self.component(shown, 'gym_party_pick').options[0].value, 'a11')
+        await self.click('gym_party_pick', ['a11'])
+        self.assertEqual(self.selection()['party'], [['a11', 0]])
+        shown = await self.click('gym_party_sort')
+        self.assertEqual(self.component(shown, 'gym_party_sort').label, 'Favorites first')
+        self.assertEqual(self.selection()['party'], [['a11', 0]])
+
     async def test_party_saved_before_one_attacker_rule_is_refused(self):
         await self.preview()
         self.session['selection'] = json.dumps({**self.selection(), 'party': [['mon', 0], ['two', 0]], 'slot': 2})

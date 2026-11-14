@@ -952,6 +952,17 @@ I/O. Producer: bot.storage; consumers: private Walker details and companion acti
 No schema, service signature or component-ID changes. Tests: test_storage,
 test_companion and test_gym_screens. Focused evidence leaves G-F2/native gates open.
 
+## C5: gym picker favorite sort (owner amendment 2026-11-13)
+The deploy picker and the battle party picker each add a sort toggle beside Prev/Next
+(`gym_deploy_sort`, `gym_party_sort`). Pages default to newest first; the button reads
+"Favorites first" and a press re-pages from page 1 with favorites first (then newest),
+the button now reading "Newest first"; a second press switches back. The choice lives in
+the screen selection: it survives paging, picking and Back from the deploy confirmation,
+and the deploy page line adds " · favorites first". A party pick is kept when re-sorting.
+Storage `page` gains `favorites_first` (ORDER BY favorite DESC first). Eligibility and
+page-membership checks are unchanged. Tests: tests/test_gym_screens.py,
+tests/test_gym_battle.py.
+
 ## C5: D64 Shiny Charm in Bag
 Only a player who owns the charm sees the Bag line "Shiny Charm: On · 4× shiny odds on every
 encounter" (or "Shiny Charm: Off") and a **Turn Shiny Charm off|on** button

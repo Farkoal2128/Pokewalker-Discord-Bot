@@ -137,6 +137,30 @@ class GymScreenTests(unittest.IsolatedAsyncioTestCase):
             await self.click('gym_deploy_confirm')
         self.assertEqual(await self.snapshot(), before)
 
+    async def test_deploy_picker_sorts_favorites_first(self):
+        for i in range(12):
+            await self.pokemon(f'a{i:02}')
+        await self.conn.execute("UPDATE pokemon SET favorite=1 WHERE pokemon_uid='a11'")
+        await self.view()
+        shown = await self.click('gym_deploy')
+        self.assertIn('Favorites first', self.labels(shown))
+        self.assertNotEqual(self.select(shown).options[0].value, 'a11')
+        shown = await self.click('gym_deploy_sort')
+        self.assertEqual(self.select(shown).options[0].value, 'a11')
+        self.assertIn('Newest first', self.labels(shown))
+        self.assertIn('favorites first', shown['embed'].description)
+        page = await self.click('gym_deploy_next')
+        self.assertNotIn('a11', [option.value for option in self.select(page).options])
+        self.assertIn('Newest first', self.labels(page))
+        await self.click('gym_deploy_prev')
+        await self.click('gym_deploy_select', ['a11'])
+        self.assertEqual(json.loads(self.session['selection'])['pokemon_uid'], 'a11')
+        shown = await self.click('gym_deploy')  # Back from the confirmation keeps the sort.
+        self.assertEqual(self.select(shown).options[0].value, 'a11')
+        shown = await self.click('gym_deploy_sort')
+        self.assertNotEqual(self.select(shown).options[0].value, 'a11')
+        self.assertIn('Favorites first', self.labels(shown))
+
     async def test_deploy_picker_labels_include_cp(self):
         await self.view()
         shown = await self.click('gym_deploy')
