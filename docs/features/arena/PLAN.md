@@ -139,7 +139,7 @@ Every build row is `seam` (PIPELINE.md:13): at most 2 production files and 300 p
 | 13 | [ARENA-12](tickets/ARENA-12.md) screens: break actions and results | build | seam | M | ✅ done · a1040b4 · GO review r1 |
 | 14 | [ARENA-13](tickets/ARENA-13.md) screens: tickets, redemption, inbox labels | build | seam | M | ✅ done · 46c0c0e · GO review r1 |
 | 15 | [ARENA-14](tickets/ARENA-14.md) admin on/off command | build | seam | S | ✅ done · 493c2b2 · GO review r1 |
-| 16 | [ARENA-15](tickets/ARENA-15.md) go live: registration, home button, help, deletion coverage | build | seam | M | pending |
+| 16 | [ARENA-15](tickets/ARENA-15.md) go live: registration, home button, help, deletion coverage | build | seam | M | ✅ done · 2b7b431 · GO review r1 |
 | 17 | G-M1 qualify increment M1 | 🚦 | — | — | pending |
 | 18 | ARENA-16 M2 settings: migration 0026 and setters that bump the live run revision | build | seam | S | pending |
 | 19 | ARENA-17 M2 backend: floor skip with tickets at run start; chain step | build | seam | M | pending |
