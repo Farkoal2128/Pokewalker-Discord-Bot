@@ -6,6 +6,8 @@ import sqlite3
 import unittest
 from unittest.mock import AsyncMock, patch
 
+from content.balance import load_table
+from pokewalker.services import profiles
 import test_storage as storage_tests
 
 
@@ -63,6 +65,120 @@ class ResearchTests(unittest.IsolatedAsyncioTestCase):
             conn, session, gym["gym_id"], uid, pokemon["revision"], 1000, self.bot.content))
         self.assertEqual(result["status"], "deployed")
         return result["deployment"]
+
+    async def arena_run(self, uids=('p-001',)):
+        await self.writer.run(lambda conn: conn.execute(
+            'INSERT INTO arena_runs(run_id,profile_id,started_at,floor,slot,team,enemy) '
+            'VALUES (?, ?,1000,1,0,?,?)',
+            ('arena', self.profile['profile_id'],
+             json.dumps([{'uid': uid, 'family_id': 1, 'special': False, 'full_hp': 40,
+                          'hp': 40, 'snapshot': {}} for uid in uids]),
+             json.dumps({'snapshot': {}, 'battle_hp': 40, 'special': False}))))
+
+    async def test_protected_reason_in_arena_precedes_every_other_reason(self):
+        identity = {'is_legendary': False, 'is_mythical': False}
+        pokemon = {'pokemon_uid': 'x', 'favorite': False, 'shiny': False, 'gym_deployment_id': None}
+        profile = {'companion_uid': 'other'}
+        for mon, info, owner, expected in (
+                (pokemon, identity, profile, None),
+                ({**pokemon, 'gym_deployment_id': 'gym'}, identity, profile, 'deployed'),
+                ({**pokemon, 'favorite': True}, identity, profile, 'favorite'),
+                (pokemon, identity, {'companion_uid': 'x'}, 'companion'),
+                ({**pokemon, 'shiny': True}, identity, profile, 'shiny'),
+                (pokemon, {**identity, 'is_legendary': True}, profile, 'legendary_or_mythical'),
+                (pokemon, {**identity, 'is_mythical': True}, profile, 'legendary_or_mythical')):
+            with self.subTest(protection=expected):
+                self.assertEqual(self.service().protected_reason(info, mon, owner, arena_team=frozenset(('x',))),
+                                 'in_arena')
+                self.assertEqual(self.service().protected_reason(info, mon, owner), expected)
+
+    async def test_candidates_mark_live_team_member_in_arena(self):
+        await self.setup_research(3)
+        await self.arena_run()
+        with patch.object(profiles, 'arena_team', wraps=profiles.arena_team) as team:
+            rows, total = await self.service().candidates(
+                self.conn, self.profile['profile_id'], self.bot.content, 0, 1000)
+            team.assert_awaited_once_with(self.conn, self.profile['profile_id'], 1000)
+        self.assertEqual(total, 3)
+        reasons = {row['pokemon']['pokemon_uid']: row['reason'] for row in rows}
+        self.assertEqual(reasons['p-001'], 'in_arena')
+        self.assertIsNone(reasons['p-002'])
+
+    async def test_bulk_send_with_team_member_returns_changed_nothing_sent(self):
+        _, session = await self.review(count=3)
+        await self.arena_run()
+        before, writes = await self.balances(), self.conn.total_changes
+        self.assertEqual(await self.direct_send(session), {'status': 'changed'})
+        self.assertEqual((await self.balances(), self.conn.total_changes), (before, writes))
+        rendered, _ = await self.act(session, 'research_review')
+        self.assertIn('Protected', rendered['embed'].description)
+        self.assertNotIn('Send 2 Pokémon', self.buttons(rendered))
+        self.assertEqual(await self.balances(), before)
+
+    async def test_single_send_of_team_member_hard_refused_with_arena_text(self):
+        session = await self.setup_research(2)
+        await self.arena_run()
+        shown, session = await self.details(session, 'p-001')
+        self.assertFalse(self.buttons(shown)['Send for research'].disabled)
+        before, sessions, writes = await self.balances(), await self.rows(), self.conn.total_changes
+        interaction = await self.click(session, 'storage_send')
+        interaction.edit_original_response.assert_not_awaited()
+        self.assertEqual(interaction.followup.send.await_args.args[0],
+                         "This Pokémon is on your Arena team. It can't be sent until the run ends.")
+        self.assertEqual((await self.balances(), await self.rows(), self.conn.total_changes),
+                         (before, sessions, writes))
+
+    async def test_unlocked_legendary_team_member_still_refused_no_unlock_prompt(self):
+        session = await self.setup_research(2)
+        legendary = next(item for item in self.bot.content['identities'] if item['is_legendary'])
+        await self.writer.run(lambda conn: conn.execute(
+            "UPDATE pokemon SET pokemon_id=?,shiny=1 WHERE pokemon_uid='p-001'", (legendary['pokemon_id'],)))
+        _, session = await self.details(session, 'p-001')
+        _, session = await self.act(session, 'storage_send')
+        _, session = await self.act(session, 'storage_send_unlock')
+        self.assertTrue(json.loads(session['selection'])['preview']['unlocked'])
+        await self.arena_run()
+        before, writes = await self.balances(), self.conn.total_changes
+        self.assertEqual(await self.direct_send(session), {'status': 'changed'})
+        self.assertEqual((await self.balances(), self.conn.total_changes), (before, writes))
+        shown, session = await self.act(session, 'storage_send_unlock')
+        self.assertIn('Protected', shown['embed'].description)
+        self.assertNotIn('Unlock', self.buttons(shown))
+        self.assertNotIn('Send 1 Pokémon', self.buttons(shown))
+        _, session = await self.details(session, 'p-001')
+        interaction = await self.click(session, 'storage_send')
+        interaction.edit_original_response.assert_not_awaited()
+        self.assertIn('on your Arena team', interaction.followup.send.await_args.args[0])
+        self.assertEqual(await self.balances(), before)
+
+    async def test_team_member_sendable_after_hour_18_and_after_run_end(self):
+        session = await self.setup_research(3)
+        await self.arena_run(('p-001', 'p-002'))
+        for uid, started_at, ended_at, reason in (
+                ('p-001', 1000 - load_table('arena')['rules']['run_seconds'], None, None),
+                ('p-002', 1000, 1000, 'loss')):
+            with self.subTest(uid=uid, ended=ended_at is not None):
+                await self.writer.run(lambda conn: conn.execute(
+                    'UPDATE arena_runs SET started_at=?,ended_at=?,end_reason=?', (started_at, ended_at, reason)))
+                arena = await self.rows('SELECT * FROM arena_runs')
+                saved = {'picks': [[uid, 0]], 'preview': {'id': uid, 'expires_at': 1120}}
+                candidate = {**session, 'selection': json.dumps(saved)}
+                self.assertEqual((await self.direct_send(candidate))['status'], 'sent')
+                self.assertEqual(await self.rows('SELECT * FROM arena_runs'), arena)
+
+    async def test_bulk_list_shows_arena_text_and_disabled_toggle(self):
+        session = await self.setup_research(2)
+        _, session = await self.act(session, 'research')
+        await self.arena_run()
+        before, sessions, writes = await self.balances(), await self.rows(), self.conn.total_changes
+        interaction = await self.click(session, 'research_toggle_a')
+        interaction.edit_original_response.assert_not_awaited()
+        self.assertEqual((await self.balances(), await self.rows(), self.conn.total_changes),
+                         (before, sessions, writes))
+        shown, _ = await self.act(session, 'research')
+        self.assertIn('on your Arena team', shown['embed'].description)
+        self.assertNotIn('in_arena', shown['embed'].description)
+        self.assertTrue(shown['view'].children[0].disabled)
 
     async def test_protected_reason_deployed_first(self):
         reason = self.service().protected_reason

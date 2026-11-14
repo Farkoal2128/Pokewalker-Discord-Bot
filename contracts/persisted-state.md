@@ -1387,3 +1387,22 @@ is scoped to the caller's profile and stops blocking at exactly run_seconds
 without ending the Arena row or opening the Arena. Ended runs never block.
 Producer: services.gyms; consumers: private gym screens. No schema or trigger
 change. Tests: test_arena_gym_block and the four existing gym regression modules.
+
+## Arena research protection (AR-7a)
+
+research.protected_reason(identity,pokemon,profile,arena_team=frozenset())
+returns in_arena before deployed, favorite, companion, shiny and
+legendary_or_mythical when the Pokemon UID is in the supplied live team. The
+empty default preserves callers that do not supply a team (including storage
+and the trading adapter). Research candidates(conn,profile_id,content,offset,now)
+loads profiles.arena_team once for its profile and injected epoch clock, and
+returns this protection with each owned row.
+
+Research send loads the same live team with its now before validating all picks.
+Any in_arena pick returns changed for the entire batch with no Pokemon, Candy,
+ledger or receipt write. It cannot be bypassed by a single reviewed pick's
+Shiny/Legendary unlock. Authorized receipt replay keeps its existing semantics.
+The block lifts at run_seconds or when ended_at is set, without a run-state write.
+Pending catches cannot be Arena members: send_pending, send_pending_reviewed and
+auto_send retain their existing behavior. No schema change. Tests: test_research,
+test_storage and test_trading.
