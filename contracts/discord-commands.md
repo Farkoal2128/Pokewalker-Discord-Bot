@@ -1710,7 +1710,7 @@ test_milestones, test_readme, test_walker_router. Live Discord remains unverifie
 ## Arena X items (ARENA-28)
 AR-43 through AR-45 add private actions arena_buy_x_attack, arena_buy_x_defense,
 arena_use_x_attack and arena_use_x_defense; both use actions require arena_break.
-Names are X-Attack and X-Defense. Home and break show Stardust <n> · X-Attack ×n ×
+Names are X-Attack and X-Defense. Home and break show Stardust <n> · X-Attack ×n ·
 X-Defense ×n from current state. Prices, duration and multipliers come from
 arena.json rules.x_items. Renderers receive these values without doing I/O.
 
