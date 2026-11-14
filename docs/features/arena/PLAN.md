@@ -72,7 +72,7 @@ No owner/repo conflict: AGENTS.md asks for RED → GREEN and the applicable chec
 - **Source increment M1** (rows ARENA-1..ARENA-15, qualified at G-M1): a complete playable Arena on the feature branch, for the owner's smoke test. It is not a delivery.
 - **Final feature** (G-F). M2, M3 and M4 are not source increments; their rows run focused checks.
 
-The owner's code review loop (global CLAUDE.md) is review, not tests; the coordinator applies it.
+The owner's code review loop (global CLAUDE.md) is review, not tests; the supervising Claude session runs it once after the last build row, before G-F. Drives use the per-row seam review only.
 
 ### 3.4 Delivery
 
