@@ -20,7 +20,7 @@ FIGHTS = ('entry', 'middle', 'boss')
 BERRIES = ('razz_berry', 'pinap_berry')
 HEALS = ('arena_heal_one', 'arena_heal_two', 'arena_heal_three')
 BREAK_ACTIONS = ('arena_fight', 'arena_heal_fight', *HEALS, 'arena_berry', 'arena_order',
-                 'arena_auto_order', 'arena_stop_pct')
+                 'arena_auto_order', 'arena_stop_pct', 'arena_until_hurt')
 STALE = 'The run changed on another screen. This is its current state.'
 REDEEM = {f'arena_redeem_{tier}': tier for tier in ('bronze', 'silver', 'gold', 'platinum', 'diamond')}
 
@@ -125,6 +125,17 @@ def render_team(state):
 
 
 def result_lines(state):
+    if state.get('fights'):
+        lines = []
+        for result, names in state['fights']:
+            line = (f"Floor {result['floor']} {FIGHTS[result['slot']]}: {result['enemy']['name']} · "
+                    f"CP {result['enemy']['cp']} · {result['outcome'].title()} · {result['ticks']} ticks")
+            if result['candy']:
+                line += f" · Candy +{result['candy']['quantity']} {names[result['finisher']]}"
+            lines.append(line)
+            if result['tickets']:
+                lines.extend(ticket_lines(result))
+        return lines
     result = state.get('result')
     if not result:
         return []
@@ -135,6 +146,11 @@ def result_lines(state):
     lines.extend(f'{names[position]} revived at 1 HP.' for position in result['revived'])
     candy = result['candy']
     lines.append(f"Candy: +{candy['quantity']} for {names[result['finisher']]}." if candy else 'Candy: none.')
+    return lines + ticket_lines(result)
+
+
+def ticket_lines(result):
+    lines = []
     if result['slot'] == 2 and result['outcome'] == 'win':
         tickets = result['tickets']
         lines.append(f"Floor {result['floor']} cleared" + (f": {tickets['tier'].title()} Ticket" if tickets else '.'))
@@ -158,6 +174,7 @@ def render_break(state):
         embed.set_image(url=state['sprite'])
     view = discord.ui.View(timeout=None)
     for label, action in [('Fight', 'arena_fight'), ('Heal all & fight', 'arena_heal_fight'),
+                          ('Fight until hurt', 'arena_until_hurt'),
                           ('Auto-order: ' + ('on' if state['auto_order'] else 'off'), 'arena_auto_order'), ('Back out', 'arena')]:
         view.add_item(discord.ui.Button(label=label, custom_id=custom_id(state, action), row=0))
     for member, action in zip(run['team'], HEALS):
@@ -256,7 +273,7 @@ def handlers(walker):
                 'members': members, 'total': total, 'notice': notice, 'max_skip': domain.max_skip(best_floor, rules),
                 'skip_tickets': domain.skip_tickets(selection.get('skip', 0), rules)}
 
-    async def open_break(conn, session, run, current, result=None, notice=None):
+    async def open_break(conn, session, run, current, result=None, notice=None, fights=None):
         async with conn.execute('SELECT item_id,quantity FROM inventory WHERE profile_id=? AND item_id IN (?,?)',
                                 (session['profile_id'], *BERRIES)) as cursor:
             stock = {row['item_id']: row['quantity'] for row in await cursor.fetchall()}
@@ -267,7 +284,7 @@ def handlers(walker):
         session['selection'] = json.dumps({'phase': 'arena_break' if live else 'arena_defeat',
                                             'run_id': run['run_id'], 'run_revision': run['revision'], 'berry': berry})
         state = {'session': session, 'run': run, 'stock': stock, 'berry': berry, 'result': result, 'notice': notice,
-                 'stop_pct': current['stop_pct'], 'auto_order': current['auto_order']}
+                 'stop_pct': current['stop_pct'], 'auto_order': current['auto_order'], 'fights': fights}
         if not live:
             return render_defeat(state)
         _, sprite = storage.identify(walker.bot.content, run['enemy']['snapshot'])
@@ -317,7 +334,64 @@ def handlers(walker):
         current = await service.state(conn, session, now)
         return await open_break(conn, session, current['run'], current, result if status in ('won', 'defeated') else None, notice)
 
+    def until_hurt(session):
+        selection = json.loads(session['selection'])
+        if selection.get('phase') != 'arena_break':
+            raise _Refused(REOPEN)
+        run_id, revision = selection['run_id'], selection['run_revision']
+
+        async def chain():
+            nonlocal revision
+            from pokewalker.bot.walker import RESTARTING
+            fights, rendered = [], {}
+            while True:
+                async def job(conn):
+                    now = walker.clock()
+                    result = await service.chain_step(conn, session, run_id, revision, now, walker.rng,
+                                                      walker.bot.content, walker.multipliers,
+                                                      load_table('battle')['rules'], walker.bot.content['type_chart'])
+                    run = result.get('run')
+                    if run is None:
+                        return result, {'content': EXCLUDED if result['status'] == 'excluded' else REOPEN}
+                    current = await service.state(conn, session, now)
+                    fought = result['status'] in ('won', 'defeated')
+                    history = fights + ([(result, [m['snapshot']['combatant']['name'] for m in run['team']])] if fought else [])
+                    notice = None
+                    if result['status'] == 'hurt' or result.get('stop') == 'hurt':
+                        name = run['team'][result['position']]['snapshot']['combatant']['name']
+                        if not history:
+                            notice = f"{name} is below {current['stop_pct']}%. Heal first, or use Fight."
+                        elif result.get('revived'):
+                            notice = f'Stopped: {name} was revived at 1 HP.'
+                        else:
+                            notice = f"Stopped: {name} is below {current['stop_pct']}%."
+                    elif result.get('stop') == 'ticket':
+                        notice = f"Stopped: floor {result['floor']} paid a ticket."
+                    elif result['status'] == 'stale' and run['ended_at'] is None:
+                        notice = STALE
+                    screen = await open_break(conn, session, run, current, result if fought else None, notice, history)
+                    await conn.execute('UPDATE sessions SET selection=? WHERE session_id=?',
+                                       (session['selection'], session['session_id']))
+                    return result, screen
+
+                try:
+                    result, screen = await walker.bot.writer.run(job)
+                except RuntimeError:
+                    if not getattr(walker.bot, '_stopping', False):
+                        raise
+                    return {**rendered, 'content': RESTARTING}
+                rendered = screen
+                if result['status'] in ('won', 'defeated'):
+                    fights.append((result, [m['snapshot']['combatant']['name'] for m in result['run']['team']]))
+                if result['status'] != 'won' or result.get('stop') is not None:
+                    return rendered
+                revision = result['run']['revision']
+
+        return {'after_commit': chain}
+
     async def dispatch(action, conn, session, interaction):
+        if action == 'arena_until_hurt':
+            return until_hurt(session)
         now = walker.clock()
         current = await service.state(conn, session, now)
         if current['status'] in ('stale', 'excluded'):

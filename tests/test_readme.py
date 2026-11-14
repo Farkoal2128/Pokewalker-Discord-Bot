@@ -41,7 +41,13 @@ class ReadmeTests(IsolatedAsyncioTestCase):
     def test_approved_text_verbatim(self):
         content = Path('content/help.md').read_bytes()
         self.assertEqual(hashlib.sha256(content).hexdigest(),
-                         '3b5c0ef6926e756d43b87f190d54ecb09206ba5226d612a9c13d29ff067bf3a6')
+                         'fbf85e63345bb10a2372b9ef4f3f0baea079d5d8256ee4151697a8ae57f6d901')
+
+    def test_help_describes_skip_and_fight_until_hurt(self):
+        player = next(page for page in self.pages() if '**Arena.**' in page)
+        for phrase in ('Skip', 'best floor', '40', 'Fight until hurt', '10%', '90%', '50%',
+                       'Auto-order', 'highest HP percentage', 'revived', 'ticket', 'defeat', 'berry'):
+            self.assertIn(phrase, player)
 
     def test_page_one_is_current_opening_verbatim(self):
         page = self.pages()[0]
