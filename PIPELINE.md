@@ -7,7 +7,7 @@ from this Git repository's root, `Pokewalker Discord Bot/`.
 
 - feature_root: docs/features
 - completed_root: docs/completed
-- test_cmd: python -m unittest discover -s tests -p "test_*.py" && python scripts/guard.py && python scripts/verify.py
+- test_cmd: python scripts/guard.py && python scripts/verify.py
 - test_scope_hint: python -m unittest discover -s tests -p "test_<module>.py" for the affected application module (for example, test_content_integrity.py); for a specific case, append -k <test_name>
 - lint_cmd: none
 - seam_domains: Discord gateway events, slash commands and interaction responses; bot token and OAuth scopes/intents; step, watt and progression rules; route, encounter and item tables; persisted player state and migrations; trading or transfer between players; rate limits and abuse controls; verification command/configuration contracts
@@ -35,8 +35,9 @@ remotes.
 The project adapter is `active`: `scripts/verify.py` runs the two configured checks
 in `.project/commands.json`: the application unit suite (`unit`) and the offline
 committed-artifact integrity suite (`contract`). Other checks remain unconfigured;
-there is no separate lint command yet. By construction, `test_cmd` runs the unit
-suite twice: its initial unittest leg and the `verify.py` `unit` check.
+there is no separate lint command yet. `test_cmd` runs the unit suite once, through
+the `verify.py` `unit` check (owner decision 2026-11-14: the separate unittest leg
+duplicated it and doubled the run time).
 
 Passing `test_cmd` proves application unit tests, the committed artifact's integrity,
 and framework checks. It does not establish live Discord acceptance (G-3 smoke

@@ -114,7 +114,7 @@ Every build row is `seam` (PIPELINE.md:13): at most 2 production files and 300 p
 | 14 | [ARENA-13](tickets/ARENA-13.md) screens: tickets, redemption, inbox labels | build | seam | M | ✅ done · 46c0c0e · GO review r1 |
 | 15 | [ARENA-14](tickets/ARENA-14.md) admin on/off command | build | seam | S | ✅ done · 493c2b2 · GO review r1 |
 | 16 | [ARENA-15](tickets/ARENA-15.md) go live: registration, home button, help, deletion coverage | build | seam | M | ✅ done · 2b7b431 · GO review r1 |
-| 17 | G-M1 qualify increment M1 | 🚦 | — | — | pending |
+| 17 | G-M1 qualify increment M1 | 🚦 | — | — | ✅ done 2026-11-14 · candidate 4308d1d tree 9736355 · Tests: full test_cmd PASS uncached (1847 OK, 1 skip; guard OK; contract 6 OK) · integration GO Codex gpt-6-astra r1 · audit Fable r1 (1 SHOULD fixed, 1 NICE fixed, 1 NICE rejected per C5) |
 | 18 | ARENA-16 M2 settings: migration 0026 and setters that bump the live run revision | build | seam | S | pending |
 | 19 | ARENA-17 M2 backend: floor skip with tickets at run start; chain step | build | seam | M | pending |
 | 20 | ARENA-18 M2 screens: skip select, Fight until hurt, auto-order toggle, threshold; help | build | seam | M | pending |
