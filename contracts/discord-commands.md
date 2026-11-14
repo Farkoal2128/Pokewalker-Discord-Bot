@@ -1685,3 +1685,23 @@ result fields or Discord side effects; the normal private response follows commi
 Producer: Walker.home; consumers: home rewards count/Inbox navigation and C3's
 monthly payout. Existing command/session shapes remain compatible. Tests:
 test_arena_screens ArenaRouterTests and existing test_walker_router.
+
+## Arena leaderboard (ARENA-23)
+AR-35a and AR-38..41 add the private arena_leaderboard action. Arena home puts
+its always-enabled Leaderboard button between Tickets and Back, including off,
+live, cooldown and paused states. After the stale/excluded state check every
+Arena dispatch settles the guild at Walker.clock(); arena_until_hurt returns
+its existing post-commit callback first. A later refusal rolls settlement back.
+The leaderboard keeps selection and renders without I/O from service.leaderboard
+and arena.json rules.leaderboard: UTC month, reset countdown rounded up to minutes,
+top ten mention/floor rows, the viewer below ten, rewards and minimum floor, and
+last month's paid places without promoting missing winners. Empty months and
+unpaid last months say so. Back uses arena. Walker suppresses all mention pings.
+Inbox open settles before reading waiting rows. arena_month:<YYYY-MM>:<1|2|3>
+labels read Arena leaderboard <YYYY-MM>: 1st/2nd/3rd place; malformed keys read
+Arena leaderboard reward, without queries or raw keys. Existing arena: labels
+and claim behavior stay unchanged. Help documents the UTC monthly best-floor
+ranking, tie order, minimum and Inbox rewards. This is additive; no persisted
+format or slash command changes. Producers: bot.arena and bot.milestones;
+consumers: Walker sessions, private views and help. Tests: test_arena_screens,
+test_milestones, test_readme, test_walker_router. Live Discord remains unverified.
