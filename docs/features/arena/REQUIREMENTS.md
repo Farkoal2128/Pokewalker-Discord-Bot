@@ -1,7 +1,6 @@
 # Arena — pre-plan requirements (approved)
 
-Status: **approved by the owner 2026-11-13** after 8 review rounds (round 8: 0 Must, 1 Should, fixed). **Amended 2026-11-14** with the owner's monthly leaderboard (§6.3, AR-36..AR-41). Nothing here is planned or built yet. Next step:
-`feature-pipeline:plan` turns this file into `PLAN.md`. No code changes before that plan is reviewed and approved.
+Status: **approved by the owner 2026-11-13** after 8 review rounds (round 8: 0 Must, 1 Should, fixed). **Amended 2026-11-14** with the owner's monthly leaderboard (§6.3, AR-36..AR-41) and X-Attack / X-Defense (§6.4, AR-42..AR-46). It is planned in [PLAN.md](PLAN.md); M1-M3 (AR-1..AR-41) are built on `feature/arena`, and M4 (AR-42..AR-46) is briefed.
 
 Labels: **[O]** is the owner's spec. **[R]** is a recommendation that fills a gap; the owner can
 override it.
@@ -229,11 +228,25 @@ What a run pays under this schedule (repeat tickets only; first-clear bonus copi
   It lists only players with a profile in this server. *(Owner-delegated ruling 2026-11-14.)* Players a moderator has **excluded** are left out of the ranking for both the screen and the payout, so the next player moves up. Paused players stay ranked, because a pause is temporary and they can still play. A player who deleted their data, or whom a moderator reset, is gone from it (both delete the profile, and the monthly score rows cascade). The leaderboard stays visible and settlement still runs while the Arena is turned off (AR-35a), because finished months are already earned. The settled-month rows belong to the server, not to a profile, so they stay. They are the one exception to §10's rule that new tables reference profiles, and they are removed only when the server's data is removed (`guilds` cascade).
 - **AR-41 [R] Not included.** No public announcement post. No all-time or cross-server board. No rewards below 3rd place. Players can't hide from the board: it shows only profiles in that server. A player who left the server keeps their profile (there is no leave handler), so they stay ranked and can still win. Their reward waits in their inbox. These stay out unless the owner asks.
 
+## 6.4 X-Attack and X-Defense (owner request 2026-11-14)
+
+- **AR-42 [O, owner ruling 2026-11-14] The items.** Two new Arena items: **X-Attack** doubles the attack of every party member, and **X-Defense** doubles their defense. Each lasts **3 fights**, which is one floor. They apply to the whole party.
+- **AR-43 [O, owner ruling 2026-11-14] Buying.** Both are bought with Stardust in the Arena: on the Arena home (before a run) and on the break screen (between fights). The price is *[R]* **300 Stardust each**, one per press. Prices live in `arena.json`. A purchase that the player can't afford, or that doesn't fit the bag, spends nothing and says why. Bought items go to the bag and keep until used.
+- **AR-44 [O, owner ruling 2026-11-14] Using.** The player chooses to use a held item **during any break**, including the break before a run's first fight. *[R]* Using one starts its effect at 3 fights left. While one kind is active, another of the same kind can't be used (the button shows "n fights left"). X-Attack and X-Defense can both be active at once, which gives ×2 attack and ×2 defense together. Each fought fight lowers both counters by one, whatever the outcome; this includes fights inside Fight until hurt. An effect ends when its counter reaches 0 or the run ends. Leftover fights are lost and nothing is refunded. Using an item bumps the run revision in the same transaction, like a heal (AR-4a).
+- **AR-45 [R] Scope.** The doubling exists only in Arena fights. It changes the combatants given to `battle.simulate`, so there is no engine change. Gyms, raids and every other battle are unaffected, and the items have no other use. Stored snapshots stay unboosted, and the boost is applied when a fight starts. They are sold only on Arena screens. Turning the Arena off (AR-35a) blocks only starting a run, so items can still be bought, and used in a live run.
+- **AR-46 [R] Why 300.** A 60-run simulation on each team (scratch, `arena_sim_x.py`) used one item on every floor:
+  - Each item is worth about **0.25-0.4 extra floors**.
+  - X-Defense is slightly stronger than X-Attack (+12 vs +10 floors for a maxed team from floor 1 with 30 berries).
+  - Both items on every floor after a 40-floor skip with 100 berries took a maxed team from floor 92 to 146, using about 214 items (64,200 Stardust at 300 each).
+  - At Gold and Diamond depth a floor is worth roughly 250-640 Stardust-equivalent in tickets, so 300 is about break-even when used on every floor. Players save the items for bosses and hard floors.
+  - The items make Stardust a second way to push deeper, besides berries. A casual player (~600 Stardust a day) might buy one or two for a boss. An hourly checker (3,000-4,500 a day) can afford about 10-15 a day. One typical run's own flat Stardust (400-1,800) pays for 1-6.
+
 ## 7. Out of scope (not asked; name them so they don't creep in)
 
 - Server announcements, all-time or cross-server leaderboards, or showing someone else's best floor outside the monthly leaderboard (AR-36..AR-41).
 - Catching Arena enemies, or fight rewards other than Arena Tickets and knockout Candy (AR-14a). The monthly leaderboard's inbox rewards (AR-38) are the one exception.
-- New moves or battle mechanics. The Arena reuses the gym engine and rules as they are.
+- New moves or battle mechanics beyond the X-Attack / X-Defense stat doubling (AR-42..AR-46).
+- The Arena otherwise reuses the gym engine and rules as they are.
 - Spending tickets on anything other than their fixed contents, or trading tickets.
 
 ## 8. Simulation evidence (scratch only, not committed)
@@ -286,6 +299,7 @@ Added later (floor skip and Fight until hurt):
 | AR-10b, AR-10d | `profiles` gains a stop-threshold column (default 50) and an auto-order flag (default off); arena break screen | two columns, one select, one toggle |
 | AR-35-35a | `bot/admin_channels.py` (new `arena` subcommand, copied from `gyms legendary`); new migration adding `guilds.arena_enabled`; arena service start check | small: one column, one command, one check |
 | AR-36-41 | new migration 0027 (monthly score rows with profile cascade; settled-month rows, guild cascade; paid-place rows, profile cascade); `services/arena.py` boss-win write and `settle`; `content/balance/arena.json` leaderboard numbers; `bot/walker.py` home, `bot/arena.py` screen, `bot/milestones.py` inbox open; inbox key `arena_month:<YYYY-MM>:<place>` | medium: one table pair, one write, one lazy payout, one screen |
+| AR-42-46 | `arena.json` prices and duration; new `x_attack`/`x_defense` item ids (inventory, `capacities`/`conversion_rates` as their tests require); `arena_runs` active-effect counters (new migration); `services/arena.py` buy/use and the fight path multiplying attack/defense; `bot/arena.py` buttons on home and break | medium: two items, one counter pair, a buy and a use path |
 | AR-9-11b, AR-14 | `domain/battle.py:simulate`, `Combatant`, `Result`, `combat_stats`; `content/balance/battle.json` | compatible C7 change: `Combatant.hp` = starting HP, `Result.party_hp` and `Result.finisher` added (AR-11b) |
 | AR-12-13 | `inventory` table (`razz_berry`, `pinap_berry`) | new spend path in the arena service |
 | AR-14a | `candy` table (same upsert as companion candy in `services/stepping.py`), `resource_ledger` reason `arena_candy`; special list from `arena.json` (AR-20) decides boss-only Candy; team picker warning in `bot/arena.py` | reuse the existing candy write |
