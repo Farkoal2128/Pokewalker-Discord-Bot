@@ -17,7 +17,7 @@ from pokewalker.services import arena as service, profiles, storage
 OFF = 'The Arena is turned off in this server.'
 CHANGED = 'A Pokémon changed. Pick your team again.'
 FIGHTS = ('entry', 'middle', 'boss')
-BERRIES = ('razz_berry', 'pinap_berry')
+BERRIES = ('razz_berry', 'pinap_berry', 'golden_razz_berry', 'silver_pinap_berry')
 HEALS = ('arena_heal_one', 'arena_heal_two', 'arena_heal_three')
 X_ITEMS = ('x_attack', 'x_defense')
 BUY_X = {f'arena_buy_{item}': item for item in X_ITEMS}
@@ -139,7 +139,7 @@ def render_team(state):
     if state.get('notice'):
         lines.append(state['notice'])
     view = gyms.buttons(state, [('Prev', 'arena_team_prev'), ('Next', 'arena_team_next'),
-                               (gyms.sort_label(selection['favorites_first']), 'arena_team_sort'), ('Back', 'arena')])
+                               (storage.sort_label(storage.sort_of(selection)), 'arena_team_sort'), ('Back', 'arena')])
     view.children[0].disabled = selection['offset'] == 0
     view.children[1].disabled = selection['offset'] + 10 >= state['total']
     options = []
@@ -236,7 +236,8 @@ def render_break(state):
                  else f"Buy {x_name(item)} · {state['x_rules']['items'][item]['stardust']}")
         view.add_item(discord.ui.Button(label=label, custom_id=custom_id(state, action), row=1, disabled=left > 0))
     view.add_item(discord.ui.Select(placeholder='Healing berry', custom_id=custom_id(state, 'arena_berry'), row=2,
-                                   options=[discord.SelectOption(label=f"{berry.replace('_', ' ').title()} ×{state['stock'].get(berry, 0)}",
+                                   options=[discord.SelectOption(label=f"{berry.replace('_', ' ').title()} ×{state['stock'].get(berry, 0)}"
+                                                                       + (' · heals party' if service.heals_party(berry) else ''),
                                                                  value=berry, default=state['berry'] == berry) for berry in BERRIES]))
     view.add_item(discord.ui.Select(placeholder='Party order', custom_id=custom_id(state, 'arena_order'), row=3,
                                    options=[discord.SelectOption(label=' → '.join(f"{i + 1}. {run['team'][i]['snapshot']['combatant']['name']}"
@@ -314,12 +315,11 @@ def handlers(walker):
                 'special': domain.is_special(item['identity'], rules)}
 
     async def team_state(conn, session, selection, best_floor, notice=None):
-        rows, total = await storage.page(conn, session['profile_id'], selection['offset'],
-                                         favorites_first=selection['favorites_first'])
+        sorted_by = {'sort': storage.sort_of(selection), 'content': walker.bot.content, 'multipliers': walker.multipliers}
+        rows, total = await storage.page(conn, session['profile_id'], selection['offset'], **sorted_by)
         if selection['offset'] and not rows:
             selection['offset'] = max(0, (total - 1) // 10 * 10)
-            rows, total = await storage.page(conn, session['profile_id'], selection['offset'],
-                                             favorites_first=selection['favorites_first'])
+            rows, total = await storage.page(conn, session['profile_id'], selection['offset'], **sorted_by)
         members = []
         for uid, revision in selection['team']:
             pokemon = await storage.detail(conn, session['profile_id'], uid)
@@ -332,12 +332,12 @@ def handlers(walker):
                 'skip_tickets': domain.skip_tickets(selection.get('skip', 0), rules)}
 
     async def open_break(conn, session, run, current, result=None, notice=None, fights=None):
-        async with conn.execute('SELECT item_id,quantity FROM inventory WHERE profile_id=? AND item_id IN (?,?)',
+        async with conn.execute(f"SELECT item_id,quantity FROM inventory WHERE profile_id=? AND item_id IN ({','.join('?' * len(BERRIES))})",
                                 (session['profile_id'], *BERRIES)) as cursor:
             stock = {row['item_id']: row['quantity'] for row in await cursor.fetchall()}
         berry = json.loads(session['selection']).get('berry')
         if berry not in BERRIES:
-            berry = max(BERRIES, key=lambda item: stock.get(item, 0))
+            berry = max(BERRIES[:2], key=lambda item: stock.get(item, 0))  # never default to a rare berry
         live = run['ended_at'] is None
         session['selection'] = json.dumps({'phase': 'arena_break' if live else 'arena_defeat',
                                             'run_id': run['run_id'], 'run_revision': run['revision'], 'berry': berry})
@@ -394,7 +394,11 @@ def handlers(walker):
                       'missing': f'You have no {name}.'}[status]
         elif status == 'missing':
             name = berry.replace('_', ' ').title()
-            notice = f'You need {result["short"]} more {name}. Nothing was spent.' if action == 'arena_heal_fight' else f'You have no {name}.'
+            notice = (f'You have no {name}. Nothing was spent.' if service.heals_party(berry) and action == 'arena_heal_fight'
+                      else f'You need {result["short"]} more {name}. Nothing was spent.' if action == 'arena_heal_fight'
+                      else f'You have no {name}.')
+        elif status == 'healed' and service.heals_party(berry):
+            notice = f"{berry.replace('_', ' ').title()} healed the whole party."
         elif status not in ('won', 'defeated', 'healed', 'ordered', 'full', 'selected', 'set'):
             raise _Refused(EXCLUDED if status == 'excluded' else REOPEN)
         current = await service.state(conn, session, now)
@@ -496,7 +500,7 @@ def handlers(walker):
                                 'until': flags.paused_until.isoformat() if flags.paused_until else None})
         selection = json.loads(session['selection'])
         if action == 'arena_team':
-            selection = {'phase': 'arena_team', 'team': [], 'offset': 0, 'favorites_first': False, 'skip': 0}
+            selection = {'phase': 'arena_team', 'team': [], 'offset': 0, 'sort': 'newest', 'skip': 0}
         elif selection.get('phase') != 'arena_team':
             raise _Refused(REOPEN)
         selection.setdefault('skip', 0)
@@ -510,7 +514,9 @@ def handlers(walker):
             selection['offset'] = max(0, min(selection['offset'] + (10 if action == 'arena_team_next' else -10),
                                              max(0, (total - 1) // 10 * 10)))
         if action == 'arena_team_sort':
-            selection.update(favorites_first=not selection['favorites_first'], offset=0)
+            sort = storage.next_sort(storage.sort_of(selection))
+            selection.pop('favorites_first', None)
+            selection.update(sort=sort, offset=0)
         if action == 'arena_team_clear':
             selection['team'] = []
         state = await team_state(conn, session, selection, current['best_floor'])

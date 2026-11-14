@@ -12,6 +12,8 @@ from pokewalker.bot.milestones import _reward_name
 from pokewalker.domain.cp import appraisal
 from pokewalker.services import profiles, research as service, storage
 
+SORTS = ("newest", "cp")  # favorites cannot be sent, so the picker has no favorites order
+
 
 def _candy_text(candy, content):
     return ', '.join(f"+{candy[family]} {_reward_name({'resource': 'candy', 'resource_id': family}, content)}"
@@ -52,13 +54,18 @@ def handlers(walker):
     def notice(session, text):
         return screen(session, text, [("New review", "research", False, 0), ("Cancel", "research_cancel", False, 0)])
 
-    async def page(conn, session, interaction, *, delta=0, reset=False, toggle=None):
+    async def page(conn, session, interaction, *, delta=0, reset=False, toggle=None, resort=False):
         if session["profile_id"] is None:
             raise _Refused(REOPEN)
         previous = json.loads(session["selection"])
         selection = {"picks": [], "offset": 0} if reset else previous
+        sort = storage.sort_of(selection)
+        sort = sort if sort in SORTS else "newest"
+        if resort:
+            sort, selection["offset"] = storage.next_sort(sort, SORTS), 0
         offset = max(0, selection.get("offset", 0) + delta)
-        rows, total = await service.candidates(conn, session["profile_id"], walker.bot.content, offset, walker.clock())
+        rows, total = await service.candidates(conn, session["profile_id"], walker.bot.content, offset, walker.clock(),
+                                               sort, walker.multipliers)
         picks = dict(selection.get("picks", []))
         if toggle is not None:
             binding = selection.get("toggles", {}).get(toggle)
@@ -77,7 +84,7 @@ def handlers(walker):
                 del picks[uid]
             elif len(picks) < 20:
                 picks[uid] = revision
-        save(session, {"offset": offset, "picks": list(picks.items()),
+        save(session, {"offset": offset, "picks": list(picks.items()), **({"sort": sort} if sort != "newest" else {}),
                        "toggles": {letter: [item["pokemon"]["pokemon_uid"], item["pokemon"]["revision"]]
                                    for letter, item in zip("abcde", rows)}})
         text, buttons = [f"5 per page · {len(picks)}/20 selected · {total} owned"], []
@@ -90,6 +97,7 @@ def handlers(walker):
             buttons.append((f"{'✓ ' if selected else ''}{identity['name_en']}", "research_toggle_" + letter,
                             item["reason"] is not None or len(picks) >= 20 and not selected, 0))
         buttons += [("Prev", "research_prev", offset == 0, 1), ("Next", "research_page", offset + 5 >= total, 1),
+                    (storage.sort_label(sort, SORTS), "research_sort", False, 1),
                     ("Review", "research_review", not picks, 1), ("Cancel", "research_cancel", False, 1)]
         return screen(session, "\n".join(text), buttons)
 
@@ -198,7 +206,7 @@ def handlers(walker):
         return await page(conn, session, interaction, reset=True)
 
     return {"catch_send": catch_send, "research": research, "research_page": partial(page, delta=5),
-            "research_prev": partial(page, delta=-5), "research_review": review, "research_confirm": confirm,
+            "research_prev": partial(page, delta=-5), "research_sort": partial(page, resort=True), "research_review": review, "research_confirm": confirm,
             "research_cancel": cancel, "storage_send": single, "storage_send_unlock": unlock,
             "storage_send_confirm": confirm, **{"research_toggle_" + letter: partial(page, toggle=letter)
                                               for letter in "abcde"}}

@@ -32,15 +32,47 @@ async def owned_count(conn, profile_id):
         return (await cursor.fetchone())[0]
 
 
-async def page(conn, profile_id, offset, favorite_only=False, favorites_first=False):
+SORTS = ("newest", "favorites", "cp")
+SORT_LABELS = {"newest": "Newest first", "favorites": "Favorites first", "cp": "Highest CP"}
+
+
+def sort_of(selection):
+    """The picker order saved in a screen selection; a pre-CP selection used favorites_first."""
+    sort = selection.get("sort")
+    if sort in SORTS:
+        return sort
+    return "favorites" if selection.get("favorites_first") else "newest"
+
+
+def next_sort(sort, choices=SORTS):
+    return choices[(choices.index(sort) + 1) % len(choices)] if sort in choices else choices[0]
+
+
+def sort_label(sort, choices=SORTS):
+    """A sort button names the order a press switches to."""
+    return SORT_LABELS[next_sort(sort, choices)]
+
+
+async def ordered(conn, where, args, offset, limit, sort="newest", content=None, multipliers=None):
+    """One page of pokemon rows matching where: newest first, favorites then newest, or highest CP
+    then newest. CP is computed, not stored, so the CP order ranks every matching row in Python."""
+    newest = "caught_at DESC,pokemon_uid"
+    if sort != "cp":
+        order = ("favorite DESC," if sort == "favorites" else "") + newest
+        async with conn.execute(f"SELECT * FROM pokemon WHERE {where} ORDER BY {order} "
+                                f"LIMIT {int(limit)} OFFSET {int(offset)}", args) as cursor:
+            return [dict(row) for row in await cursor.fetchall()]
+    async with conn.execute(f"SELECT * FROM pokemon WHERE {where} ORDER BY {newest}", args) as cursor:
+        rows = [dict(row) for row in await cursor.fetchall()]
+    rows.sort(key=lambda row: -stats(content, row, multipliers)["cp"])  # stable: ties stay newest first
+    return rows[int(offset):int(offset) + int(limit)]
+
+
+async def page(conn, profile_id, offset, favorite_only=False, *, sort="newest", content=None, multipliers=None):
     where = "profile_id=? AND state='owned'" + (" AND favorite=1" if favorite_only else "")
-    order = ("favorite DESC," if favorites_first else "") + "caught_at DESC,pokemon_uid"
     async with conn.execute(f"SELECT COUNT(*) FROM pokemon WHERE {where}", (profile_id,)) as cursor:
         total = (await cursor.fetchone())[0]
-    async with conn.execute(f"SELECT * FROM pokemon WHERE {where} "
-                            f"ORDER BY {order} LIMIT 10 OFFSET ?",
-                            (profile_id, offset)) as cursor:
-        return [dict(row) for row in await cursor.fetchall()], total
+    return await ordered(conn, where, (profile_id,), offset, 10, sort, content, multipliers), total
 
 
 async def detail(conn, profile_id, uid):

@@ -1,7 +1,7 @@
 {
-  "source": "docs/features/arena/REQUIREMENTS.md sections 5-6, AR-14a and AR-34 (owner approval 2026-11-13); section 6.3 (owner ruling 2026-11-14); section 6.4 (owner ruling 2026-11-14); Ultra Beast Sub-Legendary list: https://www.serebii.net/pokemon/ultrabeasts.shtml; Paradox past/future lists: https://www.serebii.net/scarletviolet/paradoxpokemon.shtml",
-  "checked": "2026-11-13",
-  "version": 3,
+  "source": "docs/features/arena/REQUIREMENTS.md sections 5-6, AR-14a and AR-34 (owner approval 2026-11-13); section 6.3 (owner ruling 2026-11-14); section 6.4 (owner ruling 2026-11-14); Ultra Beast Sub-Legendary list: https://www.serebii.net/pokemon/ultrabeasts.shtml; Paradox past/future lists: https://www.serebii.net/scarletviolet/paradoxpokemon.shtml; AR-12a party heal (owner ruling 2026-11-14)",
+  "checked": "2026-11-14",
+  "version": 4,
   "rules": {
     "run_seconds": 64800,
     "cooldown_seconds": 64800,
@@ -9,6 +9,10 @@
     "heal_items": [
       "razz_berry",
       "pinap_berry"
+    ],
+    "party_heal_items": [
+      "golden_razz_berry",
+      "silver_pinap_berry"
     ],
     "level_cap": 40,
     "iv_ranges": {

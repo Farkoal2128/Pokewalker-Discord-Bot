@@ -565,13 +565,45 @@ class ArenaTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.heal(run, [0, 1, 2], 'pinap_berry'), {'status': 'missing', 'short': 3})
         self.assertEqual(await self.snapshot(), before)
 
-    async def test_golden_razz_refused(self):
+    async def test_non_berry_heal_refused(self):
         run = await self.hurt((await self.start())['run'])
-        for berry in ('golden_razz_berry', 'silver_pinap_berry', 'poke_ball'):
-            await self.inventory(berry, 5)
+        for item in ('poke_ball', 'rare_candy'):
+            await self.inventory(item, 5)
             before = await self.snapshot()
-            self.assertEqual(await self.heal(run, [0], berry), {'status': 'invalid'})
+            self.assertEqual(await self.heal(run, [0], item), {'status': 'invalid'})
             self.assertEqual(await self.snapshot(), before)
+
+    async def test_rare_berry_heals_whole_party_for_one(self):
+        run = await self.hurt((await self.start())['run'])
+        await self.inventory('golden_razz_berry', 2)
+        result = await self.heal(run, [1], 'golden_razz_berry')
+        self.assertEqual(result['status'], 'healed')
+        self.assertTrue(all(m['hp'] == m['full_hp'] for m in result['run']['team']))
+        self.assertEqual(await self.scalar("SELECT quantity FROM inventory WHERE item_id='golden_razz_berry'"), 1)
+        self.assertEqual(await self.rows('SELECT resource_id,delta,reason FROM resource_ledger'),
+                         [{'resource_id': 'golden_razz_berry', 'delta': -1, 'reason': 'arena_heal'}])
+
+    async def test_rare_berry_heals_party_even_from_a_full_member_and_refuses_full_party(self):
+        run = (await self.start())['run']
+        await self.inventory('silver_pinap_berry', 1)
+        before = await self.snapshot()
+        self.assertEqual(await self.heal(run, [0], 'silver_pinap_berry'), {'status': 'full'})
+        self.assertEqual(await self.snapshot(), before)
+        run['team'][2]['hp'] = 1
+        await self.conn.execute('UPDATE arena_runs SET team=? WHERE run_id=?', (json.dumps(run['team']), run['run_id']))
+        healed = await self.heal(run, [0], 'silver_pinap_berry')
+        self.assertEqual(healed['status'], 'healed')
+        self.assertEqual(healed['run']['team'][2]['hp'], healed['run']['team'][2]['full_hp'])
+        self.assertEqual(await self.heal(await self.hurt(healed['run']), [0], 'silver_pinap_berry'),
+                         {'status': 'missing', 'short': 1})
+
+    async def test_heal_all_and_fight_with_rare_berry_spends_one(self):
+        run = await self.hurt(await self.at_fight())
+        await self.inventory('silver_pinap_berry', 1)
+        with patch.object(battle_engine, 'simulate', wraps=battle_engine.simulate) as simulate:
+            self.assertEqual((await self.fight(run, berry='silver_pinap_berry'))['status'], 'won')
+            self.assertEqual([m.hp for m in simulate.call_args.args[0]], [m['full_hp'] for m in run['team']])
+        self.assertEqual(await self.scalar("SELECT quantity FROM inventory WHERE item_id='silver_pinap_berry'"), 0)
 
     async def test_stale_revision_spends_nothing(self):
         run = await self.hurt((await self.start())['run'])
@@ -1367,7 +1399,7 @@ class ArenaTests(unittest.IsolatedAsyncioTestCase):
     async def test_full_party_heal_and_fight_skips_debit_and_stale_actions_refused(self):
         run = await self.at_fight()
         before = await self.snapshot()
-        self.assertEqual(await self.fight(run, berry='golden_razz_berry'), {'status': 'invalid'})
+        self.assertEqual(await self.fight(run, berry='poke_ball'), {'status': 'invalid'})
         self.assertEqual(await self.snapshot(), before)
         self.assertEqual((await self.fight(run, berry='razz_berry'))['status'], 'won')
         self.assertEqual(await self.scalar("SELECT count(*) FROM action_receipts WHERE action='arena_heal'"), 0)

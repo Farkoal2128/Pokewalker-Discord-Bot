@@ -402,7 +402,8 @@ so 10 means 1.0x; boss BST caps use `cap * pct // 100`.
 |---|---|
 | `run_seconds`, `cooldown_seconds` | 64800 each (18 hours) |
 | `team_size`, `level_cap` | 3 members, level 40 |
-| `heal_items` | `["razz_berry", "pinap_berry"]` |
+| `heal_items` | `["razz_berry", "pinap_berry"]` (one berry heals one member) |
+| `party_heal_items` | `["golden_razz_berry", "silver_pinap_berry"]` (one berry heals every hurt member; AR-12a, owner ruling 2026-11-14, version 4, checked 2026-11-14) |
 | `iv_ranges` | `entry: [0,5]`, `middle: [5,10]`, `boss: [10,15]` |
 | `late` | `after_floor: 40`, `step_floors: 5`, `iv_steps_max: 15`, `hp_step_x10: 1`, `hp_cap_x10: 20`, `uncapped_after_floor: 115`, `uncapped_step_x10: 1` |
 | `bst` | `base: 300`, `span: 420`, `span_floors: 31`, `full: 720`, `full_floor: 32`, `boss_pct: 115`, `decade_boss_pct: 150` |

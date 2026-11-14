@@ -492,6 +492,17 @@ measurement (independent of each other), then the economy simulation, which uses
 imported tier sizes and the measured chat rates ([synthesis §4](../../research/synthesis.md#4-gaps-further-research-and-work-recommended),
 items 1–3). Application work follows them.
 
+### Highest CP sort (D65, owner request 2026-11-14)
+
+The owner requested: "implement a sort by highest CP in all places where you can access your
+pokemon storage? Like in the gym, the storage, arena, etc."
+
+- **D65: Highest CP sort.** Storage, the gym defender and attacker pickers and the Arena team
+  picker cycle one sort button through Newest first, Favorites first and Highest CP. The trade
+  offer and research pickers switch between Newest first and Highest CP, since favorites can't
+  be traded or sent. Highest CP puts the strongest Pokémon first; ties keep newest first. The
+  chosen order survives paging, picking and Back.
+
 ## Platform constraints
 
 - Reading message text needs the privileged Message Content intent. Discord reviews

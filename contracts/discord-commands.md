@@ -963,6 +963,30 @@ Storage `page` gains `favorites_first` (ORDER BY favorite DESC first). Eligibili
 page-membership checks are unchanged. Tests: tests/test_gym_screens.py,
 tests/test_gym_battle.py.
 
+## C5: D65 Highest CP sort in every Pokémon picker
+Supersedes the two-way toggle above and the Arena `arena_team_sort` wording. Each picker
+that lists the player's Pokémon has one sort button whose label names the order a press
+switches to; a press re-pages from page 1 and keeps picks.
+- Storage (`storage_sort`, row 0 before Back), gym deploy (`gym_deploy_sort`), gym party
+  (`gym_party_sort`) and Arena team (`arena_team_sort`) cycle Newest first → Favorites
+  first → Highest CP → Newest first. Labels read "Favorites first", "Highest CP" and
+  "Newest first" in that cycle.
+- Trade offer (`trade_sort`, row 1 before Back) and research (`research_sort`, row 1 after
+  Next) cycle Newest first ↔ Highest CP, because favorites cannot be traded or sent.
+- Highest CP orders by the displayed CP, highest first; equal CP keeps newest first
+  (descending catch time, then UID). CP is computed from content, so that order ranks every
+  matching row in Python before taking the page; other orders stay in SQL.
+- The order lives in the screen selection as `sort` (`newest`, `favorites` or `cp`) and
+  survives paging, picking, opening a Pokémon and Back. Storage, trade and research omit
+  the key for newest; gym and Arena write it. A selection saved before D65 with
+  `favorites_first: true` reads as `favorites`. The gym deploy page line adds
+  " · favorites first" or " · highest CP". Page-membership checks for pick/open/offer use
+  the same order, and eligibility rules are unchanged. Services: `storage.ordered`,
+  `storage.page(sort=, content=, multipliers=)`, `trading.eligible_page(..., sort, content,
+  multipliers)`, `research.candidates(..., sort, multipliers)`. Tests: tests/test_storage.py,
+  tests/test_gym_screens.py, tests/test_gym_battle.py, tests/test_arena_screens.py,
+  tests/test_trade_screens.py, tests/test_research.py.
+
 ## C5: D64 Shiny Charm in Bag
 Only a player who owns the charm sees the Bag line "Shiny Charm: On · 4× shiny odds on every
 encounter" (or "Shiny Charm: Off") and a **Turn Shiny Charm off|on** button
@@ -1531,13 +1555,13 @@ AR-3a, AR-4a, AR-10a, AR-10c, AR-11a and AR-12..AR-15 extend the
 unregistered Arena handler map; services remain authoritative for all writes.
 Row 0 is Fight (arena_fight), Heal all & fight (arena_heal_fight), Back out
 (arena). Row 1 has Heal <name> in party order (arena_heal_one/two/three),
-disabled at full HP. Row 2 is arena_berry, with Razz Berry and Pinap Berry
-stock counts. Row 3 is arena_order, six permutations labelled with party
+disabled at full HP. Row 2 is arena_berry, with Razz Berry, Pinap Berry, Golden Razz Berry and Silver
+Pinap Berry stock counts; the two rare berries add " · heals party" (AR-12a). Row 3 is arena_order, six permutations labelled with party
 positions/names and the current order defaulted. Row 4 remains unused and
 row 0 retains capacity for Phase 2.
 
 Every break redraw saves run_id, run_revision and berry. Initial berry is the
-larger stock, Razz on a tie; a saved choice survives stock changes, actions
+larger stock of Razz and Pinap (never a rare berry), Razz on a tie; a saved choice survives stock changes, actions
 and backing out/resuming and changes only through a valid arena_berry choice.
 Mutation actions pass the saved run ID/revision to heal, set_order, fight or
 heal_all_and_fight. The local berry selection uses the same current-state
@@ -1547,7 +1571,10 @@ current state." Invalid berry/order selections use the existing refusal path.
 
 A single heal spends the selected berry through service.heal; missing says
 "You have no <berry>." Full HP just redraws. Heal all & fight uses its atomic
-service; missing says "You need n more <berry>. Nothing was spent." Party
+service; missing says "You need n more <berry>. Nothing was spent." With a rare
+berry, any Heal button or Heal all & fight spends one berry for the whole party;
+a heal says "<berry> healed the whole party." and Heal all & fight without one
+says "You have no <berry>. Nothing was spent." Party
 order uses service.set_order and redraws in that order without resource cost.
 After a win, a result block precedes the next enemy: fought enemy name/CP,
 outcome/ticks, each member's final fight HP, revived-at-1 names and Candy.

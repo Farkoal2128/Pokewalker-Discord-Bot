@@ -85,11 +85,13 @@ class BalanceTableTests(unittest.TestCase):
         self.assertIn("owner ruling 2026-11-14", table["source"])
         self.assertIn("https://www.serebii.net/pokemon/ultrabeasts.shtml", table["source"])
         self.assertIn("https://www.serebii.net/scarletviolet/paradoxpokemon.shtml", table["source"])
-        self.assertEqual(table["checked"], "2026-11-13")
-        self.assertEqual(table["version"], 3)
+        self.assertIn("AR-12a party heal (owner ruling 2026-11-14)", table["source"])
+        self.assertEqual(table["checked"], "2026-11-14")
+        self.assertEqual(table["version"], 4)
         self.assertEqual(table["rules"], {
             "run_seconds": 64800, "cooldown_seconds": 64800, "team_size": 3,
-            "heal_items": ["razz_berry", "pinap_berry"], "level_cap": 40,
+            "heal_items": ["razz_berry", "pinap_berry"],
+            "party_heal_items": ["golden_razz_berry", "silver_pinap_berry"], "level_cap": 40,
             "iv_ranges": {"entry": [0, 5], "middle": [5, 10], "boss": [10, 15]},
             "late": {"after_floor": 40, "step_floors": 5, "iv_steps_max": 15,
                      "hp_step_x10": 1, "hp_cap_x10": 20, "uncapped_after_floor": 115,
@@ -423,7 +425,7 @@ class BalanceTableTests(unittest.TestCase):
                 date.fromisoformat(table["checked"])
                 versions = {"find_table": 2, "conversion_rates": 4, "capacities": 3, "routes": 2,
                             "survivor_table": 3, "catch": 4, "gym_income_table": 2, "checkin_table": 2,
-                            "battle": 2, "arena": 3}
+                            "battle": 2, "arena": 4}
                 self.assertEqual(table["version"], versions.get(name, 1))
                 amended = {"survivor_table", "conversion_rates", "gym_income_table", "checkin_table"}
                 if name == "catch":
@@ -437,7 +439,7 @@ class BalanceTableTests(unittest.TestCase):
                     self.assertEqual(table["checked"], "2026-11-12")
                     self.assertIn("D62 (owner decision 2026-11-12)", table["source"])
                 elif name == "arena":
-                    self.assertEqual(table["checked"], "2026-11-13")
+                    self.assertEqual(table["checked"], "2026-11-14")
                 elif name in versions.keys() | {"evolution"}:
                     self.assertEqual(table["checked"], "2026-11-05")
         root = Path(__file__).parents[1] / "content" / "balance"

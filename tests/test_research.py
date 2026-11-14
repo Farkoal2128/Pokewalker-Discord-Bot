@@ -315,6 +315,30 @@ class ResearchTests(unittest.IsolatedAsyncioTestCase):
         _, session = await self.act(session, "storage_send_confirm")
         self.assertEqual((await self.rows("SELECT state FROM pokemon WHERE pokemon_uid='p-001'"))[0]["state"], "sent")
 
+    async def test_sort_highest_cp_orders_toggles_and_keeps_picks(self):
+        session = await self.setup_research(8)
+        await self.writer.run(lambda conn: conn.execute(
+            "UPDATE pokemon SET level_x2=CASE pokemon_uid WHEN 'p-002' THEN 80 ELSE 10 END"))
+        rendered, session = await self.act(session, "research")
+        self.assertIn("Highest CP", self.buttons(rendered))
+        _, session = await self.act(session, "research_toggle_a")
+        first_pick = json.loads(session["selection"])["picks"][0][0]
+        rendered, session = await self.act(session, "research_sort")
+        saved = json.loads(session["selection"])
+        self.assertEqual(saved["sort"], "cp")
+        self.assertEqual(saved["offset"], 0)
+        self.assertEqual(saved["toggles"]["a"][0], "p-002")
+        self.assertEqual([pick[0] for pick in saved["picks"]], [first_pick])
+        self.assertIn("Newest first", self.buttons(rendered))
+        _, session = await self.act(session, "research_page")
+        self.assertEqual(json.loads(session["selection"])["sort"], "cp")
+        _, session = await self.act(session, "research_prev")
+        _, session = await self.act(session, "research_toggle_a")
+        self.assertIn("p-002", [pick[0] for pick in json.loads(session["selection"])["picks"]])
+        rendered, session = await self.act(session, "research_sort")
+        self.assertNotIn("sort", json.loads(session["selection"]))
+        self.assertIn("Highest CP", self.buttons(rendered))
+
     async def test_page_size_5_and_batch_cap_20(self):
         session = await self.setup_research(26)
         for page in range(5):

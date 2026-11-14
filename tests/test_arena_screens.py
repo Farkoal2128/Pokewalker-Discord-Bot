@@ -393,7 +393,7 @@ class ArenaScreenTests(unittest.IsolatedAsyncioTestCase):
                                     (f'new{index:02}', self.pid, index + 1))
         await self.conn.execute("UPDATE pokemon SET favorite=1 WHERE pokemon_uid='m0'")
         first = await self.click('arena_team')
-        self.assertEqual(self.selection(), {'phase': 'arena_team', 'team': [], 'offset': 0, 'favorites_first': False, 'skip': 0})
+        self.assertEqual(self.selection(), {'phase': 'arena_team', 'team': [], 'offset': 0, 'sort': 'newest', 'skip': 0})
         self.assertEqual(self.button(first, 'arena_team_sort').label, 'Favorites first')
         select = next(item for item in first['view'].children if hasattr(item, 'options'))
         self.assertEqual(select.options[0].value, 'new10')
@@ -406,8 +406,25 @@ class ArenaScreenTests(unittest.IsolatedAsyncioTestCase):
         sorted_view = await self.click('arena_team_sort')
         select = next(item for item in sorted_view['view'].children if hasattr(item, 'options'))
         self.assertEqual(select.options[0].value, 'm0')
-        self.assertEqual(self.button(sorted_view, 'arena_team_sort').label, 'Newest first')
+        self.assertEqual(self.button(sorted_view, 'arena_team_sort').label, 'Highest CP')
         self.assertEqual(self.selection()['offset'], 0)
+
+    async def test_team_picker_sorts_highest_cp(self):
+        for index in range(11):
+            await self.conn.execute('INSERT INTO pokemon(pokemon_uid,profile_id,pokemon_id,level_x2,iv_attack,'
+                                    'iv_defense,iv_stamina,gender,shiny,origin,content_version,caught_at) '
+                                    "VALUES (?,?,1,20,10,10,10,'male',0,'catch','test',?)",
+                                    (f'new{index:02}', self.pid, index + 1))
+        await self.conn.execute("UPDATE pokemon SET level_x2=80 WHERE pokemon_uid='new03'")
+        await self.click('arena_team')
+        await self.click('arena_team_sort')
+        shown = await self.click('arena_team_sort')
+        select = next(item for item in shown['view'].children if hasattr(item, 'options'))
+        self.assertEqual(select.options[0].value, 'new03')
+        self.assertEqual(self.button(shown, 'arena_team_sort').label, 'Newest first')
+        self.assertEqual(self.selection()['sort'], 'cp')
+        await self.click('arena_team_pick', ['new03'])
+        self.assertEqual([uid for uid, _ in self.selection()['team']], ['new03'])
 
     async def test_skip_select_hidden_at_best_floor_below_2(self):
         for best in (0, 1):
@@ -457,7 +474,7 @@ class ArenaScreenTests(unittest.IsolatedAsyncioTestCase):
         await self.click('arena_team_sort')
         self.assertEqual(self.selection()['skip'], 40)
         self.assertEqual(self.selection()['team'], before['team'])
-        self.assertTrue(self.selection()['favorites_first'])
+        self.assertEqual(self.selection()['sort'], 'favorites')
         self.assertIn('Skipping 1 floors pays now: nothing.', (await self.click('arena_skip', ['1']))['embed'].description)
 
     async def test_skip_value_out_of_range_or_malformed_refused(self):
@@ -749,7 +766,8 @@ class ArenaScreenTests(unittest.IsolatedAsyncioTestCase):
         rendered = await self.start_run()
         self.assertEqual(self.selection()['berry'], 'pinap_berry')
         self.assertEqual([option.label for option in self.button(rendered, 'arena_berry').options],
-                         ['Razz Berry ×2', 'Pinap Berry ×3'])
+                         ['Razz Berry ×2', 'Pinap Berry ×3', 'Golden Razz Berry ×0 · heals party',
+                          'Silver Pinap Berry ×0 · heals party'])
         await self.click('arena_berry', ['razz_berry'])
         await self.inventory('pinap_berry', 10)
         await self.click('arena')
@@ -757,7 +775,7 @@ class ArenaScreenTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.selection()['berry'], 'razz_berry')
         self.assertTrue(next(option for option in self.button(resumed, 'arena_berry').options
                              if option.value == 'razz_berry').default)
-        for values in (['golden_razz_berry'], [], ['razz_berry', 'pinap_berry']):
+        for values in (['poke_ball'], [], ['razz_berry', 'pinap_berry']):
             with self.assertRaises(_Refused):
                 await self.click('arena_berry', values)
 
@@ -791,6 +809,23 @@ class ArenaScreenTests(unittest.IsolatedAsyncioTestCase):
                          [{'item_id': 'pinap_berry', 'quantity': 1}, {'item_id': 'razz_berry', 'quantity': 1}])
         self.assertEqual([line['resource_id'] for line in await self.rows("SELECT resource_id FROM resource_ledger WHERE reason='arena_heal'")],
                          ['razz_berry', 'pinap_berry'])
+
+    async def test_rare_berry_heal_button_heals_whole_party(self):
+        await self.inventory('razz_berry', 3)
+        await self.inventory('golden_razz_berry', 1)
+        await self.start_run()
+        self.assertEqual(self.selection()['berry'], 'razz_berry')
+        await self.hurt_team()
+        await self.click('arena_berry', ['golden_razz_berry'])
+        healed = await self.click('arena_heal_one')
+        run = await self.run_state()
+        self.assertTrue(all(member['hp'] == member['full_hp'] for member in run['team']))
+        self.assertEqual(await self.scalar("SELECT quantity FROM inventory WHERE item_id='golden_razz_berry'"), 0)
+        self.assertEqual(await self.scalar("SELECT quantity FROM inventory WHERE item_id='razz_berry'"), 3)
+        self.assertIn('Golden Razz Berry healed the whole party.', healed['embed'].description)
+        await self.hurt_team()
+        missing = await self.click('arena_heal_fight')
+        self.assertIn('You have no Golden Razz Berry. Nothing was spent.', missing['embed'].description)
 
     async def test_heal_all_and_fight_reports_missing_count_spends_nothing(self):
         await self.inventory('razz_berry', 1)
