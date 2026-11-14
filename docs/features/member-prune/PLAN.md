@@ -84,7 +84,7 @@
 
 ### 3.3 Verification decision (Decide before dispatch)
 
-- **Conflicts:** one, resolved (review-1 #3). `test_cmd` repeats the unit suite through `scripts/verify.py` and runs the contract suite again; PIPELINE.md:28-30 states this duplication is by construction and the owner's `test_cmd` is authoritative. The row therefore runs focused checks only, and the full `test_cmd` runs exactly once at G-F, unchanged. No mandated command is omitted.
+- **Conflicts:** one, resolved (review-1 #3). the owner ruled on 2026-11-14 that `test_cmd` is `python scripts/guard.py && python scripts/verify.py` (PIPELINE.md:10), which runs the unit suite once through `verify.py`. The row therefore runs focused checks only, and the full `test_cmd` runs exactly once at G-F. No mandated command is omitted.
 - **MP-1, focused:**
   - A: `python -m unittest discover -s tests -p "test_admin_*.py"`. It runs the new prune tests and every existing `WalkerAdmin` command file (channels, force-raid, reset/sharing, trade-channels).
   - B: `python -m unittest discover -s tests -p "test_readme.py"` (help pins).
