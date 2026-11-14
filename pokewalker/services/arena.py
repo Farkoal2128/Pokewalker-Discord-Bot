@@ -10,7 +10,7 @@ from content.balance import limits, load_table
 from pokewalker.db import with_receipt
 from pokewalker.domain import arena as domain
 from pokewalker.domain import battle as battle_engine
-from pokewalker.services import gyms, profiles, stepping, storage
+from pokewalker.services import gyms, items, profiles, stepping, storage
 
 
 STOP_PCTS = range(10, 100, 10)
@@ -105,11 +105,16 @@ async def state(conn, session, now):
     async with conn.execute('SELECT tier,quantity FROM arena_tickets WHERE profile_id=?',
                             (profile['profile_id'],)) as cursor:
         tickets = {row['tier']: row['quantity'] for row in await cursor.fetchall()}
+    async with conn.execute('SELECT item_id,quantity FROM inventory WHERE profile_id=?',
+                            (profile['profile_id'],)) as cursor:
+        held = {row['item_id']: row['quantity'] for row in await cursor.fetchall()}
+    x_items = {item: held.get(item, 0) for item in rules['x_items']['items']}
     cooldown = max(0, math.ceil(run['started_at'] + rules['cooldown_seconds'] - now)) if run else 0
     return {'status': 'none' if run is None else 'live' if run['ended_at'] is None else 'ended',
             'run': run, 'cooldown_left': cooldown, 'enabled': enabled,
             'best_floor': profile['arena_best_floor'], 'tickets': tickets,
-            'stop_pct': profile['arena_stop_pct'], 'auto_order': bool(profile['arena_auto_order'])}
+            'stop_pct': profile['arena_stop_pct'], 'auto_order': bool(profile['arena_auto_order']),
+            'stardust': profile['stardust'], 'x_items': x_items}
 
 
 def _enemy_snapshot(rolled, content, multipliers):
@@ -230,6 +235,45 @@ async def set_auto_order(conn, session, run_id, revision, on, now):
     await conn.execute('UPDATE arena_runs SET revision=revision+1 WHERE run_id=?', (run_id,))
     run['revision'] += 1
     return {'status': 'set', 'run': run}
+
+
+async def buy_x(conn, session, item):
+    rule = load_table('arena')['rules']['x_items']['items'].get(item)
+    if rule is None:
+        return {'status': 'invalid'}
+    result = await items._buy(conn, session, item, rule['stardust'])
+    if 'status' in result:
+        return result
+    return {'status': 'bought', 'item': result['item'], 'stardust': result['stardust']}
+
+
+async def use_x(conn, session, run_id, revision, item, now):
+    current = await state(conn, session, now)
+    run, refusal = _live_run(current, run_id, revision)
+    if refusal:
+        return refusal
+    rules = load_table('arena')['rules']['x_items']
+    if item not in rules['items']:
+        return {'status': 'invalid'}
+    column = f'{item}_left'
+    if run[column] > 0:
+        return {'status': 'active', 'left': run[column]}
+    if current['x_items'][item] < 1:
+        return {'status': 'missing'}
+
+    async def compute(conn):
+        await conn.execute('UPDATE inventory SET quantity=quantity-1 WHERE profile_id=? AND item_id=?',
+                           (session['profile_id'], item))
+        await conn.execute(f'UPDATE arena_runs SET {column}=?,revision=revision+1 WHERE run_id=?',
+                           (rules['fights'], run_id))
+        run.update({column: rules['fights'], 'revision': run['revision'] + 1})
+        return {'status': 'used'}, [
+            {'profile_id': session['profile_id'], 'resource': 'item', 'resource_id': item,
+             'delta': -1, 'reason': 'arena_use'}]
+
+    result = await with_receipt(conn, f'arena_use:{run_id}:{revision}', 'arena_use', compute,
+                                profile_id=session['profile_id'])
+    return {**result, 'run': run} if result['status'] == 'used' else result
 
 
 async def heal(conn, session, run_id, revision, positions, berry, now):

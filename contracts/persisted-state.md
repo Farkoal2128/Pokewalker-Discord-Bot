@@ -1682,3 +1682,38 @@ Producers: services.arena and Walker.home; consumers: the later leaderboard and
 inbox screens, existing claim and deletion. Additive boundaries; older receipt
 and result shapes stay compatible. Tests: test_arena and test_arena_screens;
 regressions: test_walker_router, test_milestones and test_deletion.
+
+
+## Arena X items (0028)
+AR-43 through AR-45 add arena_runs.x_attack_left and x_defense_left, each
+INTEGER NOT NULL DEFAULT 0 CHECK(typeof(column)='integer' AND column>=0).
+Migration 0028 preserves existing rows with both counters zero. Older binaries
+refuse schema 28; rollback requires a pre-migration backup. New runs start at 0.
+No table or deletion boundary changes; effects belong to their run.
+
+services.arena.state adds stardust from the profile and x_items, mapping every
+rules.x_items.items id to its inventory quantity (0 when absent).
+buy_x(conn,session,item) returns invalid for an unknown id; otherwise it calls
+items._buy unchanged with the configured Stardust price. It uses the router's
+already-bumped session.revision in buy:<session_id>:<revision>, never
+_original_revision. Ownership refusals stale/excluded pass through; insufficient
+precedes bag_full and neither spends anything. Success returns exactly
+{status: bought, item, stardust}, with stardust the price paid. It requires no run,
+ignores Arena off, cooldown and pause, and never changes a run revision.
+
+use_x(conn,session,run_id,revision,item,now) calls state then _live_run, retaining
+lazy expiry and stale/excluded refusals. Unknown ids return invalid; an active
+same-kind counter returns {status: active, left}; no held item returns missing.
+Those refusals spend nothing. Paused members may use; excluded members may not.
+Success returns {status: used, run}: inside the caller-owned writer transaction,
+inventory decreases by 1, that counter becomes rules.x_items.fights and the run
+revision increases by 1. The other counter stays unchanged. Receipt
+arena_use:<run_id>:<revision>, action arena_use, carries profile_id; its ledger
+line is item / <item> / -1 / arena_use with the same profile_id. Buying retains
+the existing buy receipt and Stardust/item ledger lines. Fights ignore counters
+until ARENA-27.
+
+Producers: migration 0028, services.arena and items._buy; consumers: Arena
+state/screens and later fight countdowns. Additive service/state boundaries;
+existing snapshots and receipt formats stay unchanged. Tests: test_arena_schema
+and test_arena; regressions cover screens/admin, receipt ownership and deletion.
