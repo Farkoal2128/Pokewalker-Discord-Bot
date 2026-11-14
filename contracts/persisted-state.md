@@ -1406,3 +1406,22 @@ The block lifts at run_seconds or when ended_at is set, without a run-state writ
 Pending catches cannot be Arena members: send_pending, send_pending_reviewed and
 auto_send retain their existing behavior. No schema change. Tests: test_research,
 test_storage and test_trading.
+
+
+## Arena trade protection (ARENA-7, AR-7a)
+tradable_reason(identity,pokemon,profile,arena_team=frozenset()) includes in_arena
+from research.protected_reason ahead of deployed/favorite/companion for an owned
+Pokemon on that profile's live Arena team. offer loads that team with its now
+and refuses with {status: ineligible, reason: in_arena}, without writes.
+eligible_page(conn,profile_id,offset,now) loads the team once and excludes its
+UIDs from both the SQL eligible count and page; the total-owned count is unchanged.
+At acceptance, _recheck(conn,sides,owners,content,now) loads each owner's team
+and reports {side, reason: in_arena}; confirm clears that side's offer and both
+confirmations, bumps the trade revision and extends activity as for other invalid
+offers. An offer made before a run started cannot complete during that run.
+Protection ends at hour 18 without a write, or when the run ends, and another
+profile's team never blocks the owner. The swap and pokemon_trade_guard trigger
+are unchanged: the acceptance recheck uses the injected clock in the same writer
+transaction. Producers: trading; consumers: trade picker, offer and acceptance.
+Tests: test_trading, test_trade_screens; unchanged test_trading_schema and
+test_trade_command. Native/live acceptance remains separate.
