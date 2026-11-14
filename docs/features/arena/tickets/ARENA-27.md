@@ -26,7 +26,7 @@
 - `test_chain_step_and_heal_all_fights_are_boosted_and_counted`
 - `test_chain_continues_when_a_boost_runs_out`
 - `test_replayed_fight_counts_down_once`
-- `test_crash_mid_boost_keeps_count_and_rolls_back_together` (start 3, one fight commits, crash in the second: 2 left, no extra drop on resume; a ledger failure after the fight UPDATE rolls back counters, run and receipt)
+- `test_crash_mid_boost_keeps_count_and_rolls_back_together` (3 → one fight → crash: 2 left, no extra drop; a ledger failure rolls back counters, run, receipt)
 - `test_fight_result_and_receipt_keys_unchanged_by_boost`
 - `test_real_engine_boosts_cut_ticks_and_damage_taken` (no patch; the same team, enemy and seed with and without each item, at a floor where the unboosted fight lasts several ticks: X-Attack needs fewer ticks, X-Defense keeps more party HP)
 
