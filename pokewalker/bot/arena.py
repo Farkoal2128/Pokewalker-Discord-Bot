@@ -19,7 +19,10 @@ CHANGED = 'A Pokémon changed. Pick your team again.'
 FIGHTS = ('entry', 'middle', 'boss')
 BERRIES = ('razz_berry', 'pinap_berry')
 HEALS = ('arena_heal_one', 'arena_heal_two', 'arena_heal_three')
-BREAK_ACTIONS = ('arena_fight', 'arena_heal_fight', *HEALS, 'arena_berry', 'arena_order',
+X_ITEMS = ('x_attack', 'x_defense')
+BUY_X = {f'arena_buy_{item}': item for item in X_ITEMS}
+USE_X = {f'arena_use_{item}': item for item in X_ITEMS}
+BREAK_ACTIONS = (*USE_X, 'arena_fight', 'arena_heal_fight', *HEALS, 'arena_berry', 'arena_order',
                  'arena_auto_order', 'arena_stop_pct', 'arena_until_hurt')
 STALE = 'The run changed on another screen. This is its current state.'
 REDEEM = {f'arena_redeem_{tier}': tier for tier in ('bronze', 'silver', 'gold', 'platinum', 'diamond')}
@@ -32,6 +35,19 @@ def wait(seconds):
 
 def paused(until):
     return 'Check-ins are paused ' + (f'until {until}.' if until else 'indefinitely.')
+
+
+def x_name(item):
+    return item.replace('_', '-').title()
+
+
+def fights_left(left):
+    return f"{left} fight{'s' if left != 1 else ''} left"
+
+
+def stock_line(state):
+    return f"Stardust {state['stardust']} · " + ' · '.join(
+        f"{x_name(item)} ×{state['x_items'][item]}" for item in X_ITEMS)
 
 
 def render_home(state):
@@ -50,8 +66,14 @@ def render_home(state):
     if state['paused']:
         lines.append(paused(state['until']))
     lines.append('Tickets: ' + (', '.join(f'{tier.title()}: {quantity}' for tier, quantity in state['tickets'].items()) or 'none'))
+    lines.append(stock_line(state))
+    if state.get('notice'):
+        lines.append(state['notice'])
     view = gyms.buttons(state, [*actions, (f"Tickets ({sum(state['tickets'].values())})", 'arena_tickets'),
                                  ('Leaderboard', 'arena_leaderboard'), ('Back', 'home')])
+    for item in X_ITEMS:
+        view.add_item(discord.ui.Button(label=f"Buy {x_name(item)} · {state['x_rules']['items'][item]['stardust']}",
+                                       custom_id=custom_id(state, 'arena_buy_' + item), row=1))
     if state['status'] != 'live':
         view.children[0].disabled = not state['enabled'] or state['paused'] or bool(state['cooldown_left'])
     return {'embed': discord.Embed(title='Arena', description='\n'.join(lines)), 'view': view}
@@ -189,6 +211,11 @@ def render_break(state):
              + ' / '.join(t.title() for t in enemy['combatant']['types'])]
     lines.extend(f"{index}: {member['snapshot']['combatant']['name']} · HP {member['hp']} / {member['full_hp']}"
                  for index, member in enumerate(run['team'], 1))
+    lines.append(stock_line(state))
+    for item in X_ITEMS:
+        if left := run[f'{item}_left']:
+            lines.append(f"{x_name(item)}: ×{state['x_rules']['multiplier']} {state['x_rules']['items'][item]['stat']} · "
+                         + fights_left(left))
     if state.get('notice'):
         lines.append(state['notice'])
     embed = discord.Embed(title='Arena break', description='\n'.join(lines))
@@ -202,6 +229,12 @@ def render_break(state):
     for member, action in zip(run['team'], HEALS):
         view.add_item(discord.ui.Button(label=f"Heal {member['snapshot']['combatant']['name']}",
                                        custom_id=custom_id(state, action), row=1, disabled=member['hp'] >= member['full_hp']))
+    for item in X_ITEMS:
+        left, held = run[f'{item}_left'], state['x_items'][item]
+        action = 'arena_use_' + item if left or held else 'arena_buy_' + item
+        label = (f'{x_name(item)}: {fights_left(left)}' if left else f'Use {x_name(item)} ({held})' if held
+                 else f"Buy {x_name(item)} · {state['x_rules']['items'][item]['stardust']}")
+        view.add_item(discord.ui.Button(label=label, custom_id=custom_id(state, action), row=1, disabled=left > 0))
     view.add_item(discord.ui.Select(placeholder='Healing berry', custom_id=custom_id(state, 'arena_berry'), row=2,
                                    options=[discord.SelectOption(label=f"{berry.replace('_', ' ').title()} ×{state['stock'].get(berry, 0)}",
                                                                  value=berry, default=state['berry'] == berry) for berry in BERRIES]))
@@ -308,8 +341,8 @@ def handlers(walker):
         live = run['ended_at'] is None
         session['selection'] = json.dumps({'phase': 'arena_break' if live else 'arena_defeat',
                                             'run_id': run['run_id'], 'run_revision': run['revision'], 'berry': berry})
-        state = {'session': session, 'run': run, 'stock': stock, 'berry': berry, 'result': result, 'notice': notice,
-                 'stop_pct': current['stop_pct'], 'auto_order': current['auto_order'], 'fights': fights}
+        state = {**current, 'session': session, 'x_rules': rules['x_items'], 'run': run,
+                 'stock': stock, 'berry': berry, 'result': result, 'notice': notice, 'fights': fights}
         if not live:
             return render_defeat(state)
         _, sprite = storage.identify(walker.bot.content, run['enemy']['snapshot'])
@@ -342,6 +375,8 @@ def handlers(walker):
             result = await service.set_stop_pct(*args, int(values[0]), now)
         elif action == 'arena_auto_order':
             result = await service.set_auto_order(*args, not current['auto_order'], now)
+        elif action in USE_X:
+            result = await service.use_x(*args, USE_X[action], now)
         elif action in HEALS:
             result = await service.heal(*args, [HEALS.index(action)], berry, now)
         else:
@@ -351,6 +386,12 @@ def handlers(walker):
         status, notice = result['status'], None
         if status == 'stale':
             notice = STALE
+        elif action in USE_X and status in ('used', 'active', 'missing'):
+            item, x_rules = USE_X[action], rules['x_items']
+            name, stat = x_name(item), x_rules['items'][item]['stat']
+            notice = {'used': f"{name} used: ×{x_rules['multiplier']} {stat} for the next {x_rules['fights']} fights.",
+                      'active': f'{name} is already active. Nothing was spent.',
+                      'missing': f'You have no {name}.'}[status]
         elif status == 'missing':
             name = berry.replace('_', ' ').title()
             notice = f'You need {result["short"]} more {name}. Nothing was spent.' if action == 'arena_heal_fight' else f'You have no {name}.'
@@ -422,6 +463,21 @@ def handlers(walker):
         if current['status'] in ('stale', 'excluded'):
             raise _Refused(EXCLUDED if current['status'] == 'excluded' else REOPEN)
         await service.settle(conn, session['guild_id'], now)
+        notice = None
+        if action in BUY_X:
+            item = BUY_X[action]
+            result = await service.buy_x(conn, session, item)
+            status = result['status']
+            if status not in ('bought', 'insufficient', 'bag_full'):
+                raise _Refused(EXCLUDED if status == 'excluded' else REOPEN)
+            name, price = x_name(item), rules['x_items']['items'][item]['stardust']
+            notice = {'bought': f'Bought 1 {name} for {price} Stardust.',
+                      'insufficient': f'You need {price} Stardust for {name}. Nothing was spent.',
+                      'bag_full': 'Your bag is full. Nothing was spent.'}[status]
+            current = await service.state(conn, session, now)
+            if json.loads(session['selection']).get('phase') == 'arena_break' and current['run']:
+                return await open_break(conn, session, current['run'], current, notice=notice)
+            action = 'arena'
         if action == 'arena_leaderboard':
             board = await service.leaderboard(conn, session['guild_id'], session['profile_id'], now)
             return render_leaderboard({'session': session, **board, 'now': now, 'rules': rules['leaderboard']})
@@ -436,7 +492,7 @@ def handlers(walker):
         if action in ('arena', 'arena_resume'):
             flags = await profiles.restrictions(conn, session['guild_id'], session['user_id'])
             session['selection'] = json.dumps({'berry': selection['berry']} if selection.get('berry') in BERRIES else {})
-            return render_home({'session': session, **current, 'paused': flags.paused,
+            return render_home({'session': session, **current, 'x_rules': rules['x_items'], 'notice': notice, 'paused': flags.paused,
                                 'until': flags.paused_until.isoformat() if flags.paused_until else None})
         selection = json.loads(session['selection'])
         if action == 'arena_team':
@@ -493,4 +549,4 @@ def handlers(walker):
     return {name: partial(dispatch, name) for name in
             ('arena', 'arena_leaderboard', 'arena_resume', 'arena_team', 'arena_team_prev', 'arena_team_next',
              'arena_team_sort', 'arena_team_pick', 'arena_team_clear', 'arena_start', 'arena_skip', 'arena_skip_more', *BREAK_ACTIONS,
-             'arena_tickets', *REDEEM, 'arena_redeem_confirm')}
+             'arena_tickets', *REDEEM, 'arena_redeem_confirm', *BUY_X)}

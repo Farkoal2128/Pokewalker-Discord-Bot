@@ -1705,3 +1705,36 @@ ranking, tie order, minimum and Inbox rewards. This is additive; no persisted
 format or slash command changes. Producers: bot.arena and bot.milestones;
 consumers: Walker sessions, private views and help. Tests: test_arena_screens,
 test_milestones, test_readme, test_walker_router. Live Discord remains unverified.
+
+
+## Arena X items (ARENA-28)
+AR-43 through AR-45 add private actions arena_buy_x_attack, arena_buy_x_defense,
+arena_use_x_attack and arena_use_x_defense; both use actions require arena_break.
+Names are X-Attack and X-Defense. Home and break show Stardust <n> · X-Attack ×n ×
+X-Defense ×n from current state. Prices, duration and multipliers come from
+arena.json rules.x_items. Renderers receive these values without doing I/O.
+
+Home row 1 has Buy X-Attack · 300 and Buy X-Defense · 300, enabled while off,
+paused, in cooldown or in a live run. Home displays purchase notices. After
+settlement, a buy uses services.arena.buy_x and refreshes state. It redraws the
+break when pressed from arena_break with a run (defeat if ended), otherwise home.
+Success says Bought 1 <name> for <price> Stardust. Insufficient says You need
+<price> Stardust for <name>. Nothing was spent. Full bag says Your bag is full.
+Nothing was spent. Existing stale/excluded ownership refusals remain unchanged.
+
+Break row 1 keeps its three heals, followed by one button per kind: active is
+disabled <name>: n fights left; otherwise held items show Use <name> (n), or an
+empty stock shows Buy <name> · <price>. Active lines after party and stock say
+<name>: ×<multiplier> <stat> · n fights left (1 fight left for one).
+Use calls services.arena.use_x at the saved run revision. Notices say <name>
+used: ×<multiplier> <stat> for the next <duration> fights.; <name> is already
+active. Nothing was spent.; or You have no <name>. Stale presses redraw with STALE
+and spend nothing. Refreshed selection keeps the current run revision.
+
+Chain renderings show committed counters after each fight. Defeat has no stock
+or active-effect lines. Five rows and five component widths per row, custom-id
+limits and the 4096 UTF-16-unit description limit still apply, including a
+15-fight chain. Help documents buying, using, duration, one active item per kind,
+and loss of unused fights when a run ends. Producers: bot.arena and content/help;
+consumers: Walker sessions, private views and help. Tests: test_arena_screens,
+test_readme and test_walker_router. Offline evidence is not live Discord acceptance.
