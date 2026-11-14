@@ -1,6 +1,6 @@
 # Arena — pre-plan requirements (approved)
 
-Status: **approved by the owner 2026-11-13** after 8 review rounds (round 8: 0 Must, 1 Should, fixed). Nothing here is planned or built yet. Next step:
+Status: **approved by the owner 2026-11-13** after 8 review rounds (round 8: 0 Must, 1 Should, fixed). **Amended 2026-11-14** with the owner's monthly leaderboard (§6.3, AR-36..AR-41). Nothing here is planned or built yet. Next step:
 `feature-pipeline:plan` turns this file into `PLAN.md`. No code changes before that plan is reviewed and approved.
 
 Labels: **[O]** is the owner's spec. **[R]** is a recommendation that fills a gap; the owner can
@@ -209,10 +209,30 @@ What a run pays under this schedule (repeat tickets only; first-clear bonus copi
 - **AR-35 [O, owner ruling 2026-11-13] Admin on/off.** `/walker-admin arena on|off reason` turns the Arena on or off for the server. It is **on by default**. It follows the existing `/walker-admin gyms legendary` command exactly: Manage Server permission, server only, a reason is required, it writes a new `guilds.arena_enabled INTEGER NOT NULL DEFAULT 1` (0 or 1) and a `mod_audit` row (`arena_on` / `arena_off`), and replies with the new state.
 - **AR-35a [R] What "off" does.** While off, nobody in the server can **start** a run; the start screen says the Arena is turned off here. Runs already live when it was turned off **can still be played to the end** (they last at most 18 hours, AR-3), and **tickets can always be redeemed**. Turning it back on changes nothing else: cooldowns, `best_floor` and tickets are untouched. *Why:* turning the Arena off should never take away rewards a player already earned or let a live run die at hour 18 because of a moderator's action, and the longest a live run can continue is 18 hours.
 
+## 6.3 Monthly leaderboard (owner request 2026-11-14)
+
+- **AR-36 [O, owner ruling 2026-11-14] What it ranks.** Each server has one Arena leaderboard per calendar month. A player's score is the **highest floor they fully cleared (boss beaten) in a fight during that month**. *[R]* Months follow **UTC**, because the bot keeps every time in UTC and has no server time zone. A floor counts in the month its boss fight was won, so a run that crosses midnight on the 1st scores its later floors in the new month. Skipped floors (AR-34) don't score by themselves, because no fight happened. Only the floors fought after the skip count, so after a 40-floor skip the first score is 41. Fights inside Fight until hurt (AR-10b) count normally. The score is written in the same transaction as the boss win that sets it, and only when it beats the player's score so far that month.
+- **AR-37 [R] Ties.** Equal floors rank by who reached that floor first in the month (the time of the boss win). An exact tie on time falls back to the older profile (`profiles.created_at`), then to `profile_id`, so the order is always fixed. *Why:* reaching a floor first is a fair, visible rule, and the result can't change after the fact.
+- **AR-38 [O, owner ruling 2026-11-14] Rewards and reset.** The leaderboard resets at the start of the 1st of each month (00:00 UTC). The finished month's top 3 get these rewards in their **inbox**:
+  - **1st place:** 1 Master Ball, 1 Shiny Lure and 1 World Legendary Ticket.
+  - **2nd place:** 1 Master Ball and 1 Shiny Lure.
+  - **3rd place:** 1 Master Ball.
+
+  *(The owner first wrote "Shiny Charm" and corrected it to the consumable Shiny Lure on 2026-11-14.)* To win a reward, a player must have cleared **floor 10 or higher** that month (owner ruling 2026-11-14). *Why:* each server has its own profiles, so without a minimum a player alone on a private server would win 1st place every month by clearing floor 1. If fewer than 3 players reach floor 10, the empty places pay nothing and nobody moves up from below floor 10. The rewards use the existing inbox rows (`resource='item'`). The existing claim already caps each rare item at one held (`capacities.json` `rare_pockets`), so a winner who already holds a Master Ball keeps the new one waiting in the inbox until there is room. That is how every inbox reward works today.
+- **AR-39 [R] Paying out without a timer.** There is no scheduler, so a month is paid out (settled) **the first time anyone in that server opens the walker home, the Arena, the leaderboard or their inbox after the month ends**. Settlement runs once per server and month, in one writer transaction: it ranks the month, writes the inbox rows and records the month as settled, so paying twice is impossible. The inbox milestone id is `arena_month:<YYYY-MM>:<place>`. A winner who opens `/walker` triggers the settlement themselves, so nobody's reward depends on someone else playing. The home is included because its Inbox button is disabled when the inbox is empty (`bot/screens.py:36-38`). Settlement also **records the paid places** (guild, month, place, profile, floor) in rows that cascade with the profile, so "last month's top 3" shows who was actually paid. A winner who later deletes their data disappears from that list and nobody moves up into their place, because deleted players leave no data behind. If several months went by unpaid, each unsettled month is paid in turn. A profile deleted before settlement drops out of the ranking, and the players below it move up. *Why:* this is the same lazy, check-on-use pattern the 18-hour limit uses (AR-3). It needs no background job.
+- **AR-40 [R] The screen.** The Arena home gets a **Leaderboard** button. It shows only to the viewer, like every other walker screen, with:
+  - this month's top 10 in this server (a Discord mention with pings off, `<@user_id>`, as the gym and trade screens do, because the bot stores no names; floor), plus the viewer's own place and floor if they are outside the top 10;
+  - the time until the reset;
+  - the three reward lines and the floor-10 minimum;
+  - last month's paid places (AR-39), which can be fewer than 3.
+
+  It lists only players with a profile in this server. A player who deleted their data, or whom a moderator reset, is gone from it (both delete the profile, and the monthly score rows cascade). The leaderboard stays visible and settlement still runs while the Arena is turned off (AR-35a), because finished months are already earned. The settled-month rows belong to the server, not to a profile, so they stay. They are the one exception to §10's rule that new tables reference profiles, and they are removed only when the server's data is removed (`guilds` cascade).
+- **AR-41 [R] Not included.** No public announcement post. No all-time or cross-server board. No rewards below 3rd place. Players can't hide from the board: it shows only profiles in that server. A player who left the server keeps their profile (there is no leave handler), so they stay ranked and can still win. Their reward waits in their inbox. These stay out unless the owner asks.
+
 ## 7. Out of scope (not asked; name them so they don't creep in)
 
-- Leaderboards, server announcements, or showing someone else's best floor.
-- Catching Arena enemies, or rewards other than Arena Tickets and knockout Candy (AR-14a).
+- Server announcements, all-time or cross-server leaderboards, or showing someone else's best floor outside the monthly leaderboard (AR-36..AR-41).
+- Catching Arena enemies, or fight rewards other than Arena Tickets and knockout Candy (AR-14a). The monthly leaderboard's inbox rewards (AR-38) are the one exception.
 - New moves or battle mechanics. The Arena reuses the gym engine and rules as they are.
 - Spending tickets on anything other than their fixed contents, or trading tickets.
 
@@ -265,6 +285,7 @@ Added later (floor skip and Fight until hurt):
 | AR-8 | `services/profiles.restrictions` | reuse |
 | AR-10b, AR-10d | `profiles` gains a stop-threshold column (default 50) and an auto-order flag (default off); arena break screen | two columns, one select, one toggle |
 | AR-35-35a | `bot/admin_channels.py` (new `arena` subcommand, copied from `gyms legendary`); new migration adding `guilds.arena_enabled`; arena service start check | small: one column, one command, one check |
+| AR-36-41 | new migration 0027 (monthly score rows with profile cascade; settled-month rows, guild cascade; paid-place rows, profile cascade); `services/arena.py` boss-win write and `settle`; `content/balance/arena.json` leaderboard numbers; `bot/walker.py` home, `bot/arena.py` screen, `bot/milestones.py` inbox open; inbox key `arena_month:<YYYY-MM>:<place>` | medium: one table pair, one write, one lazy payout, one screen |
 | AR-9-11b, AR-14 | `domain/battle.py:simulate`, `Combatant`, `Result`, `combat_stats`; `content/balance/battle.json` | compatible C7 change: `Combatant.hp` = starting HP, `Result.party_hp` and `Result.finisher` added (AR-11b) |
 | AR-12-13 | `inventory` table (`razz_berry`, `pinap_berry`) | new spend path in the arena service |
 | AR-14a | `candy` table (same upsert as companion candy in `services/stepping.py`), `resource_ledger` reason `arena_candy`; special list from `arena.json` (AR-20) decides boss-only Candy; team picker warning in `bot/arena.py` | reuse the existing candy write |
