@@ -105,7 +105,7 @@ class AdminPruneTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(command)
         self.assertEqual([p.name for p in command.parameters], ["reason", "confirm"])
         self.assertFalse(command.parameters[1].required)
-        for mode in ("permission", "dm", "excluded", "blank"):
+        for mode in ("permission", "dm", "blank", "excluded"):
             interaction = self.interaction()
             reason = "x"
             if mode == "permission":
@@ -118,6 +118,8 @@ class AdminPruneTests(unittest.IsolatedAsyncioTestCase):
                 reason = "   "
             await self.invoke(interaction, reason=reason, confirm=True)
             interaction.guild.fetch_member.assert_not_awaited()
+            if mode == "blank":
+                self.assertEqual(self.text(interaction), "A reason is required.")
         self.assertEqual(self.records(), [])
         self.assertEqual(await self.scalar("SELECT count(*) FROM mod_audit"), 0)
         self.assertEqual(len(await self.users()), 3)
