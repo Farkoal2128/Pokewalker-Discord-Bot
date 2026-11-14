@@ -1328,3 +1328,13 @@ negative and the output's positive delta, both with reason trade_up. It returns 
 consumed, produced}; replays return the saved result. Bag units only fall, so the bag limit
 never refuses a trade-up, and no Master Ball is involved. No schema change. Tests:
 tests/test_ball_trade_up.py.
+
+## Owner amendment: member prune (2026-11-14)
+No schema or marker-format change. `/walker-admin prune` writes `delete` markers that carry
+`actor_id` and `reason` (already valid fields; `fold` ignores them for delete), so each
+deletion and its startup replay follow the existing D28 path. One `mod_audit` row per
+confirmed run (target_kind guild, target the guild, action `prune`) commits in its own
+writer job before the run's first marker, so a deletion replayed after a crash always has
+its audit; the row may exist for a run whose first deletion never committed. Restrictions,
+opt-outs and prior audit of pruned users remain. Producer: WalkerAdmin. Consumers:
+`/walker-mod log`, startup replay. Tests: tests/test_admin_prune.py.

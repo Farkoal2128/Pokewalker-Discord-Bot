@@ -1,8 +1,10 @@
 """C5 guild channel policy commands; all mutations use the single writer."""
 
+import asyncio
 import math
 import time
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import discord
 from discord import app_commands
@@ -17,6 +19,14 @@ class _Refused(ValueError):
     pass
 
 
+class _Gone(Exception):
+    pass
+
+
+PRUNE_BUDGET_SECONDS = 13 * 60  # under the 15-minute interaction token, leaving time to reply
+UNKNOWN_MEMBER = 10007
+
+
 class WalkerAdmin(app_commands.Group):
     channels = app_commands.Group(name="channels", description="Configure walker channels")
     gyms = app_commands.Group(name="gyms", description="Manage this server's gyms")
@@ -25,6 +35,8 @@ class WalkerAdmin(app_commands.Group):
         super().__init__(name="walker-admin", description="Manage this server's walker",
                          guild_only=True, default_permissions=discord.Permissions(manage_guild=True))
         self.bot = bot
+        self.prune_after = {}  # guild ID -> last checked user ID, so a stopped prune resumes there
+        self._background = set()
 
     async def authorize(self, interaction):
         if interaction.guild_id is None or not interaction.user.guild_permissions.manage_guild:
@@ -219,6 +231,96 @@ class WalkerAdmin(app_commands.Group):
             await self.reply(interaction, str(error))
             return
         await self.reply(interaction, f"Game data for user {member.id} in this server was reset.")
+
+    async def _within(self, coro, remaining):
+        """The finished task, or None after remaining seconds. Never cancels: discord.py's
+        rate-limit exit sleeps again and can leave the global lock set when cancelled."""
+        task = asyncio.ensure_future(coro)
+        self._background.add(task)
+        task.add_done_callback(lambda t: (self._background.discard(t), t.cancelled() or t.exception()))
+        done, _ = await asyncio.wait({task}, timeout=max(0, remaining))
+        return task if done else None
+
+    @app_commands.command(name="prune", description="Delete game data of players who left this server")
+    async def prune(self, interaction: discord.Interaction, reason: str, confirm: bool = False):
+        deadline = self.bot.clock() + PRUNE_BUDGET_SECONDS
+        await interaction.response.defer(ephemeral=True)
+        if not await self.authorize(interaction):
+            return
+        reason = reason.strip()
+        if not reason:
+            await self.reply(interaction, "A reason is required.")
+            return
+        guild_id, actor_id = str(interaction.guild_id), str(interaction.user.id)
+
+        async def read(conn):
+            await self.check_actor(conn, interaction)
+            async with conn.execute("SELECT user_id FROM profiles WHERE guild_id=? ORDER BY user_id",
+                                    (guild_id,)) as cursor:
+                return [row[0] for row in await cursor.fetchall()]
+
+        async def gate(conn, user_id):
+            await self.check_actor(conn, interaction)
+            if await profiles.get_profile(conn, interaction.guild_id, user_id) is None:
+                raise _Gone()
+
+        async def audit(conn, user_id):
+            await gate(conn, user_id)
+            await conn.execute("INSERT INTO mod_audit(guild_id,actor_id,target_kind,target_id,action,reason,created_at) "
+                               "VALUES (?,?,'guild',?,'prune',?,?)", (guild_id, actor_id, guild_id, reason, time.time()))
+
+        try:
+            users = await self.bot.writer.run(read)
+        except _Refused as error:
+            await self.reply(interaction, str(error))
+            return
+        after = self.prune_after.get(guild_id)
+        if after is not None:
+            users = [u for u in users if u > after] + [u for u in users if u <= after]
+        reactions = SimpleNamespace(remove_own=lambda tracked: self._within(
+            self.bot.reactions.remove_own(tracked), deadline - self.bot.clock()))
+        checked = departed = deleted = 0
+        audited, last, why = False, None, None
+        for user_id in users:
+            remaining = deadline - self.bot.clock()
+            task = await self._within(interaction.guild.fetch_member(int(user_id)), remaining) if remaining > 0 else None
+            if task is None:
+                why = "Stopped: time limit reached."
+                break
+            error = task.exception()
+            if error is not None and not (isinstance(error, discord.NotFound) and error.code == UNKNOWN_MEMBER):
+                why = f"Stopped: Discord could not confirm a member ({type(error).__name__})."
+                break
+            checked, last = checked + 1, user_id
+            if error is None:
+                continue
+            departed += 1
+            if not confirm:
+                continue
+            try:
+                if not audited:  # PR7: the audit commits before the run's first marker exists
+                    await self.bot.writer.run(lambda conn: audit(conn, user_id))
+                    audited = True
+                await deletion.run_marker(self.bot.writer, self.bot.settings.marker_log_path,
+                                          lambda conn: gate(conn, user_id), reactions=reactions, kind="delete",
+                                          guild_id=guild_id, user_id=user_id, actor_id=actor_id, reason=reason,
+                                          now=time.time())
+                deleted += 1
+            except _Gone:
+                continue
+            except _Refused as error:
+                why = str(error)
+                break
+        if why is not None:
+            if last is not None:
+                self.prune_after[guild_id] = last
+            await self.reply(interaction, f"{why} Checked {checked} of {len(users)} profiles; {departed} no longer "
+                             f"members; {deleted} deleted. Run it again to continue.")
+            return
+        self.prune_after.pop(guild_id, None)
+        await self.reply(interaction, f"Deleted the game data of {deleted} of {len(users)} profiles whose users left "
+                         "this server." if confirm else f"{departed} of {len(users)} profiles are no longer members. "
+                         "Nothing was deleted. Use confirm=True to delete their game data; this cannot be undone.")
 
     @app_commands.command(name="sharing", description="Enable or disable sharing for this server")
     @app_commands.choices(on=[app_commands.Choice(name="on", value="on"), app_commands.Choice(name="off", value="off")])
