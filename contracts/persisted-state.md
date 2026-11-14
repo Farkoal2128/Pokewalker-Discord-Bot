@@ -1578,3 +1578,34 @@ must then redraw under AR-4a. No resource moves, receipt or ledger line occurs.
 Producers: migration 0026 and services.arena; consumers: Arena state/screens and
 fight actions. This is additive for current callers; schema rollback requires
 restoring a pre-migration backup. Tests: test_arena_schema and test_arena.
+
+
+## Arena skip and chain step (ARENA-17)
+AR-34 extends services.arena.start with optional skip=0. An int (not bool)
+from zero through min(best_floor // rules.skip.divisor, rules.skip.max) is
+required alongside team validation after start guards; otherwise invalid, no writes.
+The existing profile-owned arena_start receipt creates a full-HP team at floor
+skip+1, slot zero, with that floor's stored entry enemy. Skipped floors pay
+only their scheduled tickets, through additive arena_tickets upserts and
+arena_ticket / tier / +copies / arena_skip ledger lines in the same receipt.
+No Candy, first-clear bonus or best_floor change. The result remains started
+with run; replay never pays twice. Default zero preserves the prior RNG calls.
+
+Pure domain helpers max_skip and skip_tickets consume the injected rules and
+reuse ticket_for. hurt returns the first position strictly below the supplied
+percentage, or None; hp_order sorts descending exact Fraction(hp,full_hp),
+keeping the current order for ties.
+
+chain_step takes fight's arguments and resolves at most one fight inside the
+caller-owned writer transaction. State/ownership/expiry and live-run revision
+checks precede HP checks or reordering. A member already below stop_pct returns
+hurt with position and run, without fighting. If auto_order is enabled, reuse
+set_order only when hp_order differs, then fight at its new revision. Paused
+members and disabled-Arena live runs may continue; excluded members cannot.
+Return the fight result with the saved run. A win also has stop: hurt with
+position after a revive or below-threshold HP, otherwise ticket when tickets
+were earned, otherwise None. A defeat needs no stop. These fields are outside
+the unchanged compact fight receipt. No berries are spent. Producers: Arena
+domain/service; consumers: later Arena screens and chain coordinator. Additive
+API with no schema change; tests: test_arena_domain and test_arena. Full G-F
+and live-platform acceptance remain separate.

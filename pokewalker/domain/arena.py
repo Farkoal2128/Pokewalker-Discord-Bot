@@ -6,6 +6,8 @@ before rolling Attack/Defense/Stamina IVs. No table loading, clock or global RNG
 Enemy dictionaries retain the chosen identity; callers own snapshots/persistence.
 """
 
+from fractions import Fraction
+
 
 def _positive_integer(value, label):
     if type(value) is not int or value <= 0:
@@ -108,6 +110,27 @@ def ticket_for(floor, rules):
         if due:
             return tier
     return None
+
+
+def max_skip(best_floor, rules):
+    return min(best_floor // rules['skip']['divisor'], rules['skip']['max'])
+
+
+def skip_tickets(skip, rules):
+    tickets = {}
+    for floor in range(1, skip + 1):
+        tier = ticket_for(floor, rules)
+        if tier is not None:
+            tickets[tier] = tickets.get(tier, 0) + 1
+    return tickets
+
+
+def hurt(health, pct):
+    return next((i for i, (hp, full_hp) in enumerate(health) if hp * 100 < pct * full_hp), None)
+
+
+def hp_order(health):
+    return sorted(range(len(health)), key=lambda i: Fraction(*health[i]), reverse=True)
 
 
 def first_clear_bonus(floor, best_floor, rules):
