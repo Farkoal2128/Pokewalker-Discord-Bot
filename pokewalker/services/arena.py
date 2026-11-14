@@ -3,7 +3,7 @@
 import json
 import math
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from content.balance import limits, load_table
@@ -18,6 +18,62 @@ STOP_PCTS = range(10, 100, 10)
 
 def month_key(now):
     return datetime.fromtimestamp(now, timezone.utc).strftime('%Y-%m')
+
+
+async def _ranked(conn, guild_id, month):
+    async with conn.execute(
+            'SELECT s.profile_id,p.user_id,s.floor FROM arena_month_scores s '
+            'JOIN profiles p ON p.profile_id=s.profile_id AND p.guild_id=s.guild_id '
+            'LEFT JOIN restrictions r ON r.guild_id=p.guild_id AND r.user_id=p.user_id '
+            'WHERE s.guild_id=? AND s.month=? AND COALESCE(r.excluded,0)=0 '
+            'ORDER BY s.floor DESC,s.reached_at,p.created_at,s.profile_id', (guild_id, month)) as cursor:
+        return [dict(row) for row in await cursor.fetchall()]
+
+
+async def settle(conn, guild_id, now):
+    if not conn.in_transaction:
+        raise RuntimeError('Arena requires an active writer transaction')
+    rules = load_table('arena')['rules']['leaderboard']
+    async with conn.execute(
+            'SELECT DISTINCT s.month FROM arena_month_scores s WHERE s.guild_id=? AND s.month<? '
+            'AND NOT EXISTS (SELECT 1 FROM arena_months m WHERE m.guild_id=s.guild_id AND m.month=s.month) '
+            'ORDER BY s.month', (guild_id, month_key(now))) as cursor:
+        months = [row['month'] for row in await cursor.fetchall()]
+    for month in months:
+        ranked = await _ranked(conn, guild_id, month)
+        for place, row in enumerate(ranked[:len(rules['rewards'])], 1):
+            if row['floor'] < rules['min_floor']:
+                continue
+            for item in rules['rewards'][place - 1]:
+                await conn.execute('INSERT INTO inbox_items(profile_id,milestone_id,resource,resource_id,'
+                                   "remaining,created_at) VALUES (?,?,'item',?,1,?)",
+                                   (row['profile_id'], f'arena_month:{month}:{place}', item, now))
+            await conn.execute('INSERT INTO arena_month_places(guild_id,month,place,profile_id,floor) '
+                               'VALUES (?,?,?,?,?)', (guild_id, month, place, row['profile_id'], row['floor']))
+        await conn.execute('INSERT INTO arena_months(guild_id,month,settled_at) VALUES (?,?,?)',
+                           (guild_id, month, now))
+    return months
+
+
+async def leaderboard(conn, guild_id, profile_id, now):
+    month = month_key(now)
+    rules = load_table('arena')['rules']['leaderboard']
+    ranked = await _ranked(conn, guild_id, month)
+    rows = [dict(place=place, user_id=row['user_id'], floor=row['floor'])
+            for place, row in enumerate(ranked[:rules['shown']], 1)]
+    viewer = next((dict(place=place, floor=row['floor']) for place, row in enumerate(ranked, 1)
+                   if row['profile_id'] == profile_id and place > rules['shown']), None)
+    start = datetime.fromtimestamp(now, timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    reset_at = start.replace(year=start.year + (start.month == 12), month=start.month % 12 + 1).timestamp()
+    last_month = (start - timedelta(days=1)).strftime('%Y-%m')
+    async with conn.execute(
+            'SELECT a.place,p.user_id,a.floor FROM arena_month_places a '
+            'JOIN profiles p ON p.profile_id=a.profile_id AND p.guild_id=a.guild_id '
+            'LEFT JOIN restrictions r ON r.guild_id=p.guild_id AND r.user_id=p.user_id '
+            'WHERE a.guild_id=? AND a.month=? AND COALESCE(r.excluded,0)=0 ORDER BY a.place',
+            (guild_id, last_month)) as cursor:
+        last = [dict(row) for row in await cursor.fetchall()]
+    return dict(month=month, rows=rows, viewer=viewer, reset_at=reset_at, last_month=last_month, last=last)
 
 
 async def _latest_run(conn, profile_id):

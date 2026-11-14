@@ -4,6 +4,7 @@ import asyncio
 import importlib
 import json
 from pathlib import Path
+from datetime import datetime, timezone
 import random
 import unittest
 from unittest.mock import patch
@@ -19,6 +20,7 @@ import test_db
 CONTENT = json.loads(Path('content/artifact/content.json').read_text(encoding='utf-8'))
 MULTIPLIERS = load_table('cpm')['multipliers']
 RULES = load_table('arena')['rules']
+MONTH_NOW = datetime(2026, 12, 1, tzinfo=timezone.utc).timestamp()
 
 
 class ArenaTests(unittest.IsolatedAsyncioTestCase):
@@ -54,7 +56,8 @@ class ArenaTests(unittest.IsolatedAsyncioTestCase):
     async def snapshot(self):
         return {table: await self.rows(f'SELECT * FROM {table} ORDER BY 1') for table in
                 ('guilds', 'profiles', 'sessions', 'restrictions', 'pokemon', 'inventory',
-                 'arena_runs', 'arena_tickets', 'arena_month_scores', 'action_receipts', 'resource_ledger')}
+                 'arena_runs', 'arena_tickets', 'arena_month_scores', 'arena_months', 'arena_month_places',
+                 'inbox_items', 'action_receipts', 'resource_ledger')}
 
     async def state(self, now=1100, session=None):
         return await self.writer.run(lambda conn: self.service().state(conn, session or self.session, now))
@@ -1035,6 +1038,199 @@ class ArenaTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await self.fight(stale), {'status': 'stale', 'run': current})
             self.assertEqual(await self.fight(stale, berry='razz_berry'), {'status': 'stale', 'run': current})
         self.assertEqual(await self.snapshot(), before)
+
+    async def month_score(self, profile_id=None, *, month='2026-11', floor=10, reached_at=100, guild_id='g'):
+        await self.conn.execute('INSERT INTO arena_month_scores VALUES (?,?,?,?,?)',
+                                (guild_id, month, profile_id or self.pid, floor, reached_at))
+
+    async def settle(self, now=MONTH_NOW, guild_id='g'):
+        function = getattr(self.service(), 'settle', None)
+        self.assertIsNotNone(function, 'Arena month settlement service is absent')
+        return await self.writer.run(lambda conn: function(conn, guild_id, now))
+
+    async def test_settle_pays_three_places_and_records_them(self):
+        third, fourth = await self.profile('third', 'g'), await self.profile('fourth', 'g')
+        ranked = [self.pid, self.other, third, fourth]
+        for place, pid in enumerate(ranked, 1):
+            await self.month_score(pid, floor=60 - place * 10)
+        self.assertEqual(await self.settle(), ['2026-11'])
+        self.assertEqual(await self.rows('SELECT * FROM arena_months'),
+                         [dict(guild_id='g', month='2026-11', settled_at=MONTH_NOW)])
+        self.assertEqual(await self.rows('SELECT * FROM arena_month_places ORDER BY place'), [
+            dict(guild_id='g', month='2026-11', place=place, profile_id=pid, floor=60 - place * 10)
+            for place, pid in enumerate(ranked[:3], 1)])
+        self.assertEqual(await self.rows('SELECT profile_id,milestone_id,resource,resource_id,remaining,created_at '
+                                         'FROM inbox_items ORDER BY inbox_id'), [
+            dict(profile_id=pid, milestone_id=f'arena_month:2026-11:{place}', resource='item',
+                 resource_id=item, remaining=1, created_at=MONTH_NOW)
+            for place, pid in enumerate(ranked[:3], 1) for item in RULES['leaderboard']['rewards'][place - 1]])
+        for table in ('action_receipts', 'resource_ledger', 'milestone_awards'):
+            self.assertEqual(await self.scalar(f'SELECT count(*) FROM {table}'), 0)
+
+    async def test_settle_repeat_or_same_month_writes_nothing(self):
+        await self.month_score(month='2026-12', floor=50)
+        before = await self.snapshot()
+        self.assertEqual(await self.settle(), [])
+        self.assertEqual(await self.snapshot(), before)
+        await self.month_score()
+        self.assertEqual(await self.settle(), ['2026-11'])
+        before = await self.snapshot()
+        self.assertEqual(await self.settle(), [])
+        self.assertEqual(await self.snapshot(), before)
+        self.assertEqual(await self.scalar("SELECT count(*) FROM arena_months WHERE month='2026-12'"), 0)
+
+    async def test_ties_rank_by_time_created_at_profile_id(self):
+        a, b, high = [await self.profile(user, 'g') for user in ('a', 'b', 'high')]
+        for pid, floor, reached, created in ((self.pid, 20, 30, 0), (self.other, 20, 20, 2),
+                                              (a, 20, 20, 1), (b, 20, 20, 1), (high, 21, 99, 99)):
+            await self.conn.execute('UPDATE profiles SET created_at=? WHERE profile_id=?', (created, pid))
+            await self.month_score(pid, month='2026-12', floor=floor, reached_at=reached)
+        expected = [high, *sorted((a, b)), self.other, self.pid]
+        users = {self.pid: 'u', self.other: 'v', a: 'a', b: 'b', high: 'high'}
+        board = await self.service().leaderboard(self.conn, 'g', self.pid, MONTH_NOW)
+        self.assertEqual([row['user_id'] for row in board['rows']], [users[pid] for pid in expected])
+        await self.settle(now=datetime(2027, 1, 1, tzinfo=timezone.utc).timestamp())
+        self.assertEqual([row['profile_id'] for row in await self.rows(
+            'SELECT profile_id FROM arena_month_places ORDER BY place')], expected[:3])
+
+    async def test_below_floor_10_unpaid_nobody_moves_up(self):
+        await self.month_score(month='2026-10', floor=9)
+        ranked = [self.pid, self.other, await self.profile('third', 'g'), await self.profile('fourth', 'g')]
+        for pid, floor in zip(ranked, (11, 10, 9, 8)):
+            await self.month_score(pid, floor=floor)
+        self.assertEqual(await self.settle(), ['2026-10', '2026-11'])
+        self.assertEqual(await self.rows('SELECT month,place,profile_id FROM arena_month_places ORDER BY place'),
+                         [dict(month='2026-11', place=place, profile_id=pid)
+                          for place, pid in enumerate(ranked[:2], 1)])
+        self.assertEqual(await self.scalar('SELECT count(*) FROM inbox_items'), 5)
+        self.assertEqual(await self.scalar('SELECT count(*) FROM arena_months'), 2)
+
+    async def test_unsettled_months_paid_oldest_first(self):
+        for month in ('2026-11', '2026-09', '2026-10'):
+            await self.month_score(month=month)
+        expected = ['2026-09', '2026-10', '2026-11']
+        self.assertEqual(await self.settle(), expected)
+        self.assertEqual([row['month'] for row in await self.rows('SELECT month FROM arena_months ORDER BY rowid')],
+                         expected)
+        self.assertEqual([row['milestone_id'] for row in await self.rows(
+            'SELECT milestone_id FROM inbox_items ORDER BY inbox_id')],
+                         [f'arena_month:{month}:1' for month in expected for _ in range(3)])
+
+    async def test_deletion_before_settlement_moves_others_up_after_leaves_gap(self):
+        third, fourth = await self.profile('third', 'g'), await self.profile('fourth', 'g')
+        ranked = [self.pid, self.other, third, fourth]
+        for place, pid in enumerate(ranked, 1):
+            await self.month_score(pid, floor=60 - place * 10)
+        await self.conn.execute('DELETE FROM profiles WHERE profile_id=?', (self.pid,))
+        await self.settle()
+        self.assertEqual([row['profile_id'] for row in await self.rows(
+            'SELECT profile_id FROM arena_month_places ORDER BY place')], ranked[1:])
+        await self.conn.execute('DELETE FROM profiles WHERE profile_id=?', (self.other,))
+        board = await self.service().leaderboard(self.conn, 'g', third, MONTH_NOW)
+        self.assertEqual(board['last'], [dict(place=2, user_id='third', floor=30),
+                                        dict(place=3, user_id='fourth', floor=20)])
+        before = await self.snapshot()
+        self.assertEqual(await self.settle(), [])
+        self.assertEqual(await self.snapshot(), before)
+        self.assertEqual(await self.scalar('SELECT count(*) FROM arena_months'), 1)
+
+    async def test_settle_ignores_arena_off_pause_other_guilds(self):
+        foreign = await self.profile('foreign', 'h')
+        await self.month_score(floor=30)
+        await self.month_score(self.other, floor=20)
+        await self.month_score(foreign, guild_id='h', floor=100)
+        await self.conn.execute('UPDATE guilds SET arena_enabled=0')
+        await self.conn.execute("INSERT INTO restrictions(guild_id,user_id,paused) VALUES ('g','v',1)")
+        self.assertEqual(await self.settle(), ['2026-11'])
+        self.assertEqual([row['profile_id'] for row in await self.rows(
+            'SELECT profile_id FROM arena_month_places ORDER BY place')], [self.pid, self.other])
+        self.assertEqual(await self.rows('SELECT guild_id FROM arena_months'), [dict(guild_id='g')])
+        self.assertEqual(await self.scalar('SELECT count(*) FROM inbox_items WHERE profile_id=?', (foreign,)), 0)
+        self.assertEqual(await self.scalar('SELECT count(*) FROM inbox_items WHERE profile_id=?', (self.other,)), 2)
+
+    async def test_excluded_player_unranked_next_moves_up(self):
+        third, fourth = await self.profile('third', 'g'), await self.profile('fourth', 'g')
+        for pid, floor in zip((self.pid, self.other, third, fourth), (40, 30, 20, 10)):
+            await self.month_score(pid, floor=floor)
+        await self.conn.execute("INSERT INTO restrictions(guild_id,user_id,paused,excluded) VALUES ('g','u',1,1)")
+        active = await self.service().leaderboard(self.conn, 'g', self.pid,
+                                                 datetime(2026, 11, 15, tzinfo=timezone.utc).timestamp())
+        self.assertEqual(active['viewer'], None)
+        self.assertEqual([row['user_id'] for row in active['rows']], ['v', 'third', 'fourth'])
+        await self.settle()
+        self.assertEqual([row['profile_id'] for row in await self.rows(
+            'SELECT profile_id FROM arena_month_places ORDER BY place')], [self.other, third, fourth])
+        self.assertEqual(await self.scalar('SELECT count(*) FROM inbox_items WHERE profile_id=?', (self.pid,)), 0)
+
+    async def test_claim_holds_reward_while_rare_pocket_full(self):
+        await self.month_score()
+        await self.inventory('poke_ball', limits()['bag_units'])
+        for item in RULES['leaderboard']['rewards'][0]:
+            await self.inventory(item, 1)
+        await self.settle()
+        claimed = await self.writer.run(lambda conn: milestones.claim(conn, self.session, MONTH_NOW))
+        self.assertEqual(claimed['moved'], dict(item=0, stardust=0, candy=0))
+        self.assertEqual(await self.scalar('SELECT count(*) FROM inbox_items'), 3)
+        await self.inventory('master_ball', 0)
+        claimed = await self.writer.run(lambda conn: milestones.claim(
+            conn, {**self.session, 'revision': 6}, MONTH_NOW + 1))
+        self.assertEqual(claimed['moved'], dict(item=1, stardust=0, candy=0))
+        self.assertEqual(await self.scalar('SELECT count(*) FROM inbox_items'), 2)
+        self.assertEqual(await self.rows('SELECT resource_id,delta,reason FROM resource_ledger'),
+                         [dict(resource_id='master_ball', delta=1, reason='milestone_claim')])
+
+    async def test_leaderboard_rows_viewer_reset_and_last_month(self):
+        ranked = []
+        for n in range(12):
+            pid = self.pid if n == 11 else await self.profile(f'rank{n}', 'g')
+            ranked.append(pid)
+            await self.month_score(pid, month='2026-12', floor=100 - n)
+        for place, pid, floor in ((1, self.other, 20), (3, self.pid, 10)):
+            await self.conn.execute("INSERT INTO arena_month_places VALUES ('g','2026-11',?,?,?)", (place, pid, floor))
+        await self.conn.execute("INSERT INTO restrictions(guild_id,user_id,paused) VALUES ('g','u',1)")
+        reader = await db.open_reader(self.path)
+        self.addAsyncCleanup(reader.close)
+        before = self.conn.total_changes
+        board = await self.service().leaderboard(reader, 'g', self.pid, MONTH_NOW)
+        self.assertEqual(set(board), {'month', 'rows', 'viewer', 'reset_at', 'last_month', 'last'})
+        self.assertEqual(board['month'], '2026-12')
+        self.assertEqual(board['rows'], [dict(place=n + 1, user_id=f'rank{n}', floor=100 - n) for n in range(10)])
+        self.assertEqual(board['viewer'], dict(place=12, floor=89))
+        self.assertEqual(board['reset_at'], datetime(2027, 1, 1, tzinfo=timezone.utc).timestamp())
+        self.assertEqual(board['last_month'], '2026-11')
+        self.assertEqual(board['last'], [dict(place=1, user_id='v', floor=20), dict(place=3, user_id='u', floor=10)])
+        self.assertIsNone((await self.service().leaderboard(reader, 'g', ranked[0], MONTH_NOW))['viewer'])
+        self.assertEqual(self.conn.total_changes, before)
+        await self.conn.execute("INSERT INTO restrictions(guild_id,user_id,excluded) VALUES ('g','v',1)")
+        self.assertEqual((await self.service().leaderboard(reader, 'g', self.pid, MONTH_NOW))['last'],
+                         [dict(place=3, user_id='u', floor=10)])
+        january = await self.service().leaderboard(reader, 'g', self.pid, board['reset_at'])
+        self.assertEqual(january['month'], '2027-01')
+        self.assertEqual(january['last_month'], '2026-12')
+        self.assertEqual(january['reset_at'], datetime(2027, 2, 1, tzinfo=timezone.utc).timestamp())
+        self.assertEqual(january['rows'], [])
+        self.assertIsNone(january['viewer'])
+
+    async def test_settle_requires_writer_transaction(self):
+        function = getattr(self.service(), 'settle', None)
+        self.assertIsNotNone(function, 'Arena month settlement service is absent')
+        await self.month_score()
+        before = await self.snapshot()
+        with self.assertRaisesRegex(RuntimeError, 'writer transaction'):
+            await function(self.conn, 'g', MONTH_NOW)
+        self.assertEqual(await self.snapshot(), before)
+
+    async def test_settle_failure_rolls_back_inbox_places_and_month_guard(self):
+        await self.month_score()
+        await self.conn.execute("CREATE TRIGGER fail_month BEFORE INSERT ON inbox_items "
+                                "WHEN NEW.resource_id='shiny_lure' BEGIN SELECT RAISE(ABORT,'month failure'); END")
+        before = await self.snapshot()
+        with self.assertRaisesRegex(Exception, 'month failure'):
+            await self.settle()
+        self.assertEqual(await self.snapshot(), before)
+        await self.conn.execute('DROP TRIGGER fail_month')
+        self.assertEqual(await self.settle(), ['2026-11'])
+        self.assertEqual(await self.scalar('SELECT count(*) FROM inbox_items'), 3)
 
     async def ticket(self, tier, quantity=1):
         await self.conn.execute('INSERT INTO arena_tickets VALUES (?,?,?) '

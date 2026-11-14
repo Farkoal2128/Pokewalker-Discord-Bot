@@ -1644,3 +1644,41 @@ settlement (subsequent rows), profile deletion/reset and guild deletion.
 Compatibility: additive schema and service helper; existing callers keep their
 results. Tests: test_arena_schema, test_arena, test_deletion and
 test_admin_reset_sharing, with db/forms/route migration regressions.
+
+
+## Arena monthly settlement (ARENA-22)
+AR-37 through AR-41 add settle(conn,guild_id,now) and the read-only
+leaderboard(conn,guild_id,profile_id,now) in services.arena. No schema or fight
+receipt changes. Settlement requires an active caller-owned writer transaction,
+otherwise RuntimeError. It reads no session or arena_enabled flag.
+
+One private ranking read joins this guild/month's score rows to profiles and
+orders floor descending, then reached_at, profiles.created_at and profile_id
+ascending. Excluded profiles (restrictions by guild/user) are omitted; paused
+profiles remain. Settlement and the current-month board share this ordering.
+
+settle processes scored months strictly before UTC month_key(now), oldest first,
+when no arena_months guard exists. It returns those month keys in that order.
+Place n is rank n up to len(rules.leaderboard.rewards); only scores at least
+min_floor pay. Unpaid places stay empty. Each paid place gets one profile-owned
+arena_month_places row and one inbox_items row per configured item, remaining=1,
+resource=item, created_at=now, milestone_id=arena_month:<YYYY-MM>:<place>.
+The settled-month guard is inserted even when nobody qualifies. All these writes
+commit or roll back together. Repeated settlement writes nothing. There is no
+settlement receipt or ledger entry; existing claim receipts/ledger and rare-pocket
+limits apply when claiming, retaining rewards until their pockets have room.
+
+leaderboard returns exactly month, rows, viewer, reset_at, last_month and last.
+rows is the current UTC month's top shown entries as place/user_id/floor.
+viewer is place/floor only when this profile ranks below shown, otherwise None.
+reset_at is the next month's 00:00 UTC epoch; last_month is the previous UTC month.
+last reads that month's stored paid places in place order with user_id and floor,
+excluding now-excluded profiles. Profile deletion cascades scores/paid places;
+after payout it leaves a gap and nobody is promoted. The guild-owned month guard
+survives, preventing repayment. Before payout, deletion/exclusion removes a
+competitor from ranking and the next rank moves up. Reads never write or settle.
+
+Producers: services.arena and Walker.home; consumers: the later leaderboard and
+inbox screens, existing claim and deletion. Additive boundaries; older receipt
+and result shapes stay compatible. Tests: test_arena and test_arena_screens;
+regressions: test_walker_router, test_milestones and test_deletion.
