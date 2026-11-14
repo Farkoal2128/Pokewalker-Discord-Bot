@@ -130,7 +130,7 @@ Every build row is `seam` (PIPELINE.md:13): at most 2 production files and 300 p
 | 4 | [ARENA-3](tickets/ARENA-3.md) pure rules `domain/arena.py` | build | seam | M | ✅ done · 35f9308 · GO review r1 |
 | 5 | [ARENA-4](tickets/ARENA-4.md) migration 0025 and the live-team check | build | seam | M | ✅ done · 3d6414b · GO review r1 |
 | 6 | [ARENA-5](tickets/ARENA-5.md) gym deploy, claim and attack blocks | build | seam | M | ✅ done · 6d83edc · GO review r1 |
-| 7 | [ARENA-6](tickets/ARENA-6.md) research send block | build | seam | S | pending |
+| 7 | [ARENA-6](tickets/ARENA-6.md) research send block | build | seam | S | ✅ done · 232f735 · GO review r1 |
 | 8 | [ARENA-7](tickets/ARENA-7.md) trade block | build | seam | S | pending |
 | 9 | [ARENA-8](tickets/ARENA-8.md) service: start, expiry, order, heal | build | seam | L | pending |
 | 10 | [ARENA-9](tickets/ARENA-9.md) service: fight, Heal all and fight, Candy, ticket credit | build | seam | L | pending |
