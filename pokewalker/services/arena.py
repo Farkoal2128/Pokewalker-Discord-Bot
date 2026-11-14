@@ -103,11 +103,13 @@ async def start(conn, session, team, now, rng, content, multipliers):
         await conn.execute('INSERT INTO arena_runs(run_id,profile_id,started_at,floor,slot,team,enemy) '
                            'VALUES (?,?,?,1,0,?,?)',
                            (str(uuid4()), session['profile_id'], now, json.dumps(snapshots), json.dumps(enemy)))
-        return {'status': 'started', 'run': await _latest_run(conn, session['profile_id'])}, []
+        return {'status': 'started'}, []
 
     revision = session.get('_original_revision', session['revision'])
-    return await with_receipt(conn, f"arena_start:{session['session_id']}:{revision}", 'arena_start', compute,
-                              profile_id=session['profile_id'])
+    result = await with_receipt(conn, f"arena_start:{session['session_id']}:{revision}", 'arena_start', compute,
+                                profile_id=session['profile_id'])
+    # The run is attached after the receipt so receipts stay small (never pruned).
+    return {**result, 'run': await _latest_run(conn, session['profile_id'])} if result['status'] == 'started' else result
 
 
 def _live_run(current, run_id, revision):
@@ -158,12 +160,13 @@ async def heal(conn, session, run_id, revision, positions, berry, now):
         await conn.execute('UPDATE arena_runs SET team=?,revision=revision+1 WHERE run_id=?',
                            (json.dumps(run['team']), run_id))
         run['revision'] += 1
-        return {'status': 'healed', 'run': run}, [
+        return {'status': 'healed'}, [
             {'profile_id': session['profile_id'], 'resource': 'item', 'resource_id': berry,
              'delta': -len(positions), 'reason': 'arena_heal'}]
 
-    return await with_receipt(conn, f'arena_heal:{run_id}:{revision}', 'arena_heal', compute,
-                              profile_id=session['profile_id'])
+    result = await with_receipt(conn, f'arena_heal:{run_id}:{revision}', 'arena_heal', compute,
+                                profile_id=session['profile_id'])
+    return {**result, 'run': run} if result['status'] == 'healed' else result
 
 
 async def fight(conn, session, run_id, revision, now, rng, content, multipliers, battle_rules, chart):

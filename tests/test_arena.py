@@ -266,6 +266,9 @@ class ArenaTests(unittest.IsolatedAsyncioTestCase):
                                  for berry, delta in [('pinap_berry', -2), ('razz_berry', -1)]])
         repeated = await self.hurt(second['run'])
         self.assertEqual((await self.heal(repeated, [0, 1]))['status'], 'healed')
+        stored = await self.rows("SELECT result FROM action_receipts WHERE action IN ('arena_heal','arena_start')")
+        self.assertTrue(stored)
+        self.assertTrue(all('run' not in json.loads(row['result']) for row in stored))  # receipts stay small
 
     async def test_heal_short_spends_nothing(self):
         run = await self.hurt((await self.start())['run'])

@@ -292,10 +292,6 @@ def handlers(walker):
         elif status not in ('won', 'defeated', 'healed', 'ordered', 'full', 'selected'):
             raise _Refused(EXCLUDED if status == 'excluded' else REOPEN)
         run = (await service.state(conn, session, now))['run']
-        if run is None:
-            rendered = await dispatch('arena', conn, session, interaction)
-            rendered['embed'].description += '\n' + (notice or STALE)
-            return rendered
         return await open_break(conn, session, run, result if status in ('won', 'defeated') else None, notice)
 
     async def dispatch(action, conn, session, interaction):
