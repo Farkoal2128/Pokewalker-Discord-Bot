@@ -118,7 +118,7 @@ Every build row is `seam` (PIPELINE.md:13): at most 2 production files and 300 p
 | 23 | [ARENA-20](tickets/ARENA-20.md) M3 state: migration 0027 and the monthly score write in the boss-win transaction | build | seam | M | ✅ done · c8404a4 · GO review r1 |
 | 24 | [ARENA-21](tickets/ARENA-21.md) M3 balance: `leaderboard` rules in `arena.json` and the manifest hash | build | seam | S | ✅ done · 8e5b862 · GO review r1 |
 | 25 | [ARENA-22](tickets/ARENA-22.md) M3 settlement: lazy month payout, ranking read, home-open call | build | seam | M | ✅ done · 2203f0b · GO review r1 |
-| 26 | [ARENA-23](tickets/ARENA-23.md) M3 screens: Leaderboard, Arena and inbox settlement calls, inbox label; help | build | seam | M | pending |
+| 26 | [ARENA-23](tickets/ARENA-23.md) M3 screens: Leaderboard, Arena and inbox settlement calls, inbox label; help | build | seam | M | ✅ done · 5672447 · GO review r1 |
 | 27 | G-F final verification and delivery decisions | 🚦 | — | — | pending |
 
 ## 5. Briefs
