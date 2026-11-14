@@ -4,8 +4,9 @@
 
 Implements D32/D35 and PLAN Q6 using the approved bot-owned templates in
 `content/balance/battle.json` and `docs/research/gyms/battle-system.md` section 3.
-Producer: `pokewalker/domain/battle.py`. Consumers: M7.6a gym service and M7.6b
-screens. This is an additive boundary, with no persistence or existing callers.
+Producer: `pokewalker/domain/battle.py`. Consumers: `pokewalker/services/gyms.py`,
+gym screens via the service, and `pokewalker/services/arena.py`. Gyms persist named
+result fields; the additive Arena fields do not change stored gym receipts.
 Eligibility, legendary defender restrictions, ownership and rewards belong to the
 service; this engine never mutates stored Pokemon or injected data.
 
@@ -13,7 +14,9 @@ service; this engine never mutates stored Pokemon or injected data.
 
 - Frozen `Combatant(name, types, attack, defense, hp, fast_type, charged_type)`:
   nonempty single-line name, one or two distinct type names, finite positive combat
-  Attack/Defense, positive integer canonical HP. Types are copied to a tuple.
+  Attack/Defense, positive integer starting HP for this fight (not necessarily
+  canonical full HP). Types are copied to a tuple. Gyms keep passing canonical HP
+  from `gyms._battle_snapshot`, preserving their existing behavior.
 - `combat_stats(base, ivs, level_x2, multipliers)` reuses CP validation and returns
   unrounded `(base_attack + iv_attack) * cpm`, similarly Defense, and canonical
   `max(10, floor((base_stamina + iv_stamina) * cpm))` HP.
@@ -30,11 +33,18 @@ service; this engine never mutates stored Pokemon or injected data.
   ordered Combatants and positive integer frozen defender battle HP. Rules and
   chart are trusted reviewed decoded payloads (not file paths). Unknown combatant
   types raise ValueError. Invalid public stat/party/HP inputs raise ValueError.
-- Frozen `Result(outcome, reason, ticks, survivors, events, engine_version)`:
+- Frozen `Result(outcome, reason, ticks, survivors, events, engine_version,
+  party_hp=(), finisher=None)`:
   outcome `win|loss|draw`; reason `defender_fainted|party_fainted|tick_limit`;
   survivors is a tuple of zero-based original party positions still healthy,
   including unused bench members; events is a tuple of at most 40 single-line
-  strings. Result carries `engine_version == ENGINE_VERSION == "1"`.
+  strings. `party_hp` is a tuple of each member's end-of-fight HP in party order:
+  0 for fainted members; an unused bench member keeps its starting HP. `finisher`
+  is the zero-based party position whose hit took the defender to 0 HP, including
+  a double-knockout draw, or `None` if the defender did not faint. Both fields
+  follow `engine_version` and have defaults, preserving positional constructors.
+  Result carries `engine_version == ENGINE_VERSION == "1"`; arithmetic, timing
+  and outcomes are unchanged.
 
 ## Tick and energy invariants
 
@@ -67,9 +77,10 @@ RNG calls, and repeated equal inputs produce equal results without modifying inp
 
 Tests: `tests/test_battle.py` covers arithmetic, determinism, STAB/type products,
 D32, simultaneous KO, cancellation, immediate substitution, slot targeting,
-120-tick boundary, survivor eligibility, immutable inputs and bounded text events.
+120-tick boundary, survivor eligibility, immutable inputs, bounded text events,
+starting/end HP, finisher attribution and positional-constructor compatibility.
 Changes to arithmetic order, timing, result meanings or deterministic outcomes
 require a deliberate requirement/contract review and a new engine version. The
-future service must persist ordered events and engine version with its snapshot;
-this row introduces no stored format or migration and can be rolled back by
-removing the unused provider, contract and tests together.
+gym service persists ordered events and engine version with its snapshot. The
+additive Arena result fields require no gym receipt change or migration; they
+can be removed together with their consumers before Arena persistence is added.

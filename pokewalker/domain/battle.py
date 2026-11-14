@@ -52,6 +52,8 @@ class Result:
     survivors: tuple[int, ...]
     events: tuple[str, ...]
     engine_version: str = ENGINE_VERSION
+    party_hp: tuple[int, ...] = ()
+    finisher: int | None = None
 
 
 def combat_stats(base: Sequence[int], ivs: Sequence[int], level_x2: int,
@@ -166,4 +168,5 @@ def simulate(party: Sequence[Combatant], defender: Combatant, defender_battle_hp
             break
     events.append(f"{tick}: {outcome} ({reason}).")
     return Result(outcome, reason, tick, tuple(i for i, value in enumerate(health) if value > 0),
-                  tuple(events))
+                  tuple(events), party_hp=tuple(health),
+                  finisher=active if not defender_health else None)
