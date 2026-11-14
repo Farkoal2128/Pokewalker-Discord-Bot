@@ -5,11 +5,11 @@ import math
 from dataclasses import replace
 from uuid import uuid4
 
-from content.balance import load_table
+from content.balance import limits, load_table
 from pokewalker.db import with_receipt
 from pokewalker.domain import arena as domain
 from pokewalker.domain import battle as battle_engine
-from pokewalker.services import gyms, profiles, storage
+from pokewalker.services import gyms, profiles, stepping, storage
 
 
 async def _latest_run(conn, profile_id):
@@ -240,3 +240,55 @@ async def heal_all_and_fight(conn, session, run_id, revision, berry, now, rng, c
             return result
         revision = result['run']['revision']
     return await fight(conn, session, run_id, revision, now, rng, content, multipliers, battle_rules, chart)
+
+
+async def redeem_quote(conn, profile_id, tier):
+    rewards = load_table('arena')['rules']['tickets']['tiers'][tier]
+    cap = limits()['encounter_queue']
+    free = cap - await profiles.queue_size(conn, profile_id)
+    count = cap if rewards['encounters'] == 'fill' else rewards['encounters']
+    async with conn.execute('SELECT quantity FROM arena_tickets WHERE profile_id=? AND tier=?',
+                            (profile_id, tier)) as cursor:
+        held = await cursor.fetchone()
+    return {'held': held[0] if held else 0, 'free': free, 'add': min(free, count)}
+
+
+async def redeem(conn, session, tier, expected_free, expected_add, now, rng, content):
+    current = await state(conn, session, now)
+    if current['status'] in ('stale', 'excluded'):
+        return current
+    tiers = load_table('arena')['rules']['tickets']['tiers']
+    if tier not in tiers:
+        return {'status': 'invalid'}
+    pid = session['profile_id']
+    quote = await redeem_quote(conn, pid, tier)
+    if quote['held'] < 1:
+        return {'status': 'none'}
+    if quote['free'] < 1:
+        return {'status': 'queue_full'}
+    if quote['free'] != expected_free or quote['add'] != expected_add:
+        return {'status': 'quote_changed', 'free': quote['free'], 'add': quote['add']}
+    rewards = tiers[tier]
+    profile = await profiles.get_profile(conn, session['guild_id'], session['user_id'])
+
+    async def compute(conn):
+        redeem_id = str(uuid4())
+        prefix = f'arena:{redeem_id}'
+        await conn.execute('UPDATE arena_tickets SET quantity=quantity-1 WHERE profile_id=? AND tier=?', (pid, tier))
+        for _ in range(quote['add']):
+            await stepping.spawn_encounter(conn, profile, content, rng, now)
+        await conn.execute('INSERT INTO inbox_items(profile_id,milestone_id,resource,resource_id,remaining,created_at) '
+                           "VALUES (?,?,'stardust',NULL,?,?)", (pid, f'{prefix}:stardust', rewards['stardust'], now))
+        for n in range(rewards['income_rolls']):
+            await gyms.income_roll(conn, pid, f'{prefix}:income:{n}', now, rng, content)
+        for n in range(rewards['survivor_rolls']):
+            await gyms.survivor_roll(conn, pid, f'{prefix}:survivor:{n}', now, rng)
+        return {'status': 'redeemed', 'redeem_id': redeem_id, 'encounters': quote['add'],
+                'stardust': rewards['stardust'], 'income_rolls': rewards['income_rolls'],
+                'survivor_rolls': rewards['survivor_rolls']}, [
+                    {'profile_id': pid, 'resource': 'arena_ticket', 'resource_id': tier,
+                     'delta': -1, 'reason': 'arena_redeem'}]
+
+    revision = session.get('_original_revision', session['revision'])
+    return await with_receipt(conn, f"arena_redeem:{session['session_id']}:{revision}", 'arena_redeem', compute,
+                              profile_id=pid)

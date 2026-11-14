@@ -8,11 +8,11 @@ import random
 import unittest
 from unittest.mock import patch
 
-from content.balance import load_table
+from content.balance import limits, load_table
 from pokewalker import db
 from pokewalker.domain import arena as domain
 from pokewalker.domain import battle as battle_engine
-from pokewalker.services import gyms, powerup, profiles, storage
+from pokewalker.services import gyms, milestones, powerup, profiles, stepping, storage
 import test_db
 
 
@@ -660,3 +660,193 @@ class ArenaTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await self.fight(stale), {'status': 'stale', 'run': current})
             self.assertEqual(await self.fight(stale, berry='razz_berry'), {'status': 'stale', 'run': current})
         self.assertEqual(await self.snapshot(), before)
+
+    async def ticket(self, tier, quantity=1):
+        await self.conn.execute('INSERT INTO arena_tickets VALUES (?,?,?) '
+                                'ON CONFLICT(profile_id,tier) DO UPDATE SET quantity=excluded.quantity',
+                                (self.pid, tier, quantity))
+
+    async def redeem(self, tier='bronze', free=3, add=None, rng=None, session=None):
+        if add is None:
+            count = RULES['tickets']['tiers'][tier]['encounters']
+            add = free if count == 'fill' else min(free, count)
+        return await self.writer.run(lambda conn: self.service().redeem(
+            conn, session or self.session, tier, free, add, 1200, rng or random.Random(7), CONTENT))
+
+    async def queue(self, count=1):
+        profile = await profiles.get_profile(self.conn, 'g', 'u')
+        for _ in range(count):
+            await self.writer.run(lambda conn: stepping.spawn_encounter(conn, profile, CONTENT, random.Random(3), 1000))
+
+    async def redemption_snapshot(self):
+        return {**await self.snapshot(), **{table: await self.rows(f'SELECT * FROM {table} ORDER BY 1')
+                                          for table in ('encounters', 'active_effects', 'inbox_items')}}
+
+    async def test_bronze_adds_one_encounter_and_100_stardust_row(self):
+        await self.ticket('bronze', 100001)
+        self.assertEqual(await self.service().redeem_quote(self.conn, self.pid, 'bronze'),
+                         {'held': 100001, 'free': 3, 'add': 1})
+        result = await self.redeem()
+        self.assertEqual((result['status'], result['encounters'], result['stardust'],
+                          result['income_rolls'], result['survivor_rolls']), ('redeemed', 1, 100, 0, 0))
+        encounters = await self.rows('SELECT profile_id,route_id,source_message_id FROM encounters')
+        profile = await profiles.get_profile(self.conn, 'g', 'u')
+        self.assertEqual(encounters, [{'profile_id': self.pid, 'route_id': profile['route_id'], 'source_message_id': None}])
+        self.assertEqual(await self.rows('SELECT resource,resource_id,remaining FROM inbox_items'),
+                         [{'resource': 'stardust', 'resource_id': None, 'remaining': 100}])
+        self.assertEqual(await self.scalar('SELECT stardust FROM profiles WHERE profile_id=?', (self.pid,)), 0)
+        self.assertEqual(await self.service().redeem_quote(self.conn, self.other, 'bronze'),
+                         {'held': 0, 'free': 3, 'add': 1})
+
+    async def test_silver_adds_up_to_two_encounters_and_gold_fills_queue(self):
+        for tier, occupied, count in [('silver', 0, 2), ('silver', 2, 1), ('gold', 0, 3), ('gold', 1, 2)]:
+            with self.subTest(tier=tier, occupied=occupied):
+                await self.conn.execute('DELETE FROM encounters')
+                await self.conn.execute('DELETE FROM action_receipts')
+                await self.ticket(tier)
+                await self.queue(occupied)
+                quote = await self.service().redeem_quote(self.conn, self.pid, tier)
+                self.assertEqual(quote, {'held': 1, 'free': 3 - occupied, 'add': count})
+                result = await self.redeem(tier, free=quote['free'])
+                self.assertEqual(result['encounters'], count)
+                self.assertEqual(await profiles.queue_size(self.conn, self.pid), occupied + count)
+
+    async def test_platinum_and_diamond_roll_counts_and_survivor_rows_with_500_stardust(self):
+        for tier, income, survivors, dust in [('platinum', 8, 1, 1000), ('diamond', 24, 3, 3000)]:
+            with self.subTest(tier=tier):
+                await self.conn.execute('DELETE FROM encounters')
+                await self.conn.execute('DELETE FROM action_receipts')
+                await self.conn.execute('DELETE FROM inbox_items')
+                await self.ticket(tier)
+                result = await self.redeem(tier)
+                self.assertEqual((result['encounters'], result['income_rolls'], result['survivor_rolls'],
+                                  result['stardust']), (3, income, survivors, dust))
+                rows = await self.rows('SELECT * FROM inbox_items')
+                prefix = f"arena:{result['redeem_id']}:"
+                self.assertEqual(len(rows), 1 + income + 2 * survivors)
+                self.assertEqual(sum(row['milestone_id'].startswith(prefix + 'income:') for row in rows), income)
+                survivor_rows = [row for row in rows if row['milestone_id'].startswith(prefix + 'survivor:')]
+                self.assertEqual(len({row['milestone_id'] for row in survivor_rows}), survivors)
+                self.assertEqual([row['remaining'] for row in survivor_rows if row['resource'] == 'stardust'],
+                                 [500] * survivors)
+
+    async def test_redeem_refused_when_queue_full_nothing_spent(self):
+        await self.ticket('diamond')
+        await self.queue(3)
+        before = await self.redemption_snapshot()
+        self.assertEqual(await self.redeem('diamond'), {'status': 'queue_full'})
+        self.assertEqual(await self.redemption_snapshot(), before)
+
+    async def test_quote_changed_spends_no_ticket_and_no_lure_charge(self):
+        await self.ticket('silver')
+        await self.conn.execute('INSERT INTO active_effects(effect_id,profile_id,kind,starts_at,receipt_key,remaining_encounters) '
+                                "VALUES ('lure',?,'shiny_lure',0,'lure-key',10)", (self.pid,))
+        await self.queue()
+        before = await self.redemption_snapshot()
+        for free, add in [(3, 2), (2, 1)]:
+            self.assertEqual(await self.redeem('silver', free=free, add=add),
+                             {'status': 'quote_changed', 'free': 2, 'add': 2})
+            self.assertEqual(await self.redemption_snapshot(), before)
+
+    async def test_same_redeem_press_twice_one_redemption(self):
+        await self.ticket('bronze', 2)
+        results = await asyncio.gather(self.redeem(), self.redeem())
+        self.assertEqual([result['status'] for result in results], ['redeemed', 'quote_changed'])
+        self.assertEqual(await self.scalar('SELECT quantity FROM arena_tickets'), 1)
+        self.assertEqual(await self.scalar('SELECT count(*) FROM action_receipts'), 1)
+        self.assertEqual(await profiles.queue_size(self.conn, self.pid), 1)
+        # Once queue space matches again, the same press replays instead of spending another ticket.
+        await self.conn.execute('DELETE FROM encounters')
+        before = await self.redemption_snapshot()
+        self.assertEqual(await self.redeem(), results[0])
+        self.assertEqual(await self.redemption_snapshot(), before)
+
+    async def test_inbox_keys_use_redeem_id_and_claim_respects_rare_pockets(self):
+        await self.ticket('platinum')
+        await self.inventory('master_ball', 1)
+        await self.inventory('poke_ball', limits()['bag_units'])
+        original_choices = random.Random.choices
+
+        def select(rng, population, *args, **kwargs):
+            if population == load_table('gym_income_table')['rows']:
+                return [next(row for row in population if row['item'] == 'poke_ball')]
+            if population == load_table('survivor_table')['rows']:
+                return [next(row for row in population if row['item'] == 'master_ball')]
+            return original_choices(rng, population, *args, **kwargs)
+
+        with patch.object(random.Random, 'choices', select):
+            result = await self.redeem('platinum')
+        rows = await self.rows('SELECT * FROM inbox_items')
+        self.assertEqual(len({row['milestone_id'] for row in rows}), 10)
+        self.assertTrue(all(row['milestone_id'].startswith(f"arena:{result['redeem_id']}:") for row in rows))
+        claimed = await self.writer.run(lambda conn: milestones.claim(conn, self.session, 1300))
+        self.assertEqual(claimed['moved'], {'item': 0, 'stardust': 1500, 'candy': 0})
+        waiting = await self.rows('SELECT * FROM inbox_items')
+        self.assertEqual(len(waiting), 9)
+        self.assertEqual(sum(row['remaining'] for row in waiting if row['resource_id'] == 'master_ball'), 1)
+        await self.conn.execute("UPDATE inventory SET quantity=0 WHERE item_id='master_ball'")
+        claimed = await self.writer.run(lambda conn: milestones.claim(conn, {**self.session, 'revision': 6}, 1400))
+        self.assertEqual(claimed['moved']['item'], 1)
+
+    async def test_paused_and_arena_off_can_redeem_excluded_cannot(self):
+        await self.ticket('bronze', 2)
+        await self.conn.execute("INSERT INTO restrictions(guild_id,user_id,paused,excluded) VALUES ('g','u',1,1)")
+        await self.conn.execute('UPDATE guilds SET arena_enabled=0')
+        before = await self.redemption_snapshot()
+        self.assertEqual(await self.redeem(), {'status': 'excluded'})
+        self.assertEqual(await self.redemption_snapshot(), before)
+        await self.conn.execute('UPDATE restrictions SET excluded=0')
+        self.assertEqual((await self.redeem())['status'], 'redeemed')
+
+    async def test_redeem_receipt_and_ledger_carry_profile_id(self):
+        await self.ticket('bronze')
+        await self.redeem()
+        receipt = (await self.rows('SELECT key,action,profile_id FROM action_receipts'))[0]
+        self.assertEqual(receipt, {'key': 'arena_redeem:s:4', 'action': 'arena_redeem', 'profile_id': self.pid})
+        self.assertEqual(await self.rows('SELECT profile_id,resource,resource_id,delta,reason FROM resource_ledger'),
+                         [{'profile_id': self.pid, 'resource': 'arena_ticket', 'resource_id': 'bronze',
+                           'delta': -1, 'reason': 'arena_redeem'}])
+
+    async def test_redeem_matches_walking_lure_mirror_and_charm(self):
+        await self.conn.execute("UPDATE profiles SET companion_uid='m0' WHERE profile_id=?", (self.pid,))
+        await self.conn.execute("INSERT INTO milestone_awards VALUES (?,'pokedex:100',0)", (self.pid,))
+        columns = 'pokemon_id,level_x2,iv_attack,iv_defense,iv_stamina,gender,shiny,tier,route_id,lure_id,content_version'
+        for kind in (None, 'shiny_lure', 'companion_mirror'):
+            with self.subTest(kind=kind):
+                await self.conn.execute('DELETE FROM encounters')
+                await self.conn.execute('DELETE FROM action_receipts')
+                await self.conn.execute('DELETE FROM active_effects')
+                await self.ticket('bronze')
+                if kind:
+                    await self.conn.execute('INSERT INTO active_effects(effect_id,profile_id,kind,starts_at,'
+                                            "receipt_key,remaining_encounters) VALUES ('effect',?,?,0,'effect-key',10)",
+                                            (self.pid, kind))
+                profile = await profiles.get_profile(self.conn, 'g', 'u')
+                await self.writer.run(lambda conn: stepping.spawn_encounter(conn, profile, CONTENT, random.Random(7), 1200))
+                expected = await self.rows(f'SELECT {columns} FROM encounters')
+                await self.conn.execute('DELETE FROM encounters')
+                await self.conn.execute('UPDATE active_effects SET remaining_encounters=10')
+                await self.redeem()
+                self.assertEqual(await self.rows(f'SELECT {columns} FROM encounters'), expected)
+                if kind:
+                    self.assertEqual(await self.scalar('SELECT remaining_encounters FROM active_effects'), 9)
+
+    async def test_redeem_ledger_failure_rolls_back_ticket_encounters_effects_and_inbox(self):
+        await self.ticket('diamond')
+        await self.conn.execute('INSERT INTO active_effects(effect_id,profile_id,kind,starts_at,receipt_key,remaining_encounters) '
+                                "VALUES ('lure',?,'shiny_lure',0,'lure-key',10)", (self.pid,))
+        await self.conn.execute("CREATE TRIGGER fail_redemption BEFORE INSERT ON resource_ledger "
+                                "BEGIN SELECT RAISE(ABORT,'redemption ledger failure'); END")
+        before = await self.redemption_snapshot()
+        with self.assertRaisesRegex(Exception, 'redemption ledger failure'):
+            await self.redeem('diamond')
+        self.assertEqual(await self.redemption_snapshot(), before)
+
+    async def test_redeem_stale_none_invalid_and_writer_guards(self):
+        before = await self.redemption_snapshot()
+        self.assertEqual(await self.redeem(session={**self.session, 'profile_id': self.other}), {'status': 'stale'})
+        self.assertEqual(await self.redeem(), {'status': 'none'})
+        self.assertEqual(await self.redeem(tier='unknown', add=1), {'status': 'invalid'})
+        with self.assertRaisesRegex(RuntimeError, 'writer transaction'):
+            await self.service().redeem(self.conn, self.session, 'bronze', 3, 1, 1200, random.Random(7), CONTENT)
+        self.assertEqual(await self.redemption_snapshot(), before)
