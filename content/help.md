@@ -72,6 +72,7 @@ Use `/readme` to see this again.
 - `force-raid <reason>`: spawn a World Legendary in the raid channel now (once per 24 hours per server).
 - `sharing on|off`: allow or block Share buttons in this server.
 - `reset <member> <reason>`: permanently reset a member's game data in this server.
+- `prune <reason>`: count the players who left this server; run it again with confirm set to True to delete their game data.
 
 **`/walker-mod`** (needs Moderate Members)
 - `pause`, `resume`: pause a member's earning, or lift the pause.
