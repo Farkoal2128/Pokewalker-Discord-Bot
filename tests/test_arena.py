@@ -11,6 +11,7 @@ from unittest.mock import patch
 from content.balance import load_table
 from pokewalker import db
 from pokewalker.domain import arena as domain
+from pokewalker.domain import battle as battle_engine
 from pokewalker.services import gyms, powerup, profiles, storage
 import test_db
 
@@ -333,4 +334,329 @@ class ArenaTests(unittest.IsolatedAsyncioTestCase):
         await self.start()
         before = await self.snapshot()
         self.assertEqual(await self.state(session={**self.session, 'profile_id': self.other}), {'status': 'stale'})
+        self.assertEqual(await self.snapshot(), before)
+
+    async def fight(self, run, now=1300, session=None, berry=None):
+        svc = self.service()
+        function = getattr(svc, 'fight' if berry is None else 'heal_all_and_fight', None)
+        self.assertIsNotNone(function, 'Arena fight service is absent')
+        args = (session or self.session, run['run_id'], run['revision'])
+        if berry is not None:
+            args = (*args, berry)
+        return await self.writer.run(lambda conn: function(
+            conn, *args, now, random.Random(11), CONTENT, MULTIPLIERS,
+            load_table('battle')['rules'], CONTENT['type_chart']))
+
+    async def at_fight(self, floor=1, slot=0, special=False):
+        if special:
+            await self.conn.execute("UPDATE pokemon SET pokemon_id=144 WHERE pokemon_uid='m0'")
+        run = (await self.start())['run']
+        enemy = self.service()._roll_enemy(floor, slot, random.Random(19), CONTENT, MULTIPLIERS)
+        await self.conn.execute('UPDATE arena_runs SET floor=?,slot=?,enemy=? WHERE run_id=?',
+                                (floor, slot, json.dumps(enemy), run['run_id']))
+        return (await self.state())['run']
+
+    def outcome(self, outcome='win', hp=(3, 4, 5), finisher=0):
+        return battle_engine.Result(outcome, 'defender_fainted' if outcome != 'loss' else 'party_fainted', 9,
+                                    tuple(i for i, value in enumerate(hp) if value), ('private battle event',),
+                                    party_hp=hp, finisher=finisher)
+
+    async def reset_run_fixture(self):
+        await self.conn.execute('DELETE FROM arena_runs')
+        await self.conn.execute('DELETE FROM action_receipts')
+        await self.conn.execute('DELETE FROM arena_tickets')
+        await self.conn.execute('DELETE FROM candy')
+        await self.conn.execute('UPDATE profiles SET arena_best_floor=0')
+
+    async def test_floor_1_boss_win_advances_without_ticket(self):
+        run = await self.at_fight(slot=2)
+        with patch.object(battle_engine, 'simulate', return_value=self.outcome()):
+            result = await self.fight(run)
+        self.assertEqual((result['status'], result['floor'], result['slot'], result['tickets']), ('won', 1, 2, None))
+        current = await self.state()
+        self.assertEqual((current['run']['floor'], current['run']['slot'], current['best_floor']), (2, 0, 1))
+        self.assertEqual(await self.rows('SELECT * FROM arena_tickets'), [])
+
+    async def test_win_carries_exact_hp_into_next_fight(self):
+        run = await self.at_fight()
+        rules, chart = load_table('battle')['rules'], CONTENT['type_chart']
+        party = [battle_engine.Combatant(**m['snapshot']['combatant']) for m in run['team']]
+        enemy = battle_engine.Combatant(**run['enemy']['snapshot']['combatant'])
+        expected = battle_engine.simulate(party, enemy, run['enemy']['battle_hp'], rules=rules, chart=chart)
+        with patch.object(battle_engine, 'simulate', wraps=battle_engine.simulate) as simulate:
+            result = await self.fight(run)
+            self.assertEqual(result['status'], 'won')
+            self.assertEqual(simulate.call_args.args[0], party)
+            self.assertEqual(simulate.call_args.args[1:], (enemy, run['enemy']['battle_hp']))
+            self.assertEqual(result['party_hp'], list(expected.party_hp))
+            next_run = (await self.state())['run']
+            self.assertEqual([m['hp'] for m in next_run['team']], domain.revive(expected.party_hp))
+            await self.fight(next_run)
+            self.assertEqual([m.hp for m in simulate.call_args.args[0]], domain.revive(expected.party_hp))
+        self.assertEqual(len(party), 3)
+        self.assertEqual(rules['party_max'], 1)
+
+    async def test_fainted_member_revived_at_one_hp_keeps_position(self):
+        run = await self.at_fight()
+        with patch.object(battle_engine, 'simulate', return_value=self.outcome(hp=(0, 2, 5))):
+            result = await self.fight(run)
+        self.assertEqual((result['party_hp'], result['revived']), ([0, 2, 5], [0]))
+        after = (await self.state())['run']
+        self.assertEqual([m['uid'] for m in after['team']], [m['uid'] for m in run['team']])
+        self.assertEqual([m['hp'] for m in after['team']], [1, 2, 5])
+
+    async def test_entry_middle_boss_order_and_next_enemy_stored_each_fight(self):
+        run = await self.at_fight()
+        roll_enemy = self.service()._roll_enemy
+        with patch.object(battle_engine, 'simulate', return_value=self.outcome()), \
+                patch.object(self.service(), '_roll_enemy', wraps=roll_enemy) as roll:
+            for slot, next_floor, next_slot in ((0, 1, 1), (1, 1, 2), (2, 2, 0)):
+                result = await self.fight(run)
+                self.assertEqual((result['floor'], result['slot']), (1, slot))
+                current = (await self.state())['run']
+                self.assertEqual((current['floor'], current['slot'], current['revision']),
+                                 (next_floor, next_slot, slot + 1))
+                self.assertEqual(roll.call_args.args[:2], (next_floor, next_slot))
+                expected = roll_enemy(next_floor, next_slot, random.Random(11), CONTENT, MULTIPLIERS)
+                self.assertEqual(current['enemy'], json.loads(json.dumps(expected)))
+                self.assertEqual((await self.state())['run'], current)
+                run = current
+            self.assertEqual(roll.call_count, 3)
+
+    async def test_loss_ends_run_keeps_earlier_tickets(self):
+        run = await self.at_fight(floor=11, slot=1)
+        await self.conn.execute("INSERT INTO arena_tickets VALUES (?,'silver',2)", (self.pid,))
+        await self.conn.execute('UPDATE profiles SET arena_best_floor=10')
+        with patch.object(battle_engine, 'simulate', return_value=self.outcome('loss', (0, 0, 0), None)), \
+                patch.object(self.service(), '_roll_enemy', side_effect=AssertionError('loss rolled enemy')):
+            result = await self.fight(run)
+        self.assertEqual((result['status'], result['outcome'], result['candy'], result['tickets']),
+                         ('defeated', 'loss', None, None))
+        current = await self.state()
+        self.assertEqual(current['status'], 'ended')
+        self.assertEqual((current['run']['ended_at'], current['run']['end_reason'], current['run']['revision']),
+                         (1300, 'loss', 1))
+        self.assertEqual([m['hp'] for m in current['run']['team']], [0, 0, 0])
+        self.assertEqual((current['best_floor'], current['tickets']), (10, {'silver': 2}))
+        self.assertEqual(await self.rows('SELECT * FROM candy'), [])
+        self.assertEqual(await self.rows('SELECT * FROM resource_ledger'), [])
+
+    async def test_draw_counts_as_defeat(self):
+        run = await self.at_fight()
+        with patch.object(battle_engine, 'simulate', return_value=self.outcome('draw', (0, 0, 0), 2)):
+            result = await self.fight(run)
+        self.assertEqual((result['status'], result['outcome'], result['revived']), ('defeated', 'draw', []))
+        self.assertEqual((await self.state())['run']['end_reason'], 'draw')
+        self.assertEqual(await self.rows('SELECT * FROM candy'), [])
+
+    async def test_fight_after_hour_18_refused_run_expired(self):
+        run = await self.hurt(await self.at_fight())
+        await self.inventory('razz_berry', 3)
+        before = await self.snapshot()
+        with patch.object(battle_engine, 'simulate', side_effect=AssertionError('expired run fought')):
+            self.assertEqual((await self.fight(run, now=65800))['status'], 'stale')
+            self.assertEqual((await self.fight(run, now=65800, berry='razz_berry'))['status'], 'stale')
+        before['arena_runs'][0].update(ended_at=65800, end_reason='expired', revision=1)
+        self.assertEqual(await self.snapshot(), before)
+
+    async def test_same_fight_never_resolves_twice(self):
+        run = await self.at_fight()
+        with patch.object(battle_engine, 'simulate', wraps=battle_engine.simulate) as simulate:
+            results = await asyncio.gather(self.fight(run), self.fight(run))
+            self.assertEqual([r['status'] for r in results], ['won', 'stale'])
+            self.assertEqual(simulate.call_count, 1)
+            before = await self.snapshot()
+            self.assertEqual((await self.fight(run))['status'], 'stale')
+            self.assertEqual(await self.snapshot(), before)
+        self.assertEqual(await self.scalar("SELECT count(*) FROM action_receipts WHERE action='arena_fight'"), 1)
+        self.assertEqual(await self.scalar('SELECT quantity FROM candy WHERE profile_id=?', (self.pid,)), 1)
+
+    async def test_regular_finisher_earns_one_candy_per_win_with_ledger_line(self):
+        run = await self.at_fight()
+        await self.conn.execute('INSERT INTO candy VALUES (?,1,7)', (self.pid,))
+        with patch.object(battle_engine, 'simulate', return_value=self.outcome(finisher=2)):
+            result = await self.fight(run)
+        self.assertEqual(result['candy'], {'family_id': 1, 'quantity': 1})
+        self.assertEqual(await self.scalar('SELECT quantity FROM candy WHERE profile_id=?', (self.pid,)), 8)
+        self.assertEqual(await self.rows('SELECT profile_id,resource,resource_id,delta,reason FROM resource_ledger'),
+                         [{'profile_id': self.pid, 'resource': 'candy', 'resource_id': '1',
+                           'delta': 1, 'reason': 'arena_candy'}])
+
+    async def test_special_finisher_earns_candy_only_on_boss(self):
+        for slot in (0, 1, 2):
+            with self.subTest(slot=slot):
+                await self.reset_run_fixture()
+                run = await self.at_fight(slot=slot, special=True)
+                with patch.object(battle_engine, 'simulate', return_value=self.outcome()):
+                    result = await self.fight(run)
+                amount = 1 if slot == 2 else 0
+                candy = await self.rows('SELECT family_id,quantity FROM candy')
+                self.assertEqual(candy, [{'family_id': run['team'][0]['family_id'], 'quantity': 1}] if amount else [])
+                self.assertEqual(result['candy'], {'family_id': run['team'][0]['family_id'], 'quantity': 1}
+                                 if amount else None)
+
+    async def test_regular_nonleading_finisher_gets_candy_with_special_leader(self):
+        for slot in (0, 1, 2):
+            with self.subTest(slot=slot):
+                await self.reset_run_fixture()
+                await self.conn.execute("UPDATE pokemon SET pokemon_id=4 WHERE pokemon_uid='m2'")
+                run = await self.at_fight(slot=slot, special=True)
+                leader, finisher = run['team'][0], run['team'][2]
+                self.assertTrue(leader['special'])
+                self.assertFalse(finisher['special'])
+                self.assertNotEqual(leader['family_id'], finisher['family_id'])
+                for member, quantity in ((leader, 5), (finisher, 7)):
+                    await self.conn.execute('INSERT INTO candy VALUES (?,?,?)',
+                                            (self.pid, member['family_id'], quantity))
+                with patch.object(battle_engine, 'simulate', return_value=self.outcome(finisher=2)):
+                    result = await self.fight(run)
+                self.assertEqual(result['finisher'], 2)
+                self.assertEqual(result['candy'], {'family_id': finisher['family_id'], 'quantity': 1})
+                self.assertEqual({row['family_id']: row['quantity'] for row in
+                                  await self.rows('SELECT family_id,quantity FROM candy')},
+                                 {leader['family_id']: 5, finisher['family_id']: 8})
+                self.assertEqual(await self.rows('SELECT profile_id,resource,resource_id,delta,reason '
+                                                 'FROM resource_ledger'),
+                                 [{'profile_id': self.pid, 'resource': 'candy',
+                                   'resource_id': str(finisher['family_id']), 'delta': 1, 'reason': 'arena_candy'}])
+
+    async def test_special_nonleading_finisher_gets_candy_only_on_boss_with_regular_leader(self):
+        for slot in (0, 1, 2):
+            with self.subTest(slot=slot):
+                await self.reset_run_fixture()
+                await self.conn.execute("UPDATE pokemon SET pokemon_id=144 WHERE pokemon_uid='m1'")
+                run = await self.at_fight(slot=slot)
+                leader, finisher = run['team'][0], run['team'][1]
+                self.assertFalse(leader['special'])
+                self.assertTrue(finisher['special'])
+                self.assertNotEqual(leader['family_id'], finisher['family_id'])
+                for member, quantity in ((leader, 5), (finisher, 7)):
+                    await self.conn.execute('INSERT INTO candy VALUES (?,?,?)',
+                                            (self.pid, member['family_id'], quantity))
+                with patch.object(battle_engine, 'simulate', return_value=self.outcome(finisher=1)):
+                    result = await self.fight(run)
+                amount = 1 if slot == 2 else 0
+                self.assertEqual(result['finisher'], 1)
+                self.assertEqual(result['candy'], {'family_id': finisher['family_id'], 'quantity': 1}
+                                 if amount else None)
+                self.assertEqual({row['family_id']: row['quantity'] for row in
+                                  await self.rows('SELECT family_id,quantity FROM candy')},
+                                 {leader['family_id']: 5, finisher['family_id']: 7 + amount})
+                self.assertEqual(await self.rows('SELECT profile_id,resource,resource_id,delta,reason '
+                                                 'FROM resource_ledger'),
+                                 [{'profile_id': self.pid, 'resource': 'candy',
+                                   'resource_id': str(finisher['family_id']), 'delta': 1, 'reason': 'arena_candy'}]
+                                 if amount else [])
+
+    async def test_candy_goes_to_snapshot_family_after_mid_run_evolution(self):
+        run = await self.at_fight()
+        await self.conn.execute("UPDATE pokemon SET pokemon_id=2,revision=revision+1 WHERE pokemon_uid='m0'")
+        identify = storage.identify
+
+        def frozen_only(content, pokemon):
+            self.assertIsNone(pokemon['pokemon_uid'], 'battle consulted a current storage identity')
+            return identify(content, pokemon)
+
+        with patch.object(storage, 'identify', side_effect=frozen_only), \
+                patch.object(battle_engine, 'simulate', return_value=self.outcome()):
+            result = await self.fight(run)
+        self.assertEqual(result['candy'], {'family_id': run['team'][0]['family_id'], 'quantity': 1})
+        self.assertEqual((await self.state())['run']['team'][0]['snapshot'], run['team'][0]['snapshot'])
+
+    async def test_boss_win_credits_scheduled_ticket(self):
+        for floor, tier in ((5, 'bronze'), (10, 'silver'), (25, 'gold'), (50, 'platinum'), (80, 'diamond')):
+            with self.subTest(floor=floor):
+                await self.reset_run_fixture()
+                run = await self.at_fight(floor=floor, slot=2)
+                await self.conn.execute('INSERT INTO arena_tickets VALUES (?,?,3)', (self.pid, tier))
+                with patch.object(battle_engine, 'simulate', return_value=self.outcome()):
+                    result = await self.fight(run)
+                copies = 1 if tier == 'bronze' else 2
+                self.assertEqual(result['tickets'], {'tier': tier, 'copies': copies, 'first_clear': tier != 'bronze'})
+                current = await self.state()
+                self.assertEqual((current['best_floor'], current['tickets'][tier]), (floor, 3 + copies))
+                self.assertEqual(await self.rows("SELECT resource,resource_id,delta,reason FROM resource_ledger "
+                                                 "WHERE resource='arena_ticket'"),
+                                 [{'resource': 'arena_ticket', 'resource_id': tier, 'delta': copies,
+                                   'reason': 'arena_floor'}])
+
+    async def test_first_clear_bonus_once_for_silver_or_better_not_bronze(self):
+        for floor, tier in ((5, 'bronze'), (10, 'silver'), (25, 'gold'), (50, 'platinum'), (80, 'diamond')):
+            for best in (0, floor, floor + 5):
+                with self.subTest(floor=floor, best=best):
+                    await self.reset_run_fixture()
+                    run = await self.at_fight(floor=floor, slot=2)
+                    await self.conn.execute('UPDATE profiles SET arena_best_floor=? WHERE profile_id=?', (best, self.pid))
+                    with patch.object(battle_engine, 'simulate', return_value=self.outcome()):
+                        result = await self.fight(run)
+                    bonus = best < floor and tier != 'bronze'
+                    self.assertEqual(result['tickets'], {'tier': tier, 'copies': 1 + bonus, 'first_clear': bonus})
+                    self.assertEqual((await self.state())['best_floor'], max(best, floor))
+
+    async def test_heal_all_and_fight_all_or_nothing_reports_short(self):
+        run = await self.hurt(await self.at_fight())
+        await self.inventory('razz_berry', 2)
+        before = await self.snapshot()
+        with patch.object(battle_engine, 'simulate', side_effect=AssertionError('short heal fought')):
+            self.assertEqual(await self.fight(run, berry='razz_berry'), {'status': 'missing', 'short': 1})
+        self.assertEqual(await self.snapshot(), before)
+        await self.inventory('razz_berry', 3)
+        with patch.object(battle_engine, 'simulate', wraps=battle_engine.simulate) as simulate:
+            self.assertEqual((await self.fight(run, berry='razz_berry'))['status'], 'won')
+            self.assertEqual([m.hp for m in simulate.call_args.args[0]], [m['full_hp'] for m in run['team']])
+        self.assertEqual(await self.scalar("SELECT quantity FROM inventory WHERE item_id='razz_berry'"), 0)
+        self.assertEqual((await self.state())['run']['revision'], 2)
+        self.assertEqual(await self.scalar("SELECT count(*) FROM action_receipts WHERE action='arena_heal'"), 1)
+
+    async def test_paused_member_can_fight_excluded_cannot(self):
+        run = await self.at_fight()
+        await self.conn.execute("INSERT INTO restrictions(guild_id,user_id,paused) VALUES ('g','u',1)")
+        await self.conn.execute('UPDATE guilds SET arena_enabled=0')
+        self.assertEqual((await self.fight(run))['status'], 'won')
+        run = (await self.state())['run']
+        await self.conn.execute('UPDATE restrictions SET excluded=1')
+        before = await self.snapshot()
+        with patch.object(battle_engine, 'simulate', side_effect=AssertionError('excluded member fought')):
+            self.assertEqual(await self.fight(run), {'status': 'excluded'})
+            self.assertEqual(await self.fight(run, berry='razz_berry'), {'status': 'excluded'})
+        self.assertEqual(await self.snapshot(), before)
+
+    async def test_fight_receipt_holds_no_event_text_and_has_profile_id(self):
+        run = await self.at_fight()
+        with patch.object(battle_engine, 'simulate', return_value=self.outcome()):
+            result = await self.fight(run)
+        receipt = (await self.rows("SELECT * FROM action_receipts WHERE action='arena_fight'"))[0]
+        self.assertEqual((receipt['key'], receipt['profile_id']), (f"arena_fight:{run['run_id']}:1:0", self.pid))
+        self.assertEqual(json.loads(receipt['result']), result)
+        self.assertNotIn('events', result)
+        self.assertNotIn('snapshot', receipt['result'])
+        self.assertNotIn('private battle event', receipt['result'])
+        self.assertEqual(set(result), {'status', 'outcome', 'reason', 'ticks', 'engine', 'floor', 'slot',
+                                       'enemy', 'party_hp', 'revived', 'finisher', 'candy', 'tickets'})
+        self.assertEqual(result['enemy'], {'name': run['enemy']['snapshot']['combatant']['name'],
+                                          'cp': run['enemy']['snapshot']['cp'],
+                                          'types': run['enemy']['snapshot']['combatant']['types']})
+
+    async def test_heal_and_fight_engine_failure_rolls_back_everything(self):
+        run = await self.hurt(await self.at_fight())
+        await self.inventory('razz_berry', 3)
+        before = await self.snapshot()
+        with patch.object(battle_engine, 'simulate', side_effect=RuntimeError('engine failed')):
+            with self.assertRaisesRegex(RuntimeError, 'engine failed'):
+                await self.fight(run, berry='razz_berry')
+        self.assertEqual(await self.snapshot(), before)
+
+    async def test_full_party_heal_and_fight_skips_debit_and_stale_actions_refused(self):
+        run = await self.at_fight()
+        before = await self.snapshot()
+        self.assertEqual(await self.fight(run, berry='golden_razz_berry'), {'status': 'invalid'})
+        self.assertEqual(await self.snapshot(), before)
+        self.assertEqual((await self.fight(run, berry='razz_berry'))['status'], 'won')
+        self.assertEqual(await self.scalar("SELECT count(*) FROM action_receipts WHERE action='arena_heal'"), 0)
+        self.assertEqual(await self.rows('SELECT * FROM inventory'), [])
+        current = (await self.state())['run']
+        before = await self.snapshot()
+        for stale in (run, {**current, 'run_id': 'other-run'}):
+            self.assertEqual(await self.fight(stale), {'status': 'stale', 'run': current})
+            self.assertEqual(await self.fight(stale, berry='razz_berry'), {'status': 'stale', 'run': current})
         self.assertEqual(await self.snapshot(), before)

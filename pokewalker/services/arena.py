@@ -2,11 +2,13 @@
 
 import json
 import math
+from dataclasses import replace
 from uuid import uuid4
 
 from content.balance import load_table
 from pokewalker.db import with_receipt
 from pokewalker.domain import arena as domain
+from pokewalker.domain import battle as battle_engine
 from pokewalker.services import gyms, profiles, storage
 
 
@@ -162,3 +164,79 @@ async def heal(conn, session, run_id, revision, positions, berry, now):
 
     return await with_receipt(conn, f'arena_heal:{run_id}:{revision}', 'arena_heal', compute,
                               profile_id=session['profile_id'])
+
+
+async def fight(conn, session, run_id, revision, now, rng, content, multipliers, battle_rules, chart):
+    current = await state(conn, session, now)
+    run, refusal = _live_run(current, run_id, revision)
+    if refusal:
+        return refusal
+    floor, slot = run['floor'], run['slot']
+    rules = load_table('arena')['rules']
+    pid = session['profile_id']
+
+    async def compute(conn):
+        party = [replace(battle_engine.Combatant(**member['snapshot']['combatant']), hp=member['hp'])
+                 for member in run['team']]
+        enemy = battle_engine.Combatant(**run['enemy']['snapshot']['combatant'])
+        battle = battle_engine.simulate(party, enemy, run['enemy']['battle_hp'], rules=battle_rules, chart=chart)
+        won = battle.outcome == 'win'
+        health = domain.revive(battle.party_hp) if won else battle.party_hp
+        for member, hp in zip(run['team'], health):
+            member['hp'] = hp
+        candy = tickets = None
+        lines = []
+        next_floor, next_slot = floor, slot
+        next_enemy = run['enemy']
+        if won:
+            finisher = run['team'][battle.finisher]
+            amount = domain.candy_for(finisher['special'], slot, rules)
+            if amount:
+                family = finisher['family_id']
+                await conn.execute('INSERT INTO candy VALUES (?,?,?) ON CONFLICT(profile_id,family_id) '
+                                   'DO UPDATE SET quantity=quantity+excluded.quantity', (pid, family, amount))
+                candy = {'family_id': family, 'quantity': amount}
+                lines.append({'profile_id': pid, 'resource': 'candy', 'resource_id': str(family),
+                              'delta': amount, 'reason': 'arena_candy'})
+            next_slot = slot + 1
+            if slot == 2:
+                next_floor, next_slot = floor + 1, 0
+                await conn.execute('UPDATE profiles SET arena_best_floor=MAX(arena_best_floor,?) WHERE profile_id=?',
+                                   (floor, pid))
+                tier = domain.ticket_for(floor, rules)
+                if tier is not None:
+                    first_clear = domain.first_clear_bonus(floor, current['best_floor'], rules)
+                    copies = 1 + int(first_clear)
+                    await conn.execute('INSERT INTO arena_tickets VALUES (?,?,?) ON CONFLICT(profile_id,tier) '
+                                       'DO UPDATE SET quantity=quantity+excluded.quantity', (pid, tier, copies))
+                    tickets = {'tier': tier, 'copies': copies, 'first_clear': first_clear}
+                    lines.append({'profile_id': pid, 'resource': 'arena_ticket', 'resource_id': tier,
+                                  'delta': copies, 'reason': 'arena_floor'})
+            next_enemy = _roll_enemy(next_floor, next_slot, rng, content, multipliers)
+        await conn.execute('UPDATE arena_runs SET team=?,enemy=?,floor=?,slot=?,ended_at=?,end_reason=?,'
+                           'revision=revision+1 WHERE run_id=?',
+                           (json.dumps(run['team']), json.dumps(next_enemy), next_floor, next_slot,
+                            None if won else now, None if won else battle.outcome, run_id))
+        return {'status': 'won' if won else 'defeated', 'outcome': battle.outcome, 'reason': battle.reason,
+                'ticks': battle.ticks, 'engine': battle.engine_version, 'floor': floor, 'slot': slot,
+                'enemy': {'name': enemy.name, 'cp': run['enemy']['snapshot']['cp'], 'types': list(enemy.types)},
+                'party_hp': list(battle.party_hp),
+                'revived': [i for i, hp in enumerate(battle.party_hp) if hp == 0] if won else [],
+                'finisher': battle.finisher, 'candy': candy, 'tickets': tickets}, lines
+
+    return await with_receipt(conn, f'arena_fight:{run_id}:{floor}:{slot}', 'arena_fight', compute, profile_id=pid)
+
+
+async def heal_all_and_fight(conn, session, run_id, revision, berry, now, rng, content, multipliers, battle_rules, chart):
+    run, refusal = _live_run(await state(conn, session, now), run_id, revision)
+    if refusal:
+        return refusal
+    if berry not in load_table('arena')['rules']['heal_items']:
+        return {'status': 'invalid'}
+    positions = [i for i, member in enumerate(run['team']) if member['hp'] < member['full_hp']]
+    if positions:
+        result = await heal(conn, session, run_id, revision, positions, berry, now)
+        if result['status'] != 'healed':
+            return result
+        revision = result['run']['revision']
+    return await fight(conn, session, run_id, revision, now, rng, content, multipliers, battle_rules, chart)
