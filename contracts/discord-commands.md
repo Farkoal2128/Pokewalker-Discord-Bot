@@ -1642,3 +1642,32 @@ survive subsequent runs. Producers: bot.arena; consumers: Discord session
 router and private Arena views. Services own all writes. Additive controls,
 no service/schema change; Fight until hurt is ARENA-24. Tests:
 test_arena_screens. Offline tests do not establish live Discord acceptance.
+
+
+## Arena Fight until hurt (ARENA-24)
+
+Additive private break action arena_until_hurt fills row 0 before Auto-order.
+The producer bot.arena returns only after_commit with the pressed run ID/revision;
+the existing Walker router runs it under the session lock after dispatch commits.
+Each chain_step gets a fresh clock and its own writer transaction, which saves the
+new run_revision in sessions.selection along with the fight and rewards. Only a
+won step with no stop continues at the committed revision. Existing single Fight
+and Heal all & fight result blocks stay unchanged.
+
+A chain lists each floor/fight, enemy name and CP, outcome, ticks and any Candy
+with its recipient, in order. Paying bosses retain the floor-ticket and first-clear
+lines; party lines show the order left. Level and IVs stay hidden. A paying floor
+stops a chain, bounding it to 15 fights. Below threshold before any fight says
+"<name> is below P%. Heal first, or use Fight." After a fight it says
+"Stopped: <name> is below P%." or "Stopped: <name> was revived at 1 HP."
+Ticket stops say "Stopped: floor N paid a ticket." Live stale runs redraw with
+STALE; ended runs show defeat. Without a run, stale/excluded returns REOPEN/EXCLUDED
+without saving the session. Every step rechecks expiry, exclusion and revision;
+a setting change elsewhere stops the chain. Pauses do not stop it.
+
+When a closed writer raises RuntimeError during bot shutdown, return the last
+committed rendering (if any) plus RESTARTING; otherwise propagate the error.
+Committed fights survive interruptions and cannot repeat. Consumers are private
+Discord views and the session router; no schema or service API changes.
+Tests: test_arena_screens, test_readme, test_walker_router. Offline evidence does
+not establish live Discord acceptance.

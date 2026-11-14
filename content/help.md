@@ -58,6 +58,10 @@ Use `/readme` to see this again.
 
 **Arena.** Open Arena from `/walker` and choose a fixed team of 3. Climb through three fights per floor: entry, middle and boss. Fight instantly, or heal before the next fight. HP carries between fights; berry healing uses Razz or Pinap Berries from your bag. A win revives fainted team members at 1 HP.
 
+Skip up to half your best floor (at most 40 floors) when choosing a team. Skipped reward floors pay their tickets immediately, without first-clear bonuses or Candy.
+
+Fight until hurt resolves fights in sequence without spending a berry. It stops when a member is below your threshold, is revived at 1 HP, a floor pays a ticket, or on defeat. A member already below the threshold will not fight; heal first or use Fight. Choose Stop below 10% through 90% (50% by default). Auto-order puts members with the highest HP percentage first before each chain fight, keeping ties in their current order. Changing a setting on another screen stops the chain; paused players can continue an existing run. The result lists every enemy fought and shows the party order left.
+
 Each 18-hour run ends on defeat or expiry. The 18-hour cooldown starts when the run starts. Backing out does not pause the clock; Resume returns to the same enemy and team HP. Your team cannot change during the run, and later power-ups or evolutions do not change its saved stats.
 
 **Arena rewards.** Each knockout gives Candy to the team member who dealt the final blow. Special Pokémon earn Candy only from boss knockouts. Boss wins at reward floors earn Bronze, Silver, Gold, Platinum or Diamond Tickets. Open Tickets in the Arena to see counts and contents, then confirm a redemption with at least one free encounter slot. Encounters join your queue; Stardust and item rewards wait in your Inbox. Tickets can be redeemed during a live run or while the server's Arena is off.
