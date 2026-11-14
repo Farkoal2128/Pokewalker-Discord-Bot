@@ -1,0 +1,164 @@
+"""Arena lifecycle inside the caller's writer transaction (C3, AR-1..8, AR-12..13)."""
+
+import json
+import math
+from uuid import uuid4
+
+from content.balance import load_table
+from pokewalker.db import with_receipt
+from pokewalker.domain import arena as domain
+from pokewalker.services import gyms, profiles, storage
+
+
+async def _latest_run(conn, profile_id):
+    async with conn.execute('SELECT * FROM arena_runs WHERE profile_id=? '
+                            'ORDER BY started_at DESC,run_id DESC LIMIT 1', (profile_id,)) as cursor:
+        row = await cursor.fetchone()
+    if row is None:
+        return None
+    run = dict(row)
+    for key in ('team', 'enemy'):
+        run[key] = json.loads(run[key])
+    return run
+
+
+async def state(conn, session, now):
+    if not conn.in_transaction:
+        raise RuntimeError('Arena requires an active writer transaction')
+    profile, refusal = await profiles.session_owner(conn, session)
+    if refusal:
+        return refusal
+    rules = load_table('arena')['rules']
+    run = await _latest_run(conn, profile['profile_id'])
+    if run and run['ended_at'] is None and now >= run['started_at'] + rules['run_seconds']:
+        await conn.execute("UPDATE arena_runs SET ended_at=?,end_reason='expired',revision=revision+1 WHERE run_id=?",
+                           (now, run['run_id']))
+        run.update(ended_at=now, end_reason='expired', revision=run['revision'] + 1)
+    async with conn.execute('SELECT arena_enabled FROM guilds WHERE guild_id=?', (profile['guild_id'],)) as cursor:
+        enabled = bool((await cursor.fetchone())[0])
+    async with conn.execute('SELECT tier,quantity FROM arena_tickets WHERE profile_id=?',
+                            (profile['profile_id'],)) as cursor:
+        tickets = {row['tier']: row['quantity'] for row in await cursor.fetchall()}
+    cooldown = max(0, math.ceil(run['started_at'] + rules['cooldown_seconds'] - now)) if run else 0
+    return {'status': 'none' if run is None else 'live' if run['ended_at'] is None else 'ended',
+            'run': run, 'cooldown_left': cooldown, 'enabled': enabled,
+            'best_floor': profile['arena_best_floor'], 'tickets': tickets}
+
+
+def _enemy_snapshot(rolled, content, multipliers):
+    identity = rolled['identity']
+    row = {'pokemon_uid': None, 'pokemon_id': identity['pokemon_id'], 'form_id': identity['form_id'],
+           'revision': 0, 'content_version': profiles.content_facts(content)[0],
+           'level_x2': rolled['level_x2'], 'gender': 'genderless', 'shiny': 0,
+           **dict(zip(('iv_attack', 'iv_defense', 'iv_stamina'), rolled['ivs']))}
+    combatant, snapshot = gyms._battle_snapshot(row, content, multipliers)
+    return {'snapshot': snapshot, 'battle_hp': domain.enemy_hp(combatant.hp, rolled['factor_x10']),
+            'special': rolled['special']}
+
+
+def _roll_enemy(floor, slot, rng, content, multipliers):
+    rolled = domain.roll_enemy(floor, slot, content['identities'], rng, load_table('arena')['rules'])
+    return _enemy_snapshot(rolled, content, multipliers)
+
+
+async def start(conn, session, team, now, rng, content, multipliers):
+    current = await state(conn, session, now)
+    if current['status'] in ('stale', 'excluded'):
+        return current
+    flags = await profiles.restrictions(conn, session['guild_id'], session['user_id'])
+    if flags.paused:
+        return {'status': 'paused', 'until': flags.paused_until.isoformat() if flags.paused_until else None}
+    if not current['enabled']:
+        return {'status': 'off'}
+    if current['status'] == 'live':
+        return current
+    if current['cooldown_left']:
+        return {'status': 'cooldown', 'seconds_left': current['cooldown_left']}
+    rules = load_table('arena')['rules']
+    if (not isinstance(team, (list, tuple)) or len(team) != rules['team_size']
+            or any(not isinstance(pair, (list, tuple)) or len(pair) != 2
+                   or not isinstance(pair[0], str) or type(pair[1]) is not int for pair in team)
+            or len({uid for uid, _ in team}) != rules['team_size']):
+        return {'status': 'invalid'}
+    members = []
+    for uid, revision in team:
+        pokemon = await storage.detail(conn, session['profile_id'], uid)
+        if pokemon is None or pokemon['revision'] != revision:
+            return {'status': 'stale'}
+        if pokemon['gym_deployment_id'] is not None:
+            return {'status': 'deployed'}
+        members.append(pokemon)
+
+    async def compute(conn):
+        snapshots = []
+        for pokemon in members:
+            identity, _ = storage.identify(content, pokemon)
+            combatant, snapshot = gyms._battle_snapshot(pokemon, content, multipliers)
+            snapshots.append({'uid': pokemon['pokemon_uid'], 'family_id': identity['family_id'],
+                              'special': domain.is_special(identity, rules), 'full_hp': combatant.hp,
+                              'hp': combatant.hp, 'snapshot': snapshot})
+        enemy = _roll_enemy(1, 0, rng, content, multipliers)
+        await conn.execute('INSERT INTO arena_runs(run_id,profile_id,started_at,floor,slot,team,enemy) '
+                           'VALUES (?,?,?,1,0,?,?)',
+                           (str(uuid4()), session['profile_id'], now, json.dumps(snapshots), json.dumps(enemy)))
+        return {'status': 'started', 'run': await _latest_run(conn, session['profile_id'])}, []
+
+    revision = session.get('_original_revision', session['revision'])
+    return await with_receipt(conn, f"arena_start:{session['session_id']}:{revision}", 'arena_start', compute,
+                              profile_id=session['profile_id'])
+
+
+def _live_run(current, run_id, revision):
+    if current['status'] in ('stale', 'excluded'):
+        return None, current
+    run = current['run']
+    if current['status'] != 'live' or run['run_id'] != run_id or run['revision'] != revision:
+        return None, {'status': 'stale', 'run': run}
+    return run, None
+
+
+async def set_order(conn, session, run_id, revision, order, now):
+    run, refusal = _live_run(await state(conn, session, now), run_id, revision)
+    if refusal:
+        return refusal
+    if (not isinstance(order, (list, tuple)) or any(type(position) is not int for position in order)
+            or sorted(order) != list(range(len(run['team'])))):
+        return {'status': 'invalid'}
+    run['team'] = [run['team'][position] for position in order]
+    await conn.execute('UPDATE arena_runs SET team=?,revision=revision+1 WHERE run_id=?',
+                       (json.dumps(run['team']), run_id))
+    run['revision'] += 1
+    return {'status': 'ordered', 'run': run}
+
+
+async def heal(conn, session, run_id, revision, positions, berry, now):
+    run, refusal = _live_run(await state(conn, session, now), run_id, revision)
+    if refusal:
+        return refusal
+    if (berry not in load_table('arena')['rules']['heal_items'] or not isinstance(positions, (list, tuple))
+            or not positions or any(type(position) is not int or not 0 <= position < len(run['team'])
+                                    for position in positions) or len(set(positions)) != len(positions)):
+        return {'status': 'invalid'}
+    if any(run['team'][position]['hp'] >= run['team'][position]['full_hp'] for position in positions):
+        return {'status': 'full'}
+    async with conn.execute('SELECT quantity FROM inventory WHERE profile_id=? AND item_id=?',
+                            (session['profile_id'], berry)) as cursor:
+        held = await cursor.fetchone()
+    short = len(positions) - (held['quantity'] if held else 0)
+    if short > 0:
+        return {'status': 'missing', 'short': short}
+
+    async def compute(conn):
+        for position in positions:
+            run['team'][position]['hp'] = run['team'][position]['full_hp']
+        await conn.execute('UPDATE inventory SET quantity=quantity-? WHERE profile_id=? AND item_id=?',
+                           (len(positions), session['profile_id'], berry))
+        await conn.execute('UPDATE arena_runs SET team=?,revision=revision+1 WHERE run_id=?',
+                           (json.dumps(run['team']), run_id))
+        run['revision'] += 1
+        return {'status': 'healed', 'run': run}, [
+            {'profile_id': session['profile_id'], 'resource': 'item', 'resource_id': berry,
+             'delta': -len(positions), 'reason': 'arena_heal'}]
+
+    return await with_receipt(conn, f'arena_heal:{run_id}:{revision}', 'arena_heal', compute,
+                              profile_id=session['profile_id'])
