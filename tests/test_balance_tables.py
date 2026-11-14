@@ -77,10 +77,12 @@ class BalanceTableTests(unittest.TestCase):
         table = self.load("arena")
         self.assertIn("docs/features/arena/REQUIREMENTS.md", table["source"])
         self.assertIn("owner approval 2026-11-13", table["source"])
+        self.assertIn("section 6.3", table["source"])
+        self.assertIn("owner ruling 2026-11-14", table["source"])
         self.assertIn("https://www.serebii.net/pokemon/ultrabeasts.shtml", table["source"])
         self.assertIn("https://www.serebii.net/scarletviolet/paradoxpokemon.shtml", table["source"])
         self.assertEqual(table["checked"], "2026-11-13")
-        self.assertEqual(table["version"], 1)
+        self.assertEqual(table["version"], 2)
         self.assertEqual(table["rules"], {
             "run_seconds": 64800, "cooldown_seconds": 64800, "team_size": 3,
             "heal_items": ["razz_berry", "pinap_berry"], "level_cap": 40,
@@ -113,7 +115,25 @@ class BalanceTableTests(unittest.TestCase):
                 "first_clear_tiers": ["silver", "gold", "platinum", "diamond"],
             },
             "skip": {"divisor": 2, "max": 40},
+            "leaderboard": {
+                "min_floor": 10, "shown": 10,
+                "rewards": [["master_ball", "shiny_lure", "world_legendary_ticket"],
+                            ["master_ball", "shiny_lure"], ["master_ball"]],
+            },
         })
+
+    def test_arena_leaderboard_rewards_are_rare_pocket_items(self):
+        leaderboard = self.load("arena")["rules"]["leaderboard"]
+        pockets = self.load("capacities")["limits"]["rare_pockets"]
+        for key in ("min_floor", "shown"):
+            self.assertIs(type(leaderboard[key]), int)
+            self.assertGreater(leaderboard[key], 0)
+        for place, rewards in enumerate(leaderboard["rewards"], 1):
+            with self.subTest(place=place):
+                self.assertEqual(len(rewards), len(set(rewards)))
+                for item in rewards:
+                    self.assertIn(item, pockets)
+                    self.assertEqual(pockets[item], 1)
 
     def test_arena_ultra_beasts_equal_milestone_first_catch_list(self):
         species = self.load("arena")["rules"]["special"]["ultra_beast_species"]
@@ -376,7 +396,7 @@ class BalanceTableTests(unittest.TestCase):
                 date.fromisoformat(table["checked"])
                 versions = {"find_table": 2, "conversion_rates": 4, "capacities": 3, "routes": 2,
                             "survivor_table": 3, "catch": 4, "gym_income_table": 2, "checkin_table": 2,
-                            "battle": 2}
+                            "battle": 2, "arena": 2}
                 self.assertEqual(table["version"], versions.get(name, 1))
                 amended = {"survivor_table", "conversion_rates", "gym_income_table", "checkin_table"}
                 if name == "catch":
@@ -389,6 +409,8 @@ class BalanceTableTests(unittest.TestCase):
                 elif name == "battle":
                     self.assertEqual(table["checked"], "2026-11-12")
                     self.assertIn("D62 (owner decision 2026-11-12)", table["source"])
+                elif name == "arena":
+                    self.assertEqual(table["checked"], "2026-11-13")
                 elif name in versions.keys() | {"evolution"}:
                     self.assertEqual(table["checked"], "2026-11-05")
         root = Path(__file__).parents[1] / "content" / "balance"

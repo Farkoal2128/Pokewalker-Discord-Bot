@@ -461,3 +461,31 @@ roll values precede inventory limits and exclude encounter value and berry costs
 The analytic payout is separate from existing walking/catching scenario income
 and existing PASS/FAIL checks. Tests: test_economy_arena and the existing economy
 model, D47 and report CLI suites.
+
+
+## Arena leaderboard rules (version 2)
+Owner ruling 2026-11-14, Arena requirements section 6.3 (AR-38, AR-40, AR-41),
+adds rules.leaderboard after skip. min_floor = 10 is the lowest cleared floor
+eligible for a monthly reward; shown = 10 is the number of board rows rendered.
+Both are positive integer counts. rewards is ordered by place, starting at 1:
+
+| Place | One of each item |
+|---|---|
+| 1 | master_ball, shiny_lure, world_legendary_ticket |
+| 2 | master_ball, shiny_lure |
+| 3 | master_ball |
+
+The paid-place count is len(rewards), exactly 3; nothing below those places pays.
+Items cannot repeat within a place. All are capacities.limits.rare_pockets keys
+with cap 1, so existing inbox claim retains rewards while their pocket is full.
+shiny_lure is the consumable; Shiny Charm is not a reward.
+
+Repository authors produce arena.json version 2 and its manifest balance hash.
+source also cites section 6.3 and the 2026-11-14 owner ruling; checked remains
+2026-11-13 because the species references were not rechecked. Existing rules,
+other tables and artifact_sha256 remain unchanged. Consumers are settle
+(ARENA-22) and the leaderboard screen (ARENA-23); existing consumers ignore the
+additive key. The economy report does not model these monthly rewards: at most
+3 Master Balls, 2 Shiny Lures and 1 World Legendary Ticket per server and month.
+Only its manifest hash and arena.json version input lines change. Tests:
+test_balance_tables, test_content_integrity and report regeneration comparison.
