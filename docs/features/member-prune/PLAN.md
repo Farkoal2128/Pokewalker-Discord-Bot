@@ -1,6 +1,7 @@
 # Plan: member-prune — `/walker-admin prune` deletes game data of players who left
 
-**Status:** MP-1 built on feature/member-prune; awaiting owner smoke, delivery and command sync (G-F)
+**Status:** MP-1 built; owner smoke PASS on the live bot 2026-11-14 (c686418 deployed, `sync-commands --global --yes` run); merged to `main`; push pending (G-F)
+**Smoke:** owner, prepared server with one enrolled player who caught a Pokémon and was kicked: dry run reported 1 of 2 profiles no longer members; `confirm=True` deleted that profile only; `/walker-mod log` showed one `prune` row; a second confirmed run deleted 0.
 **Review:** plan: Codex gpt-6-astra rounds 1-2 NO-GO, round 3 GO (MUST 0, SHOULD 0). Code: Codex ponytail-review on 045a620 GO, 1 SHOULD fixed in 81b9f19. Full `test_cmd` PASS on tree a173ee7 (1,695 tests, 1 skipped; guard; verify unit and contract), 2026-11-14.
 **Home:** feature/member-prune · D:\Projects\Pokewalker Discord Bot\.claude\worktrees\elegant-haibt-afa2c5
 **Inputs:** [README.md](README.md) (PR1–PR11, the authority) · [PIPELINE.md](../../../PIPELINE.md) · [AGENTS.md](../../../AGENTS.md)
@@ -119,7 +120,7 @@
 | 1 | 🚦 G-A plan approval, Home and delivery scope | 🚦 | — | — | pending |
 | 2 | 🚦 G-P approved-plan publication (proposed: none) | 🚦 | — | — | pending |
 | 3 | [MP-1](tickets/MP-1.md) `/walker-admin prune`: contracts, tests, command, help line | build | seam | M | pending |
-| 4 | 🚦 G-F final checkpoint, owner smoke and delivery | 🚦 | — | — | pending |
+| 4 | 🚦 G-F final checkpoint, owner smoke and delivery | 🚦 | — | — | smoke PASS, deployed, synced, merged; push pending |
 
 ## 5. Briefs
 
