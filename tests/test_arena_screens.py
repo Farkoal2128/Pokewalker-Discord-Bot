@@ -27,6 +27,8 @@ class ArenaScreenTests(unittest.IsolatedAsyncioTestCase):
         self.walker = SimpleNamespace(bot=SimpleNamespace(content=test_arena.CONTENT),
                                       clock=lambda: self.now, rng=random.Random(7),
                                       multipliers=test_arena.MULTIPLIERS)
+        await self.conn.execute("UPDATE pokemon SET pokemon_id=4 WHERE pokemon_uid='m1'")
+        await self.conn.execute("UPDATE pokemon SET pokemon_id=7 WHERE pokemon_uid='m2'")
 
     def screens(self):
         try:
@@ -158,7 +160,8 @@ class ArenaScreenTests(unittest.IsolatedAsyncioTestCase):
     async def test_start_opens_break_screen_with_enemy_species_types_cp_only(self):
         rendered = await self.start_run()
         run = (await self.writer.run(lambda conn: service.state(conn, self.session, self.now)))['run']
-        self.assertEqual(self.selection(), {'phase': 'arena_break', 'run_id': run['run_id'], 'run_revision': run['revision']})
+        self.assertEqual(self.selection(), {'phase': 'arena_break', 'run_id': run['run_id'],
+                                           'run_revision': run['revision'], 'berry': 'razz_berry'})
         identity, sprite = test_arena.storage.identify(test_arena.CONTENT, run['enemy']['snapshot'])
         text = rendered['embed'].description
         for fragment in (identity['name_en'], str(run['enemy']['snapshot']['cp']), *[kind.title() for kind in identity['types']]):
@@ -212,7 +215,9 @@ class ArenaScreenTests(unittest.IsolatedAsyncioTestCase):
     async def test_action_names_match_router_pattern(self):
         mapping = self.screens().handlers(self.walker)
         expected = {'arena', 'arena_resume', 'arena_team', 'arena_team_prev', 'arena_team_next',
-                    'arena_team_sort', 'arena_team_pick', 'arena_team_clear', 'arena_start'}
+                    'arena_team_sort', 'arena_team_pick', 'arena_team_clear', 'arena_start',
+                    'arena_fight', 'arena_heal_fight', 'arena_heal_one', 'arena_heal_two',
+                    'arena_heal_three', 'arena_berry', 'arena_order'}
         self.assertEqual(set(mapping), expected)
         for action in mapping:
             self.assertIsNotNone(re.fullmatch('[a-z_]+', action))
@@ -222,9 +227,12 @@ class ArenaScreenTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_render_functions_do_no_io(self):
         screens = self.screens()
-        for action, function in [('arena', 'render_home'), ('arena_team', 'render_team'), ('arena_start', 'render_break')]:
+        for action, function in [('arena', 'render_home'), ('arena_team', 'render_team'),
+                                  ('arena_start', 'render_break'), ('arena_resume', 'render_defeat')]:
             if action == 'arena_start':
                 await self.picked()
+            elif function == 'render_defeat':
+                self.now += test_arena.RULES['run_seconds']
             renderer = getattr(screens, function)
             with patch.object(screens, function, wraps=renderer) as rendered:
                 await self.click(action)
@@ -247,12 +255,250 @@ class ArenaScreenTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.scalar('SELECT count(*) FROM arena_runs'), 0)
         self.assertEqual(self.session['selection'], '{}')
 
-    async def test_resume_at_hour_18_expires_and_returns_home(self):
+    async def test_resume_at_hour_18_expires_and_returns_defeat(self):
         await self.start_run()
         self.now += test_arena.RULES['run_seconds']
         rendered = await self.click('arena_resume')
-        self.assertEqual(rendered['embed'].title, 'Arena')
-        self.assertIn('Your last run ended on floor 1.', rendered['embed'].description)
+        self.assertEqual(rendered['embed'].title, 'Arena defeat')
+        self.assertIn('18 hours passed', rendered['embed'].description)
         self.assertEqual(await self.rows('SELECT ended_at,end_reason,revision FROM arena_runs'),
                          [{'ended_at': self.now, 'end_reason': 'expired', 'revision': 1}])
-        self.assertFalse(self.button(rendered, 'arena_team').disabled)
+        self.assertEqual(self.button(rendered, 'arena').label, 'Back')
+
+    inventory = test_arena.ArenaTests.inventory
+    outcome = test_arena.ArenaTests.outcome
+
+    async def run_state(self):
+        return (await self.writer.run(lambda conn: service.state(conn, self.session, self.now)))['run']
+
+    async def hurt_team(self, hp=(1, 2, 3)):
+        run = await self.run_state()
+        for member, health in zip(run['team'], hp):
+            member['hp'] = health
+        await self.conn.execute('UPDATE arena_runs SET team=? WHERE run_id=?', (json.dumps(run['team']), run['run_id']))
+        return run
+
+    async def resource_snapshot(self):
+        return {table: await self.rows(f'SELECT * FROM {table} ORDER BY 1') for table in
+                ('arena_runs', 'profiles', 'inventory', 'arena_tickets', 'action_receipts', 'resource_ledger', 'candy')}
+
+    async def test_break_screen_layout_rows_and_disabled_heal_at_full_hp(self):
+        rendered = await self.start_run()
+        self.assertIn('arena_fight', [item.custom_id.rsplit(':', 1)[-1] for item in rendered['view'].children])
+        rows = {action: self.button(rendered, action).row for action in
+                ('arena_fight', 'arena_heal_fight', 'arena', 'arena_heal_one', 'arena_heal_two',
+                 'arena_heal_three', 'arena_berry', 'arena_order')}
+        self.assertEqual(rows, {'arena_fight': 0, 'arena_heal_fight': 0, 'arena': 0,
+                                'arena_heal_one': 1, 'arena_heal_two': 1, 'arena_heal_three': 1,
+                                'arena_berry': 2, 'arena_order': 3})
+        for word in ('one', 'two', 'three'):
+            self.assertTrue(self.button(rendered, 'arena_heal_' + word).disabled)
+
+    async def test_berry_default_is_larger_stock_and_choice_persists(self):
+        await self.inventory('razz_berry', 2)
+        await self.inventory('pinap_berry', 3)
+        rendered = await self.start_run()
+        self.assertEqual(self.selection()['berry'], 'pinap_berry')
+        self.assertEqual([option.label for option in self.button(rendered, 'arena_berry').options],
+                         ['Razz Berry ×2', 'Pinap Berry ×3'])
+        await self.click('arena_berry', ['razz_berry'])
+        await self.inventory('pinap_berry', 10)
+        await self.click('arena')
+        resumed = await self.click('arena_resume')
+        self.assertEqual(self.selection()['berry'], 'razz_berry')
+        self.assertTrue(next(option for option in self.button(resumed, 'arena_berry').options
+                             if option.value == 'razz_berry').default)
+        for values in (['golden_razz_berry'], [], ['razz_berry', 'pinap_berry']):
+            with self.assertRaises(_Refused):
+                await self.click('arena_berry', values)
+
+    async def test_heal_spends_selected_berry_and_redraws(self):
+        await self.inventory('pinap_berry', 2)
+        await self.start_run()
+        await self.hurt_team()
+        healed = await self.click('arena_heal_two')
+        run = await self.run_state()
+        self.assertEqual([member['hp'] for member in run['team']], [1, run['team'][1]['full_hp'], 3])
+        self.assertEqual(await self.scalar("SELECT quantity FROM inventory WHERE item_id='pinap_berry'"), 1)
+        self.assertEqual(self.selection()['run_revision'], run['revision'])
+        self.assertTrue(self.button(healed, 'arena_heal_two').disabled)
+        before = await self.resource_snapshot()
+        await self.click('arena_heal_two')
+        self.assertEqual(await self.resource_snapshot(), before)
+        await self.inventory('pinap_berry', 0)
+        missing = await self.click('arena_heal_one')
+        self.assertIn('You have no Pinap Berry.', missing['embed'].description)
+
+    async def test_mixing_berry_types_between_heal_presses(self):
+        await self.inventory('razz_berry', 2)
+        await self.inventory('pinap_berry', 2)
+        await self.start_run()
+        await self.hurt_team()
+        self.assertEqual(self.selection()['berry'], 'razz_berry')
+        await self.click('arena_heal_one')
+        await self.click('arena_berry', ['pinap_berry'])
+        await self.click('arena_heal_three')
+        self.assertEqual(await self.rows('SELECT item_id,quantity FROM inventory ORDER BY item_id'),
+                         [{'item_id': 'pinap_berry', 'quantity': 1}, {'item_id': 'razz_berry', 'quantity': 1}])
+        self.assertEqual([line['resource_id'] for line in await self.rows("SELECT resource_id FROM resource_ledger WHERE reason='arena_heal'")],
+                         ['razz_berry', 'pinap_berry'])
+
+    async def test_heal_all_and_fight_reports_missing_count_spends_nothing(self):
+        await self.inventory('razz_berry', 1)
+        await self.start_run()
+        await self.hurt_team()
+        before = await self.resource_snapshot()
+        with patch.object(test_arena.battle_engine, 'simulate', side_effect=AssertionError('unexpected fight')):
+            rendered = await self.click('arena_heal_fight')
+        self.assertIn('You need 2 more Razz Berry. Nothing was spent.', rendered['embed'].description)
+        self.assertEqual(await self.resource_snapshot(), before)
+
+    async def test_heal_all_and_fight_success_commits_once_and_preserves_choice(self):
+        await self.inventory('razz_berry', 4)
+        await self.inventory('pinap_berry', 3)
+        await self.start_run()
+        await self.hurt_team()
+        await self.click('arena_berry', ['pinap_berry'])
+        with patch.object(test_arena.battle_engine, 'simulate', return_value=self.outcome()) as simulated:
+            rendered = await self.click('arena_heal_fight')
+        simulated.assert_called_once()
+        run = await self.run_state()
+        self.assertEqual([member.hp for member in simulated.call_args.args[0]],
+                         [member['full_hp'] for member in run['team']])
+        self.assertEqual(await self.scalar("SELECT quantity FROM inventory WHERE item_id='pinap_berry'"), 0)
+        self.assertEqual(await self.rows("SELECT resource_id,delta FROM resource_ledger WHERE reason='arena_heal'"),
+                         [{'resource_id': 'pinap_berry', 'delta': -3}])
+        self.assertEqual(run['revision'], 2)
+        self.assertEqual(self.selection()['berry'], 'pinap_berry')
+        self.assertIn('Win · 9 ticks', rendered['embed'].description)
+
+    async def test_fight_win_shows_result_block_then_next_enemy(self):
+        await self.start_run()
+        before = await self.run_state()
+        with patch.object(test_arena.battle_engine, 'simulate', return_value=self.outcome(hp=(3, 4, 5))):
+            rendered = await self.click('arena_fight')
+        run = await self.run_state()
+        text = rendered['embed'].description
+        self.assertIn(f"{before['enemy']['snapshot']['combatant']['name']} · CP {before['enemy']['snapshot']['cp']}", text)
+        for fragment in ('Win · 9 ticks', 'Candy: +1', 'HP 3', 'HP 4', 'HP 5', 'middle fight', 'Next enemy:'):
+            self.assertIn(fragment, text)
+        self.assertLess(text.index('Win · 9 ticks'), text.index('Next enemy:'))
+        self.assertEqual(run['slot'], 1)
+        self.assertEqual(self.selection()['run_revision'], run['revision'])
+
+    async def test_cleared_floor_shows_ticket_and_first_clear_lines(self):
+        await self.start_run()
+        await self.conn.execute('UPDATE arena_runs SET floor=10,slot=2')
+        with patch.object(test_arena.battle_engine, 'simulate', return_value=self.outcome()):
+            rendered = await self.click('arena_fight')
+        self.assertIn('Floor 10 cleared: Silver Ticket', rendered['embed'].description)
+        self.assertIn('First clear: +1 Silver Ticket', rendered['embed'].description)
+        self.assertEqual(await self.scalar('SELECT quantity FROM arena_tickets'), 2)
+
+    async def test_revived_member_shown_at_one_hp_in_same_position(self):
+        await self.start_run()
+        with patch.object(test_arena.battle_engine, 'simulate', return_value=self.outcome(hp=(0, 4, 5), finisher=1)):
+            rendered = await self.click('arena_fight')
+        run = await self.run_state()
+        self.assertEqual([member['uid'] for member in run['team']], ['m0', 'm1', 'm2'])
+        self.assertEqual(run['team'][0]['hp'], 1)
+        self.assertIn('Bulbasaur revived at 1 HP.', rendered['embed'].description)
+        self.assertIn(f"1: Bulbasaur · HP 1 / {run['team'][0]['full_hp']}", rendered['embed'].description)
+
+    async def test_order_select_reorders_party_and_persists_after_back_out(self):
+        rendered = await self.start_run()
+        options = self.button(rendered, 'arena_order').options
+        self.assertEqual(len(options), 6)
+        self.assertEqual(len({option.value for option in options}), 6)
+        self.assertEqual([option.value for option in options if option.default], ['012'])
+        self.assertTrue(all(name in options[0].label for name in ('Bulbasaur', 'Charmander', 'Squirtle')))
+        await self.click('arena_order', ['210'])
+        run = await self.run_state()
+        self.assertEqual([member['uid'] for member in run['team']], ['m2', 'm1', 'm0'])
+        self.assertEqual(await self.rows('SELECT * FROM resource_ledger'), [])
+        await self.click('arena')
+        resumed = await self.click('arena_resume')
+        self.assertIn('1: Squirtle', resumed['embed'].description)
+        self.assertEqual(await self.run_state(), run)
+        for values in (['000'], ['abc'], [], ['012', '210']):
+            with self.assertRaises(_Refused):
+                await self.click('arena_order', values)
+
+    async def test_defeat_and_expiry_show_defeat_screen_without_give_up(self):
+        await self.start_run()
+        for outcome, reason, message in [('loss', 'party_fainted', 'lost'), ('draw', 'tick_limit', 'time limit'),
+                                          ('draw', 'double_ko', 'double knockout')]:
+            with self.subTest(outcome=outcome, reason=reason):
+                await self.conn.execute('UPDATE arena_runs SET ended_at=NULL,end_reason=NULL')
+                await self.hurt_team()
+                await self.click('arena_resume')
+                result = test_arena.battle_engine.Result(outcome, reason, 9, (), (), party_hp=(0, 0, 0))
+                with patch.object(test_arena.battle_engine, 'simulate', return_value=result):
+                    rendered = await self.click('arena_fight')
+                self.assertEqual(rendered['embed'].title, 'Arena defeat')
+                self.assertIn('Floor 1', rendered['embed'].description)
+                self.assertIn('entry fight', rendered['embed'].description)
+                self.assertIn(message, rendered['embed'].description)
+                self.assertEqual(self.button(rendered, 'arena_tickets').label, 'Tickets')
+                self.assertEqual(self.button(rendered, 'arena').label, 'Back')
+                self.assertFalse(any('give up' in getattr(item, 'label', '').lower() for item in rendered['view'].children))
+                await self.conn.execute('DELETE FROM action_receipts')
+        await self.conn.execute('UPDATE arena_runs SET ended_at=NULL,end_reason=NULL')
+        await self.click('arena_resume')
+        self.now += test_arena.RULES['run_seconds']
+        expired = await self.click('arena_fight')
+        self.assertIn('18 hours passed', expired['embed'].description)
+        home = await self.click('arena')
+        self.assertEqual(home['embed'].title, 'Arena')
+
+    async def test_stale_screen_spends_nothing_and_redraws_current_state(self):
+        await self.inventory('razz_berry', 10)
+        await self.start_run()
+        run = await self.hurt_team()
+        old = dict(self.selection())
+        await self.writer.run(lambda conn: service.set_order(conn, self.session, run['run_id'], run['revision'], [2, 1, 0], self.now))
+        before = await self.resource_snapshot()
+        for action, values in [('arena_fight', []), ('arena_heal_fight', []), ('arena_heal_one', []),
+                                ('arena_order', ['012']), ('arena_berry', ['pinap_berry'])]:
+            with self.subTest(action=action):
+                self.session['selection'] = json.dumps(old)
+                with patch.object(test_arena.battle_engine, 'simulate', side_effect=AssertionError('stale fight')):
+                    rendered = await self.click(action, values)
+                self.assertIn('The run changed on another screen. This is its current state.', rendered['embed'].description)
+                self.assertEqual(await self.resource_snapshot(), before)
+                self.assertEqual(self.selection()['run_revision'], 1)
+                self.assertEqual(self.selection()['berry'], 'razz_berry')
+
+    async def test_second_open_screen_must_redraw_before_fighting(self):
+        await self.start_run()
+        first = self.session
+        await self.conn.execute('INSERT INTO sessions(session_id,guild_id,user_id,profile_id,revision,expires_at) '
+                                "VALUES ('abce','g','u',?,0,1e12)", (self.pid,))
+        self.session = {**first, 'session_id': 'abce', 'selection': '{}'}
+        await self.click('arena_resume')
+        await self.click('arena_order', ['210'])
+        self.session = first
+        before = await self.resource_snapshot()
+        with patch.object(test_arena.battle_engine, 'simulate', side_effect=AssertionError('stale fight')):
+            rendered = await self.click('arena_fight')
+        self.assertIn('The run changed on another screen.', rendered['embed'].description)
+        self.assertEqual(await self.resource_snapshot(), before)
+        with patch.object(test_arena.battle_engine, 'simulate', return_value=self.outcome()):
+            self.assertIn('Win · 9 ticks', (await self.click('arena_fight'))['embed'].description)
+
+    async def test_enemy_level_and_ivs_never_rendered(self):
+        await self.start_run()
+        for outcome in ('win', 'loss'):
+            with patch.object(test_arena.battle_engine, 'simulate', return_value=self.outcome(outcome)):
+                rendered = await self.click('arena_fight')
+            self.assertNotRegex(rendered['embed'].description, r'(?i)\blevel\b|\bivs?\b|iv_attack|level_x2')
+
+    async def test_views_within_5_rows_unique_custom_ids(self):
+        views = [await self.click('arena'), await self.click('arena_team'), await self.start_run()]
+        self.now += test_arena.RULES['run_seconds']
+        views.append(await self.click('arena_resume'))
+        for rendered in views:
+            ids = [item.custom_id for item in rendered['view'].children]
+            self.assertEqual(len(ids), len(set(ids)))
+            if rendered['embed'].title == 'Arena break':
+                self.assertEqual({item.row for item in rendered['view'].children}, {0, 1, 2, 3})
