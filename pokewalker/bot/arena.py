@@ -139,7 +139,7 @@ def render_team(state):
     if state.get('notice'):
         lines.append(state['notice'])
     view = gyms.buttons(state, [('Prev', 'arena_team_prev'), ('Next', 'arena_team_next'),
-                               (gyms.sort_label(selection['favorites_first']), 'arena_team_sort'), ('Back', 'arena')])
+                               (storage.sort_label(storage.sort_of(selection)), 'arena_team_sort'), ('Back', 'arena')])
     view.children[0].disabled = selection['offset'] == 0
     view.children[1].disabled = selection['offset'] + 10 >= state['total']
     options = []
@@ -314,12 +314,11 @@ def handlers(walker):
                 'special': domain.is_special(item['identity'], rules)}
 
     async def team_state(conn, session, selection, best_floor, notice=None):
-        rows, total = await storage.page(conn, session['profile_id'], selection['offset'],
-                                         favorites_first=selection['favorites_first'])
+        sorted_by = {'sort': storage.sort_of(selection), 'content': walker.bot.content, 'multipliers': walker.multipliers}
+        rows, total = await storage.page(conn, session['profile_id'], selection['offset'], **sorted_by)
         if selection['offset'] and not rows:
             selection['offset'] = max(0, (total - 1) // 10 * 10)
-            rows, total = await storage.page(conn, session['profile_id'], selection['offset'],
-                                             favorites_first=selection['favorites_first'])
+            rows, total = await storage.page(conn, session['profile_id'], selection['offset'], **sorted_by)
         members = []
         for uid, revision in selection['team']:
             pokemon = await storage.detail(conn, session['profile_id'], uid)
@@ -496,7 +495,7 @@ def handlers(walker):
                                 'until': flags.paused_until.isoformat() if flags.paused_until else None})
         selection = json.loads(session['selection'])
         if action == 'arena_team':
-            selection = {'phase': 'arena_team', 'team': [], 'offset': 0, 'favorites_first': False, 'skip': 0}
+            selection = {'phase': 'arena_team', 'team': [], 'offset': 0, 'sort': 'newest', 'skip': 0}
         elif selection.get('phase') != 'arena_team':
             raise _Refused(REOPEN)
         selection.setdefault('skip', 0)
@@ -510,7 +509,9 @@ def handlers(walker):
             selection['offset'] = max(0, min(selection['offset'] + (10 if action == 'arena_team_next' else -10),
                                              max(0, (total - 1) // 10 * 10)))
         if action == 'arena_team_sort':
-            selection.update(favorites_first=not selection['favorites_first'], offset=0)
+            sort = storage.next_sort(storage.sort_of(selection))
+            selection.pop('favorites_first', None)
+            selection.update(sort=sort, offset=0)
         if action == 'arena_team_clear':
             selection['team'] = []
         state = await team_state(conn, session, selection, current['best_floor'])

@@ -23,7 +23,8 @@ TRADE_TIMED_OUT = "This window timed out. Please reopen /trade for a fresh one."
 TRADE_OUTDATED = "This screen is out of date. Please reopen /trade to refresh."
 TRADE_REOPEN = "That option changed since this screen opened. Please reopen /trade to refresh."
 NOT_YOURS = "This screen is not yours. Open /walker for your own screen."
-ACTIONS = {"trade_pick", "trade_offer", "trade_confirm", "trade_refresh", "trade_cancel", "trade_prev", "trade_next"}
+ACTIONS = {"trade_pick", "trade_offer", "trade_confirm", "trade_refresh", "trade_cancel", "trade_prev", "trade_next",
+           "trade_sort"}
 
 
 class TradeScreenTests(unittest.IsolatedAsyncioTestCase):
@@ -274,9 +275,9 @@ class TradeScreenTests(unittest.IsolatedAsyncioTestCase):
         text, view = self.shown(await self.press(456, "trade_pick"))
         self.assertIn("11 tradable of 13 owned · favorites, your companion and gym defenders can't be traded", text)
         controls = self.controls(view)
-        self.assertEqual(set(controls), {"trade_offer", "trade_prev", "trade_next", "trade_refresh"})
-        self.assertEqual([controls[key].label for key in ("trade_prev", "trade_next", "trade_refresh")],
-                         ["Prev", "Next", "Back"])
+        self.assertEqual(set(controls), {"trade_offer", "trade_prev", "trade_next", "trade_sort", "trade_refresh"})
+        self.assertEqual([controls[key].label for key in ("trade_prev", "trade_next", "trade_sort", "trade_refresh")],
+                         ["Prev", "Next", "Highest CP", "Back"])
         options = controls["trade_offer"].options
         self.assertEqual([option.value for option in options], [f"m{number:02}" for number in range(10)])
         self.assertTrue(options[0].label.startswith("#1 Pidgey · CP "))
@@ -292,6 +293,26 @@ class TradeScreenTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.controls(view)["trade_offer"].options), 10)
         text, view = self.shown(await self.press(456, "trade_refresh"))
         self.assertIn("Trade with <@789>", text)
+
+    async def test_picker_sorts_highest_cp_and_offers_from_sorted_page(self):
+        await self.pair()
+        for number in range(11):
+            await self.mon(456, f"m{number:02}", caught_at=1000 - number)
+        await self.writer.run(lambda conn: conn.execute("UPDATE pokemon SET level_x2=80 WHERE pokemon_uid='m10'"))
+        _, view = self.shown(await self.press(456, "trade_pick"))
+        self.assertNotEqual(self.controls(view)["trade_offer"].options[0].value, "m10")
+        _, view = self.shown(await self.press(456, "trade_sort"))
+        controls = self.controls(view)
+        self.assertEqual(controls["trade_offer"].options[0].value, "m10")
+        self.assertEqual(controls["trade_sort"].label, "Newest first")
+        self.assertEqual(json.loads((await self.session(456))["selection"])["sort"], "cp")
+        _, view = self.shown(await self.press(456, "trade_next"))
+        self.assertNotIn("m10", [option.value for option in self.controls(view)["trade_offer"].options])
+        await self.press(456, "trade_prev")
+        text, _ = self.shown(await self.press(456, "trade_offer", ["m10"]))
+        self.assertIn("Pidgey", text)
+        _, view = self.shown(await self.press(456, "trade_pick"))
+        self.assertEqual(self.controls(view)["trade_sort"].label, "Highest CP")
 
     async def test_picker_refuses_value_not_on_shown_page(self):
         trade_id = await self.pair()

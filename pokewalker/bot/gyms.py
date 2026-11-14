@@ -70,26 +70,21 @@ def render_deploy(state):
         if state['sprite'] is not None:
             embed.set_image(url=state['sprite'])
         return {'embed': embed, 'view': buttons(state, [('Confirm', 'gym_deploy_confirm'), ('Back', 'gym_deploy')])}
-    favorites_first = state.get('favorites_first', False)
+    sort = storage.sort_of(state)
     lines = [f"{state['total']} owned Pokémon · page {state['offset'] // 10 + 1}"
-             + (' · favorites first' if favorites_first else '')]
+             + {'newest': '', 'favorites': ' · favorites first', 'cp': ' · highest CP'}[sort]]
     options = []
     for item in state['rows']:
         label = f"{item['identity']['name_en']} · CP {item['cp']}" + (f" · disabled: {item['reason']}" if item['reason'] else '')
         lines.append(label)
         options.append(discord.SelectOption(label=label[:100], value=item['pokemon']['pokemon_uid']))
     view = buttons(state, [('Prev', 'gym_deploy_prev'), ('Next', 'gym_deploy_next'),
-                           (sort_label(favorites_first), 'gym_deploy_sort'), ('Back', 'gym_view')])
+                           (storage.sort_label(sort), 'gym_deploy_sort'), ('Back', 'gym_view')])
     view.children[0].disabled = state['offset'] == 0
     view.children[1].disabled = state['offset'] + 10 >= state['total']
     if options:
         view.add_item(discord.ui.Select(placeholder='Choose defender', custom_id=custom_id(state, 'gym_deploy_select'), options=options))
     return {'embed': discord.Embed(title='Deploy defender', description='\n'.join(lines)), 'view': view}
-
-
-def sort_label(favorites_first):
-    """The picker sort toggle names the order a press switches to."""
-    return 'Newest first' if favorites_first else 'Favorites first'
 
 
 def render_recall(state):
@@ -108,7 +103,7 @@ def render_party(state):
     view = discord.ui.View(timeout=None)
     for label, action, disabled in (('Prev', 'gym_party_prev', selection['offset'] == 0),
                                     ('Next', 'gym_party_next', selection['offset'] + 10 >= state['total']),
-                                    (sort_label(selection.get('favorites_first', False)), 'gym_party_sort', False),
+                                    (storage.sort_label(storage.sort_of(selection)), 'gym_party_sort', False),
                                     ('Back', 'gym_view', False)):
         view.add_item(discord.ui.Button(label=label, custom_id=custom_id(state, action), row=0, disabled=disabled))
     options = []
@@ -221,7 +216,8 @@ def handlers(walker):
     async def party_state(conn, session, selection, profile, arena_team, notice=None):
         legendary_ok = await service.legendary_defenders_allowed(conn, session['guild_id'])
         rows, total = await storage.page(conn, session['profile_id'], selection['offset'],
-                                         favorites_first=selection.get('favorites_first', False))
+                                         sort=storage.sort_of(selection), content=walker.bot.content,
+                                         multipliers=walker.multipliers)
         members = []
         for slot in selection['party'] + [None] * (battle_rules['party_max'] - len(selection['party'])):
             pokemon = await storage.detail(conn, session['profile_id'], slot[0]) if slot else None
@@ -269,7 +265,8 @@ def handlers(walker):
             _, total = await storage.page(conn, session['profile_id'], 0)
             selection['offset'] = max(0, min(selection['offset'] + (10 if action == 'gym_party_next' else -10), max(0, (total - 1) // 10 * 10)))
         if action == 'gym_party_sort':
-            selection.update(favorites_first=not selection.get('favorites_first', False), offset=0)
+            selection.pop('favorites_first', None)
+            selection.update(sort=storage.next_sort(storage.sort_of(selection)), offset=0)
         if action.startswith('gym_party_slot_'):
             selection['slot'] = ('one', 'two', 'three').index(action.rsplit('_', 1)[1]) + 1
             if selection['slot'] > battle_rules['party_max']:  # a slot button from before D62a
@@ -345,15 +342,18 @@ def handlers(walker):
             return render_view(state)
         if action in ('gym_deploy', 'gym_deploy_prev', 'gym_deploy_next', 'gym_deploy_select', 'gym_deploy_sort'):
             offset = max(0, selection.get('offset', 0) + {'gym_deploy_prev': -10, 'gym_deploy_next': 10}.get(action, 0))
-            favorites_first = selection.get('favorites_first', False) != (action == 'gym_deploy_sort')
+            sort = storage.sort_of(selection)
+            if action == 'gym_deploy_sort':
+                sort = storage.next_sort(sort)
+            sorted_by = {'sort': sort, 'content': walker.bot.content, 'multipliers': walker.multipliers}
             if action in ('gym_deploy', 'gym_deploy_sort'):
                 offset = 0
-            rows, total = await storage.page(conn, session['profile_id'], offset, favorites_first=favorites_first)
+            rows, total = await storage.page(conn, session['profile_id'], offset, **sorted_by)
             legendary_ok = await service.legendary_defenders_allowed(conn, guild)
             arena_team = await profiles.arena_team(conn, session['profile_id'], now)
             if offset and not rows:
                 offset = max(0, (total - 1) // 10 * 10)
-                rows, total = await storage.page(conn, session['profile_id'], offset, favorites_first=favorites_first)
+                rows, total = await storage.page(conn, session['profile_id'], offset, **sorted_by)
             if action == 'gym_deploy_select':
                 values = interaction.data.get('values', [])
                 pokemon = next((row for row in rows if len(values) == 1 and row['pokemon_uid'] == values[0]), None)
@@ -365,13 +365,12 @@ def handlers(walker):
                 selection.update(phase='gym_deploy_confirm', pokemon_uid=pokemon['pokemon_uid'], pokemon_revision=pokemon['revision'])
                 session['selection'] = json.dumps(selection)
                 return render_deploy({'session': session, 'gym': gym, 'confirm': True, **item})
-            session['selection'] = json.dumps({'gym_id': gym['gym_id'], 'offset': offset,
-                                               'favorites_first': favorites_first})
+            session['selection'] = json.dumps({'gym_id': gym['gym_id'], 'offset': offset, 'sort': sort})
             items = [pokemon_state(row) for row in rows]
             for item in items:
                 item['reason'] = reason(item['pokemon'], item['identity'], profile, arena_team, legendary_ok=legendary_ok)
             return render_deploy({'session': session, 'rows': items, 'total': total, 'offset': offset,
-                                  'favorites_first': favorites_first})
+                                  'sort': sort})
         notice = None
         if action == 'gym_deploy_confirm':
             if selection.get('phase') != 'gym_deploy_confirm':

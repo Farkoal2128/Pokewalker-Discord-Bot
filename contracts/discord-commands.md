@@ -963,6 +963,30 @@ Storage `page` gains `favorites_first` (ORDER BY favorite DESC first). Eligibili
 page-membership checks are unchanged. Tests: tests/test_gym_screens.py,
 tests/test_gym_battle.py.
 
+## C5: D65 Highest CP sort in every Pokémon picker
+Supersedes the two-way toggle above and the Arena `arena_team_sort` wording. Each picker
+that lists the player's Pokémon has one sort button whose label names the order a press
+switches to; a press re-pages from page 1 and keeps picks.
+- Storage (`storage_sort`, row 0 before Back), gym deploy (`gym_deploy_sort`), gym party
+  (`gym_party_sort`) and Arena team (`arena_team_sort`) cycle Newest first → Favorites
+  first → Highest CP → Newest first. Labels read "Favorites first", "Highest CP" and
+  "Newest first" in that cycle.
+- Trade offer (`trade_sort`, row 1 before Back) and research (`research_sort`, row 1 after
+  Next) cycle Newest first ↔ Highest CP, because favorites cannot be traded or sent.
+- Highest CP orders by the displayed CP, highest first; equal CP keeps newest first
+  (descending catch time, then UID). CP is computed from content, so that order ranks every
+  matching row in Python before taking the page; other orders stay in SQL.
+- The order lives in the screen selection as `sort` (`newest`, `favorites` or `cp`) and
+  survives paging, picking, opening a Pokémon and Back. Storage, trade and research omit
+  the key for newest; gym and Arena write it. A selection saved before D65 with
+  `favorites_first: true` reads as `favorites`. The gym deploy page line adds
+  " · favorites first" or " · highest CP". Page-membership checks for pick/open/offer use
+  the same order, and eligibility rules are unchanged. Services: `storage.ordered`,
+  `storage.page(sort=, content=, multipliers=)`, `trading.eligible_page(..., sort, content,
+  multipliers)`, `research.candidates(..., sort, multipliers)`. Tests: tests/test_storage.py,
+  tests/test_gym_screens.py, tests/test_gym_battle.py, tests/test_arena_screens.py,
+  tests/test_trade_screens.py, tests/test_research.py.
+
 ## C5: D64 Shiny Charm in Bag
 Only a player who owns the charm sees the Bag line "Shiny Charm: On · 4× shiny odds on every
 encounter" (or "Shiny Charm: Off") and a **Turn Shiny Charm off|on** button

@@ -19,14 +19,13 @@ def protected_reason(identity, pokemon, profile, arena_team=frozenset()):
     return None
 
 
-async def candidates(conn, profile_id, content, offset, now):
+async def candidates(conn, profile_id, content, offset, now, sort="newest", multipliers=None):
     async with conn.execute("SELECT * FROM profiles WHERE profile_id=?", (profile_id,)) as cursor:
         profile = await cursor.fetchone()
     arena_team = await profiles.arena_team(conn, profile_id, now)
     total = await storage.owned_count(conn, profile_id)
-    async with conn.execute("SELECT * FROM pokemon WHERE profile_id=? AND state='owned' "
-                            "ORDER BY caught_at DESC,pokemon_uid LIMIT 5 OFFSET ?", (profile_id, offset)) as cursor:
-        pokemon = [dict(row) for row in await cursor.fetchall()]
+    pokemon = await storage.ordered(conn, "profile_id=? AND state='owned'", (profile_id,), offset, 5,
+                                    sort, content, multipliers)
     rows = []
     for item in pokemon:
         identity, sprite = storage.identify(content, item)

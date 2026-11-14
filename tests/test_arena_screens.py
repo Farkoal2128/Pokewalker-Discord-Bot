@@ -393,7 +393,7 @@ class ArenaScreenTests(unittest.IsolatedAsyncioTestCase):
                                     (f'new{index:02}', self.pid, index + 1))
         await self.conn.execute("UPDATE pokemon SET favorite=1 WHERE pokemon_uid='m0'")
         first = await self.click('arena_team')
-        self.assertEqual(self.selection(), {'phase': 'arena_team', 'team': [], 'offset': 0, 'favorites_first': False, 'skip': 0})
+        self.assertEqual(self.selection(), {'phase': 'arena_team', 'team': [], 'offset': 0, 'sort': 'newest', 'skip': 0})
         self.assertEqual(self.button(first, 'arena_team_sort').label, 'Favorites first')
         select = next(item for item in first['view'].children if hasattr(item, 'options'))
         self.assertEqual(select.options[0].value, 'new10')
@@ -406,8 +406,25 @@ class ArenaScreenTests(unittest.IsolatedAsyncioTestCase):
         sorted_view = await self.click('arena_team_sort')
         select = next(item for item in sorted_view['view'].children if hasattr(item, 'options'))
         self.assertEqual(select.options[0].value, 'm0')
-        self.assertEqual(self.button(sorted_view, 'arena_team_sort').label, 'Newest first')
+        self.assertEqual(self.button(sorted_view, 'arena_team_sort').label, 'Highest CP')
         self.assertEqual(self.selection()['offset'], 0)
+
+    async def test_team_picker_sorts_highest_cp(self):
+        for index in range(11):
+            await self.conn.execute('INSERT INTO pokemon(pokemon_uid,profile_id,pokemon_id,level_x2,iv_attack,'
+                                    'iv_defense,iv_stamina,gender,shiny,origin,content_version,caught_at) '
+                                    "VALUES (?,?,1,20,10,10,10,'male',0,'catch','test',?)",
+                                    (f'new{index:02}', self.pid, index + 1))
+        await self.conn.execute("UPDATE pokemon SET level_x2=80 WHERE pokemon_uid='new03'")
+        await self.click('arena_team')
+        await self.click('arena_team_sort')
+        shown = await self.click('arena_team_sort')
+        select = next(item for item in shown['view'].children if hasattr(item, 'options'))
+        self.assertEqual(select.options[0].value, 'new03')
+        self.assertEqual(self.button(shown, 'arena_team_sort').label, 'Newest first')
+        self.assertEqual(self.selection()['sort'], 'cp')
+        await self.click('arena_team_pick', ['new03'])
+        self.assertEqual([uid for uid, _ in self.selection()['team']], ['new03'])
 
     async def test_skip_select_hidden_at_best_floor_below_2(self):
         for best in (0, 1):
@@ -457,7 +474,7 @@ class ArenaScreenTests(unittest.IsolatedAsyncioTestCase):
         await self.click('arena_team_sort')
         self.assertEqual(self.selection()['skip'], 40)
         self.assertEqual(self.selection()['team'], before['team'])
-        self.assertTrue(self.selection()['favorites_first'])
+        self.assertEqual(self.selection()['sort'], 'favorites')
         self.assertIn('Skipping 1 floors pays now: nothing.', (await self.click('arena_skip', ['1']))['embed'].description)
 
     async def test_skip_value_out_of_range_or_malformed_refused(self):

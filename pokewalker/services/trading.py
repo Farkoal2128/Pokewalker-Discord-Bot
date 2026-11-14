@@ -28,8 +28,8 @@ def tradable_reason(identity, pokemon, profile, arena_team=frozenset()):
     return reason if reason in REFUSED else None
 
 
-async def eligible_page(conn, profile_id, offset, now):
-    args = {'pid': profile_id, 'offset': offset}
+async def eligible_page(conn, profile_id, offset, now, sort='newest', content=None, multipliers=None):
+    args = {'pid': profile_id}
     team = await profiles.arena_team(conn, profile_id, now)
     tradable = _TRADABLE
     if team:
@@ -39,9 +39,8 @@ async def eligible_page(conn, profile_id, offset, now):
         eligible = (await cursor.fetchone())[0]
     async with conn.execute("SELECT count(*) FROM pokemon WHERE profile_id=:pid AND state='owned'", args) as cursor:
         owned = (await cursor.fetchone())[0]
-    async with conn.execute(f'SELECT * FROM pokemon WHERE profile_id=:pid AND {tradable} '
-                            'ORDER BY caught_at DESC,pokemon_uid LIMIT 10 OFFSET :offset', args) as cursor:
-        return [dict(row) for row in await cursor.fetchall()], eligible, owned
+    rows = await storage.ordered(conn, f'profile_id=:pid AND {tradable}', args, offset, 10, sort, content, multipliers)
+    return rows, eligible, owned
 
 
 def cap_left(profile, now):

@@ -15,6 +15,7 @@ from pokewalker.services import profiles, storage, trading
 from pokewalker.services.deletion import opted_out
 
 ENDED = "This trade ended. Use /trade member to start again."
+SORTS = ("newest", "cp")  # favorites cannot be traded, so the picker has no favorites order
 REASONS = {"favorite": "it is a favorite", "companion": "it is a companion", "deployed": "it is defending a gym",
            "not_owned": "it is no longer in storage", "changed": "it changed after it was offered",
            "in_arena": "it is on an Arena team"}
@@ -74,6 +75,7 @@ def render_picker(state):
         lines.append(state["notice"])
     view = _view(state, (("Prev", "trade_prev", state["offset"] == 0, 1),
                          ("Next", "trade_next", state["offset"] + 10 >= state["eligible"], 1),
+                         (storage.sort_label(state.get("sort", "newest"), SORTS), "trade_sort", False, 1),
                          ("Back", "trade_refresh", False, 1)))
     if state["rows"]:
         view.add_item(discord.ui.Select(placeholder="Offer a Pokémon", custom_id=custom_id(state, "trade_offer"), row=0,
@@ -107,9 +109,13 @@ def handlers(walker):
             raise _Refused(TRADE_REOPEN)
         return selection
 
-    def save(session, trade_id, revision, phase, offset=0):
+    def save(session, trade_id, revision, phase, offset=0, sort="newest"):
         session["selection"] = json.dumps({"trade_id": trade_id, "trade_revision": revision,
-                                           "phase": phase, "offset": offset})
+                                           "phase": phase, "offset": offset, **({"sort": sort} if sort != "newest" else {})})
+
+    async def eligible(conn, session, offset, sort):
+        return await trading.eligible_page(conn, session["profile_id"], offset, walker.clock(), sort,
+                                           walker.bot.content, walker.multipliers)
 
     async def snapshot(conn, session, trade_id):
         state = await trading.view(conn, session, trade_id, walker.clock(), walker.bot.content, walker.multipliers)
@@ -125,17 +131,17 @@ def handlers(walker):
         save(session, trade_id, state["revision"], "trade")
         return render_trade({**state, "notice": notice(state) if callable(notice) else notice})
 
-    async def picker(conn, session, trade_id, offset):
+    async def picker(conn, session, trade_id, offset, sort="newest"):
         state = await snapshot(conn, session, trade_id)
         if state["state"] != "open":
             save(session, trade_id, state["revision"], "result")
             return render_result(state)
-        rows, eligible, owned = await trading.eligible_page(conn, session["profile_id"], offset, walker.clock())
+        rows, count, owned = await eligible(conn, session, offset, sort)
         if offset and not rows:
-            offset = max(0, (eligible - 1) // 10 * 10)
-            rows, eligible, owned = await trading.eligible_page(conn, session["profile_id"], offset, walker.clock())
-        save(session, trade_id, state["revision"], "pick", offset)
-        return render_picker({"session": session, "offset": offset, "eligible": eligible, "owned": owned,
+            offset = max(0, (count - 1) // 10 * 10)
+            rows, count, owned = await eligible(conn, session, offset, sort)
+        save(session, trade_id, state["revision"], "pick", offset, sort)
+        return render_picker({"session": session, "offset": offset, "eligible": count, "owned": owned, "sort": sort,
                               "rows": [storage.stats(walker.bot.content, row, walker.multipliers) for row in rows]})
 
     async def trade_refresh(conn, session, interaction):
@@ -146,7 +152,12 @@ def handlers(walker):
 
     async def trade_page(conn, session, interaction, *, delta):
         selection = selected(session, "pick")
-        return await picker(conn, session, selection["trade_id"], max(0, selection.get("offset", 0) + delta))
+        return await picker(conn, session, selection["trade_id"], max(0, selection.get("offset", 0) + delta),
+                            storage.sort_of(selection))
+
+    async def trade_sort(conn, session, interaction):
+        selection = selected(session, "pick")
+        return await picker(conn, session, selection["trade_id"], 0, storage.next_sort(storage.sort_of(selection), SORTS))
 
     async def ended(conn, session, trade_id, result, notices):
         if result["status"] in ("expired", "ended", "completed"):
@@ -157,7 +168,7 @@ def handlers(walker):
 
     async def trade_offer(conn, session, interaction):
         selection = selected(session, "pick")
-        rows, _, _ = await trading.eligible_page(conn, session["profile_id"], selection.get("offset", 0), walker.clock())
+        rows, _, _ = await eligible(conn, session, selection.get("offset", 0), storage.sort_of(selection))
         values = interaction.data.get("values", [])
         if len(values) != 1 or values[0] not in {row["pokemon_uid"] for row in rows}:
             raise _Refused(TRADE_REOPEN)
@@ -185,7 +196,8 @@ def handlers(walker):
 
     return {"trade_pick": trade_pick, "trade_offer": trade_offer, "trade_confirm": trade_confirm,
             "trade_refresh": trade_refresh, "trade_cancel": trade_cancel,
-            "trade_prev": partial(trade_page, delta=-10), "trade_next": partial(trade_page, delta=10)}
+            "trade_prev": partial(trade_page, delta=-10), "trade_next": partial(trade_page, delta=10),
+            "trade_sort": trade_sort}
 
 
 def _capped(seconds):

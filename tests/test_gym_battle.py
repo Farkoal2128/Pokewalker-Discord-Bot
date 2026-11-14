@@ -462,13 +462,27 @@ class GymBattleScreenTests(unittest.IsolatedAsyncioTestCase):
         await self.click('gym_party_next')
         shown = await self.click('gym_party_sort')
         self.assertEqual(self.selection()['offset'], 0)
-        self.assertEqual(self.component(shown, 'gym_party_sort').label, 'Newest first')
+        self.assertEqual(self.component(shown, 'gym_party_sort').label, 'Highest CP')
         self.assertEqual(self.component(shown, 'gym_party_pick').options[0].value, 'a11')
         await self.click('gym_party_pick', ['a11'])
         self.assertEqual(self.selection()['party'], [['a11', 0]])
         shown = await self.click('gym_party_sort')
-        self.assertEqual(self.component(shown, 'gym_party_sort').label, 'Favorites first')
+        self.assertEqual(self.component(shown, 'gym_party_sort').label, 'Newest first')
         self.assertEqual(self.selection()['party'], [['a11', 0]])
+
+    async def test_party_picker_sorts_highest_cp(self):
+        for i in range(12):
+            await self.pokemon(f'a{i:02}')
+        await self.conn.execute("UPDATE pokemon SET level_x2=80 WHERE pokemon_uid='a07'")
+        shown = await self.preview()
+        self.assertNotEqual(self.component(shown, 'gym_party_pick').options[0].value, 'a07')
+        await self.click('gym_party_sort')
+        shown = await self.click('gym_party_sort')
+        self.assertEqual(self.selection()['sort'], 'cp')
+        self.assertEqual(self.component(shown, 'gym_party_sort').label, 'Newest first')
+        self.assertEqual(self.component(shown, 'gym_party_pick').options[0].value, 'a07')
+        await self.click('gym_party_pick', ['a07'])
+        self.assertEqual(self.selection()['party'], [['a07', 0]])
 
     async def test_party_saved_before_one_attacker_rule_is_refused(self):
         await self.preview()

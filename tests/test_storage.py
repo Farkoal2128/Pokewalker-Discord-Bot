@@ -322,6 +322,56 @@ class StorageTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Bulbasaur", research_text)
         self.assertIn("12 owned", research_text)
 
+    async def test_service_page_sorts_highest_cp_across_pages(self):
+        session = await self.prepared(12)
+        await self.writer.run(lambda conn: conn.execute(
+            "UPDATE pokemon SET level_x2=CASE pokemon_uid WHEN 'p-003' THEN 80 WHEN 'p-007' THEN 60 ELSE 10 END"))
+        service, pid = self.service(), self.profile["profile_id"]
+        multipliers = self.walker.multipliers
+        first, total = await service.page(self.conn, pid, 0, sort="cp", content=self.bot.content, multipliers=multipliers)
+        second, _ = await service.page(self.conn, pid, 10, sort="cp", content=self.bot.content, multipliers=multipliers)
+        newest, _ = await service.page(self.conn, pid, 0)
+        self.assertEqual(total, 12)
+        self.assertEqual([row["pokemon_uid"] for row in first[:2]], ["p-003", "p-007"])
+        self.assertEqual(len(first) + len(second), 12)
+        cps = [service.stats(self.bot.content, row, multipliers)["cp"] for row in first + second]
+        self.assertEqual(cps, sorted(cps, reverse=True))
+        # Equal CP keeps the newest-first order.
+        self.assertEqual([row["pokemon_uid"] for row in first[2:5]],
+                         [row["pokemon_uid"] for row in newest if row["pokemon_uid"] not in ("p-003", "p-007")][:3])
+
+    async def test_sort_cycles_newest_favorites_highest_cp_and_survives_details(self):
+        session = await self.prepared(12)
+        await self.writer.run(lambda conn: conn.execute(
+            "UPDATE pokemon SET favorite=CASE pokemon_uid WHEN 'p-001' THEN 1 ELSE 0 END,"
+            "level_x2=CASE pokemon_uid WHEN 'p-003' THEN 80 WHEN 'p-007' THEN 60 ELSE 10 END"))
+
+        def uids(rendered):
+            return [option.value for option in next(i for i in rendered["view"].children if hasattr(i, "options")).options]
+
+        async def press(session, action):
+            rendered = (await self.click(session, action)).edit_original_response.await_args.kwargs
+            return rendered, await self.current(session)
+
+        rendered, session = await self.storage(session)
+        self.assertEqual(uids(rendered)[0], "p-011")
+        self.assertIn("Favorites first", self.buttons(rendered))
+        rendered, session = await press(session, "storage_sort")
+        self.assertEqual(uids(rendered)[0], "p-001")
+        self.assertIn("Highest CP", self.buttons(rendered))
+        rendered, session = await press(session, "storage_sort")
+        self.assertEqual(uids(rendered)[:2], ["p-003", "p-007"])
+        self.assertIn("Newest first", self.buttons(rendered))
+        self.assertEqual(json.loads(session["selection"]), {"offset": 0, "sort": "cp"})
+        rendered, session = await self.details(session, "p-007")
+        self.assertEqual(json.loads(session["selection"])["sort"], "cp")
+        rendered, session = await press(session, "storage_back")
+        self.assertEqual(uids(rendered)[:2], ["p-003", "p-007"])
+        rendered, session = await press(session, "storage_sort")
+        self.assertEqual(uids(rendered)[0], "p-011")
+        self.assertIn("Favorites first", self.buttons(rendered))
+        self.assertEqual(json.loads(session["selection"]), {"offset": 0})
+
     async def test_sent_pokemon_not_listed(self):
         session = await self.prepared(2, state="sent")
         rows, total = await self.service().page(self.conn, self.profile["profile_id"], 0)

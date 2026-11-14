@@ -28,6 +28,7 @@ def render_page(state):
     view = discord.ui.View(timeout=None)
     for label, action, disabled in (("Prev", "storage_prev", state["offset"] == 0),
                                     ("Next", "storage_page", state["offset"] + 10 >= state["total"]),
+                                    (service.sort_label(state.get("sort", "newest")), "storage_sort", False),
                                     ("Back", "storage_back", False)):
         view.add_item(discord.ui.Button(label=label, custom_id=custom_id(state, action), disabled=disabled, row=0))
     view.add_item(discord.ui.Button(label="Show all" if favorite_only else "Favorites only",
@@ -102,22 +103,29 @@ def handlers(walker):
     def item_state(pokemon):
         return service.stats(walker.bot.content, pokemon, walker.multipliers)
 
-    async def show_page(conn, session, offset, favorite_only=None, notice=None):
+    def sorted_by(sort):
+        return {"sort": sort, "content": walker.bot.content, "multipliers": walker.multipliers}
+
+    async def show_page(conn, session, offset, favorite_only=None, notice=None, sort=None):
         if session["profile_id"] is None:
             raise _Refused(REOPEN)
         selection = json.loads(session["selection"])
         if favorite_only is None:
             favorite_only = selection.get("favorite_only", False)
-        rows, total = await service.page(conn, session["profile_id"], offset, favorite_only)
+        if sort is None:
+            sort = service.sort_of(selection)
+        rows, total = await service.page(conn, session["profile_id"], offset, favorite_only, **sorted_by(sort))
         if offset and not rows:
             offset = max(0, (total - 1) // 10 * 10)
-            rows, total = await service.page(conn, session["profile_id"], offset, favorite_only)
+            rows, total = await service.page(conn, session["profile_id"], offset, favorite_only, **sorted_by(sort))
         selection = {"offset": offset}
         if favorite_only:
             selection["favorite_only"] = True
+        if sort != "newest":
+            selection["sort"] = sort
         session["selection"] = json.dumps(selection)
         return render_page({"session": session, "rows": [item_state(row) for row in rows],
-                            "total": total, "offset": offset, "favorite_only": favorite_only,
+                            "total": total, "offset": offset, "favorite_only": favorite_only, "sort": sort,
                             "limit": (await capacity.limits_for(conn, session["profile_id"]))["storage"],
                             "can_expand": True, "notice": notice})
 
@@ -159,6 +167,9 @@ def handlers(walker):
         selection = json.loads(session["selection"])
         return await show_page(conn, session, 0, not selection.get("favorite_only", False))
 
+    async def storage_sort(conn, session, interaction):
+        return await show_page(conn, session, 0, sort=service.next_sort(service.sort_of(json.loads(session["selection"]))))
+
     async def show_detail(conn, session, pokemon):
         selection = json.loads(session["selection"])
         selection.update(pokemon_uid=pokemon["pokemon_uid"], pokemon_revision=pokemon["revision"])
@@ -186,7 +197,7 @@ def handlers(walker):
     async def storage_open(conn, session, interaction):
         selection = json.loads(session["selection"])
         rows, _ = await service.page(conn, session["profile_id"], selection.get("offset", 0),
-                                     selection.get("favorite_only", False))
+                                     selection.get("favorite_only", False), **sorted_by(service.sort_of(selection)))
         values = interaction.data.get("values", [])
         if len(values) != 1 or values[0] not in {row["pokemon_uid"] for row in rows}:
             raise _Refused(REOPEN)
@@ -230,7 +241,7 @@ def handlers(walker):
         session["selection"] = "{}"
         return await walker.home(conn, session, interaction)
 
-    return {"storage": storage, "storage_page": storage_page, "storage_filter": storage_filter,
+    return {"storage": storage, "storage_page": storage_page, "storage_filter": storage_filter, "storage_sort": storage_sort,
             "expand_storage_preview": expand_storage_preview, "expand_storage_confirm": expand_storage_confirm,
             "storage_open": storage_open,
             "storage_favorite": storage_favorite, "storage_back": storage_back, "storage_detail": storage_detail,
