@@ -1469,8 +1469,8 @@ server." A live run shows "Run in progress: floor N, entry|middle|boss fight."
 and Resume (arena_resume), including while off or paused. Without a live run,
 Start run (arena_team) is enabled only when on, unpaused and off cooldown.
 Cooldown says "Next run in Xh Ym." An ended run says "Your last run ended on
-floor N." Tickets (n) (arena_tickets) is always present but disabled until
-ARENA-13; Back uses home. Excluded/stale owners use the existing refusal path.
+floor N." Tickets (n) (arena_tickets) is always enabled; Back uses home.
+Excluded/stale owners use the existing refusal path.
 
 Team selection is {phase:arena_team,team:[[uid,revision],...],offset,
 favorites_first}. arena_team starts an empty picker. arena_team_prev/next
@@ -1536,8 +1536,42 @@ Defeated results and resumed/acted-on expired runs open Arena defeat: reached
 floor/fight and lost, double knockout or time limit, or 18 hours passed.
 Immediate draw results distinguish double knockout from time limit; a later
 resume of a stored draw uses "double knockout or time limit" because the run
-stores only draw. Tickets (arena_tickets) remains disabled until ARENA-13;
+stores only draw. Tickets (arena_tickets) opens the tickets submenu;
 Back (arena) returns home. There is no give-up action. Backing out of a live
 run does not write the run or pause its clock. Renderers remain free of I/O;
 state/inventory queries happen before rendering. Tests: test_arena_screens.
 Full M1 and live Discord acceptance remain separate.
+
+## Arena tickets and inbox labels (ARENA-13)
+
+AR-25..AR-29a and AR-35a add a compatible private submenu without changing
+persisted formats or the redemption service. The Arena service produces counts
+and quotes; bot.arena renders them. Router registration remains ARENA-15.
+arena_tickets lists all five tiers with counts and contents from arena.json.
+arena_redeem_bronze/silver/gold/platinum/diamond are disabled at zero; Back
+uses arena. Tickets remain redeemable while off, paused or in a live run.
+
+A tier press calls service.redeem_quote. No held ticket says "You have no
+<Tier> Tickets." A full queue says "Your encounter queue is full (3/3). Open
+an encounter first. Nothing was spent." Both numbers use limits().encounter_queue.
+Otherwise a pure confirmation renderer shows the contents and "2 of 3 slots
+free: +2 encounters" using the current quote and configured capacity. Selection
+is {phase:arena_redeem,tier,free,add}. Confirm uses arena_redeem_confirm;
+Back uses arena_tickets and clears the preview.
+
+Confirm requires that preview and passes expected_free and expected_add to
+service.redeem. redeemed returns the submenu with "Redeemed a <Tier> Ticket:
++n encounters. Rewards are in your Inbox." quote_changed saves and displays
+the new quote with "Your queue changed. Nothing was spent." queue_full/none
+return the submenu with the notices above. Stale/excluded follow the existing
+refusal path. No screen writes rewards itself.
+
+The shared inbox/claim label step recognizes arena:<redeem_id>:income:<n>,
+arena:<redeem_id>:survivor:<n> and arena:<redeem_id>:stardust as "Arena ticket:
+income roll", "Arena ticket: survivor reward" and "Arena ticket: Stardust".
+Malformed arena: keys say "Arena ticket reward"; raw keys never appear.
+This requires no lookup query and preserves gym labels. Each roll remains its
+own inbox key: a Diamond contributes 28 to Inbox (n), per D17; pending_count
+and lossless claim behavior are unchanged. Tests: test_arena_screens,
+test_milestones and unchanged test_gym_screens. Full M1 and live Discord
+acceptance remain separate.
