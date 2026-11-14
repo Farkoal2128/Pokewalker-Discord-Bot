@@ -109,6 +109,25 @@ class ArenaDomainTests(unittest.TestCase):
         self.assertIs(self.arena.pick_identity(1, 2, identities, rng, self.rules), identities[0])
         rng.choice.assert_called_once_with([identities[0]])
 
+    def test_max_skip_half_best_floor_capped_at_40(self):
+        for best, expected in ((0, 0), (1, 0), (30, 15), (79, 39), (80, 40), (200, 40)):
+            self.assertEqual(self.arena.max_skip(best, self.rules), expected)
+        self.rules['skip'] = {'divisor': 3, 'max': 8}
+        self.assertEqual(self.arena.max_skip(30, self.rules), 8)
+
+    def test_skip_tickets_follow_schedule(self):
+        self.assertEqual(self.arena.skip_tickets(0, self.rules), {})
+        self.assertEqual(self.arena.skip_tickets(40, self.rules), {'bronze': 2, 'silver': 4, 'gold': 2})
+        self.rules['tickets']['schedule']['bronze']['floors'] = [3]
+        self.assertEqual(self.arena.skip_tickets(3, self.rules), {'bronze': 1})
+
+    def test_hurt_is_strictly_below_and_hp_order_keeps_ties(self):
+        self.assertIsNone(self.arena.hurt([(50, 100), (1, 2)], 50))
+        self.assertEqual(self.arena.hurt([(50, 100), (49, 100), (1, 10)], 50), 1)
+        self.assertEqual(self.arena.hp_order([(60, 100), (8, 10), (90, 100), (4, 5)]), [2, 1, 3, 0])
+        huge = 10 ** 20
+        self.assertEqual(self.arena.hp_order([(huge - 1, huge), (huge, huge)]), [1, 0])
+
     def test_ticket_schedule_floors_1_to_100(self):
         expected = {5: "bronze", 10: "silver", 15: "bronze", 20: "silver", 25: "gold",
                     30: "silver", 35: "gold", 40: "silver", 45: "gold", 50: "platinum",

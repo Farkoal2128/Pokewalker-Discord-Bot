@@ -67,7 +67,7 @@ def _roll_enemy(floor, slot, rng, content, multipliers):
     return _enemy_snapshot(rolled, content, multipliers)
 
 
-async def start(conn, session, team, now, rng, content, multipliers):
+async def start(conn, session, team, now, rng, content, multipliers, skip=0):
     current = await state(conn, session, now)
     if current['status'] in ('stale', 'excluded'):
         return current
@@ -81,6 +81,8 @@ async def start(conn, session, team, now, rng, content, multipliers):
     if current['cooldown_left']:
         return {'status': 'cooldown', 'seconds_left': current['cooldown_left']}
     rules = load_table('arena')['rules']
+    if type(skip) is not int or not 0 <= skip <= domain.max_skip(current['best_floor'], rules):
+        return {'status': 'invalid'}
     if (not isinstance(team, (list, tuple)) or len(team) != rules['team_size']
             or any(not isinstance(pair, (list, tuple)) or len(pair) != 2
                    or not isinstance(pair[0], str) or type(pair[1]) is not int for pair in team)
@@ -103,11 +105,17 @@ async def start(conn, session, team, now, rng, content, multipliers):
             snapshots.append({'uid': pokemon['pokemon_uid'], 'family_id': identity['family_id'],
                               'special': domain.is_special(identity, rules), 'full_hp': combatant.hp,
                               'hp': combatant.hp, 'snapshot': snapshot})
-        enemy = _roll_enemy(1, 0, rng, content, multipliers)
+        enemy = _roll_enemy(skip + 1, 0, rng, content, multipliers)
         await conn.execute('INSERT INTO arena_runs(run_id,profile_id,started_at,floor,slot,team,enemy) '
-                           'VALUES (?,?,?,1,0,?,?)',
-                           (str(uuid4()), session['profile_id'], now, json.dumps(snapshots), json.dumps(enemy)))
-        return {'status': 'started'}, []
+                           'VALUES (?,?,?,?,0,?,?)',
+                           (str(uuid4()), session['profile_id'], now, skip + 1, json.dumps(snapshots), json.dumps(enemy)))
+        lines = []
+        for tier, copies in domain.skip_tickets(skip, rules).items():
+            await conn.execute('INSERT INTO arena_tickets VALUES (?,?,?) ON CONFLICT(profile_id,tier) '
+                               'DO UPDATE SET quantity=quantity+excluded.quantity', (session['profile_id'], tier, copies))
+            lines.append({'profile_id': session['profile_id'], 'resource': 'arena_ticket', 'resource_id': tier,
+                          'delta': copies, 'reason': 'arena_skip'})
+        return {'status': 'started'}, lines
 
     revision = session.get('_original_revision', session['revision'])
     result = await with_receipt(conn, f"arena_start:{session['session_id']}:{revision}", 'arena_start', compute,
@@ -256,6 +264,31 @@ async def fight(conn, session, run_id, revision, now, rng, content, multipliers,
                 'finisher': battle.finisher, 'candy': candy, 'tickets': tickets}, lines
 
     return await with_receipt(conn, f'arena_fight:{run_id}:{floor}:{slot}', 'arena_fight', compute, profile_id=pid)
+
+
+async def chain_step(conn, session, run_id, revision, now, rng, content, multipliers, battle_rules, chart):
+    current = await state(conn, session, now)
+    run, refusal = _live_run(current, run_id, revision)
+    if refusal:
+        return refusal
+    health = [(member['hp'], member['full_hp']) for member in run['team']]
+    position = domain.hurt(health, current['stop_pct'])
+    if position is not None:
+        return {'status': 'hurt', 'position': position, 'run': run}
+    if current['auto_order']:
+        order = domain.hp_order(health)
+        if order != list(range(len(run['team']))):
+            ordered = await set_order(conn, session, run_id, revision, order, now)
+            revision = ordered['run']['revision']
+    result = await fight(conn, session, run_id, revision, now, rng, content, multipliers, battle_rules, chart)
+    run = await _latest_run(conn, session['profile_id'])
+    if result['status'] == 'defeated':
+        return {**result, 'run': run}
+    health = [(member['hp'], member['full_hp']) for member in run['team']]
+    position = result['revived'][0] if result['revived'] else domain.hurt(health, current['stop_pct'])
+    if position is not None:
+        return {**result, 'run': run, 'stop': 'hurt', 'position': position}
+    return {**result, 'run': run, 'stop': 'ticket' if result['tickets'] else None}
 
 
 async def heal_all_and_fight(conn, session, run_id, revision, berry, now, rng, content, multipliers, battle_rules, chart):

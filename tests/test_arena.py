@@ -59,10 +59,10 @@ class ArenaTests(unittest.IsolatedAsyncioTestCase):
     async def state(self, now=1100, session=None):
         return await self.writer.run(lambda conn: self.service().state(conn, session or self.session, now))
 
-    async def start(self, now=1000, team=None, session=None, rng=None):
+    async def start(self, now=1000, team=None, session=None, rng=None, **kwargs):
         return await self.writer.run(lambda conn: self.service().start(
             conn, session or self.session, self.team if team is None else team, now,
-            rng or random.Random(7), CONTENT, MULTIPLIERS))
+            rng or random.Random(7), CONTENT, MULTIPLIERS, **kwargs))
 
     async def heal(self, run, positions, berry='razz_berry', now=1200):
         return await self.writer.run(lambda conn: self.service().heal(
@@ -485,6 +485,164 @@ class ArenaTests(unittest.IsolatedAsyncioTestCase):
         await self.conn.execute('DELETE FROM arena_tickets')
         await self.conn.execute('DELETE FROM candy')
         await self.conn.execute('UPDATE profiles SET arena_best_floor=0')
+
+    async def skip_start(self, skip=40):
+        await self.conn.execute('UPDATE profiles SET arena_best_floor=80 WHERE profile_id=?', (self.pid,))
+        return await self.start(skip=skip)
+
+    async def test_skip_starts_at_next_floor_full_hp_with_that_floors_enemy(self):
+        result = await self.skip_start()
+        self.assertEqual(set(result), {'status', 'run'})
+        run = result['run']
+        self.assertEqual((result['status'], run['floor'], run['slot']), ('started', 41, 0))
+        self.assertTrue(all(member['hp'] == member['full_hp'] for member in run['team']))
+        self.assertEqual(run['enemy'], json.loads(json.dumps(
+            self.service()._roll_enemy(41, 0, random.Random(7), CONTENT, MULTIPLIERS))))
+
+    async def test_skip_pays_scheduled_tickets_with_ledger_lines_at_start(self):
+        await self.conn.execute('INSERT INTO arena_tickets VALUES (?,?,3)', (self.pid, 'silver'))
+        await self.skip_start()
+        self.assertEqual((await self.state())['tickets'], {'bronze': 2, 'silver': 7, 'gold': 2})
+        self.assertEqual(await self.rows('SELECT profile_id,resource,resource_id,delta,reason FROM resource_ledger '
+                                         "WHERE reason='arena_skip' ORDER BY resource_id"),
+                         [{'profile_id': self.pid, 'resource': 'arena_ticket', 'resource_id': tier,
+                           'delta': copies, 'reason': 'arena_skip'}
+                          for tier, copies in (('bronze', 2), ('gold', 2), ('silver', 4))])
+        self.assertEqual(await self.scalar('SELECT count(*) FROM arena_tickets WHERE profile_id=?', (self.other,)), 0)
+
+    async def test_skip_pays_no_bonus_or_candy_and_keeps_best_floor(self):
+        await self.skip_start()
+        self.assertEqual((await self.state())['best_floor'], 80)
+        self.assertEqual((await self.state())['tickets'], {'bronze': 2, 'silver': 4, 'gold': 2})
+        self.assertEqual(await self.rows('SELECT * FROM candy'), [])
+        self.assertEqual(await self.rows("SELECT * FROM resource_ledger WHERE reason!='arena_skip'"), [])
+
+    async def test_skip_over_limit_or_malformed_refused_writes_nothing(self):
+        await self.conn.execute('UPDATE profiles SET arena_best_floor=30 WHERE profile_id=?', (self.pid,))
+        for skip in (-1, 16, 41, True, False, 1.0, '1', None, [], {}):
+            with self.subTest(skip=skip):
+                await self.assert_refused({'status': 'invalid'}, skip=skip)
+        self.assertEqual((await self.start(skip=15))['run']['floor'], 16)
+
+    async def test_same_start_press_pays_skip_once(self):
+        first = await self.skip_start()
+        before = await self.snapshot()
+        self.assertEqual((await self.start(skip=40))['status'], 'live')
+        self.assertEqual(await self.snapshot(), before)
+        replay = await self.start(skip=40, now=1000 + RULES['cooldown_seconds'])
+        self.assertEqual(replay['run']['run_id'], first['run']['run_id'])
+        after = await self.snapshot()
+        for table in ('arena_tickets', 'action_receipts', 'resource_ledger'):
+            self.assertEqual(after[table], before[table])
+
+    async def chain_step(self, run, now=1300, session=None):
+        return await self.writer.run(lambda conn: self.service().chain_step(
+            conn, session or self.session, run['run_id'], run['revision'], now, random.Random(11),
+            CONTENT, MULTIPLIERS, load_table('battle')['rules'], CONTENT['type_chart']))
+
+    async def chain_health(self, run, health):
+        for member, (hp, full_hp) in zip(run['team'], health):
+            member.update(hp=hp, full_hp=full_hp)
+        await self.conn.execute('UPDATE arena_runs SET team=? WHERE run_id=?',
+                                (json.dumps(run['team']), run['run_id']))
+        return run
+
+    async def test_chain_step_fights_once_and_continues(self):
+        run = await self.chain_health((await self.start())['run'], [(100, 100)] * 3)
+        await self.conn.execute("INSERT INTO restrictions(guild_id,user_id,paused) VALUES ('g','u',1)")
+        await self.conn.execute('UPDATE guilds SET arena_enabled=0')
+        with patch.object(battle_engine, 'simulate', return_value=self.outcome(hp=(80, 90, 100))) as simulate:
+            result = await self.chain_step(run)
+            simulate.assert_called_once()
+            self.assertEqual(await self.chain_step(run), {'status': 'stale', 'run': result['run']})
+            simulate.assert_called_once()
+        self.assertEqual((result['status'], result['stop']), ('won', None))
+        self.assertEqual(result['run'], (await self.state())['run'])
+        self.assertEqual((result['run']['floor'], result['run']['slot'], result['run']['revision']), (1, 1, 1))
+
+    async def test_chain_step_hurt_member_stops_before_fighting(self):
+        run = await self.chain_health((await self.start())['run'], [(100, 100), (49, 100), (90, 100)])
+        await self.conn.execute('UPDATE profiles SET arena_auto_order=1 WHERE profile_id=?', (self.pid,))
+        before = await self.snapshot()
+        with patch.object(battle_engine, 'simulate') as simulate:
+            self.assertEqual(await self.chain_step(run), {'status': 'hurt', 'position': 1, 'run': run})
+            simulate.assert_not_called()
+        self.assertEqual(await self.snapshot(), before)
+
+    async def test_chain_step_stops_after_revive_or_below_threshold(self):
+        for hp, full, threshold, position in (((0, 2, 2), 2, 10, 0), ((100, 49, 100), 100, 50, 1)):
+            with self.subTest(hp=hp):
+                await self.reset_run_fixture()
+                run = await self.chain_health(await self.at_fight(floor=5, slot=2), [(full, full)] * 3)
+                await self.conn.execute('UPDATE profiles SET arena_stop_pct=? WHERE profile_id=?', (threshold, self.pid))
+                with patch.object(battle_engine, 'simulate', return_value=self.outcome(hp=hp, finisher=2)):
+                    result = await self.chain_step(run)
+                self.assertEqual((result['status'], result['stop'], result['position']), ('won', 'hurt', position))
+                self.assertIsNotNone(result['tickets'])
+                self.assertEqual(result['run'], (await self.state())['run'])
+
+    async def test_chain_step_stops_after_ticket_floor_boss(self):
+        run = await self.chain_health(await self.at_fight(floor=5, slot=2), [(100, 100)] * 3)
+        with patch.object(battle_engine, 'simulate', return_value=self.outcome(hp=(100, 100, 100))):
+            result = await self.chain_step(run)
+        self.assertEqual((result['stop'], result['tickets']['tier'], result['run']['floor']), ('ticket', 'bronze', 6))
+
+    async def test_chain_step_defeat_stale_expired_or_excluded(self):
+        run = (await self.start())['run']
+        with patch.object(battle_engine, 'simulate') as simulate:
+            for stale in ({**run, 'revision': 9}, {**run, 'run_id': 'other'}):
+                before = await self.snapshot()
+                self.assertEqual(await self.chain_step(stale), {'status': 'stale', 'run': run})
+                self.assertEqual(await self.snapshot(), before)
+            await self.conn.execute("INSERT INTO restrictions(guild_id,user_id,excluded) VALUES ('g','u',1)")
+            before = await self.snapshot()
+            self.assertEqual(await self.chain_step(run), {'status': 'excluded'})
+            self.assertEqual(await self.chain_step(run, session={**self.session, 'profile_id': self.other}),
+                             {'status': 'stale'})
+            self.assertEqual(await self.snapshot(), before)
+            await self.conn.execute('DELETE FROM restrictions')
+            expired = await self.chain_step(run, now=1000 + RULES['run_seconds'])
+            self.assertEqual((expired['status'], expired['run']['end_reason']), ('stale', 'expired'))
+            simulate.assert_not_called()
+        await self.reset_run_fixture()
+        run = (await self.start())['run']
+        with patch.object(battle_engine, 'simulate', return_value=self.outcome('loss', (0, 0, 0), None)):
+            result = await self.chain_step(run)
+        self.assertEqual((result['status'], result['run']['end_reason']), ('defeated', 'loss'))
+        self.assertNotIn('stop', result)
+        self.assertEqual(result['run'], (await self.state())['run'])
+
+    async def test_chain_step_auto_order_by_hp_percentage_only_when_on(self):
+        for auto, expected in ((False, ['m0', 'm1', 'm2']), (True, ['m2', 'm1', 'm0'])):
+            with self.subTest(auto=auto):
+                await self.reset_run_fixture()
+                run = await self.chain_health((await self.start())['run'], [(60, 100), (8, 10), (90, 100)])
+                await self.conn.execute('UPDATE profiles SET arena_auto_order=? WHERE profile_id=?', (auto, self.pid))
+                with patch.object(battle_engine, 'simulate', return_value=self.outcome(hp=(5, 5, 5))) as simulate:
+                    result = await self.chain_step(run)
+                self.assertEqual([member['uid'] for member in result['run']['team']], expected)
+                self.assertEqual([member.hp for member in simulate.call_args.args[0]], [90, 8, 60] if auto else [60, 8, 90])
+                self.assertEqual(result['run']['revision'], 2 if auto else 1)
+        await self.reset_run_fixture()
+        run = (await self.start())['run']
+        await self.conn.execute('UPDATE profiles SET arena_auto_order=1 WHERE profile_id=?', (self.pid,))
+        with patch.object(battle_engine, 'simulate', return_value=self.outcome()):
+            self.assertEqual((await self.chain_step(run))['run']['revision'], 1)
+
+    async def test_chain_step_spends_no_berries_and_keeps_receipt_shape(self):
+        run = (await self.start())['run']
+        await self.inventory('razz_berry', 5)
+        await self.inventory('pinap_berry', 4)
+        before = await self.rows('SELECT * FROM inventory ORDER BY item_id')
+        with patch.object(battle_engine, 'simulate', return_value=self.outcome()):
+            result = await self.chain_step(run)
+        self.assertEqual(await self.rows('SELECT * FROM inventory ORDER BY item_id'), before)
+        receipt = (await self.rows("SELECT * FROM action_receipts WHERE action='arena_fight'"))[0]
+        self.assertEqual(json.loads(receipt['result']), {k: v for k, v in result.items() if k not in ('run', 'stop', 'position')})
+        self.assertEqual(set(json.loads(receipt['result'])), {'status', 'outcome', 'reason', 'ticks', 'engine',
+                          'floor', 'slot', 'enemy', 'party_hp', 'revived', 'finisher', 'candy', 'tickets'})
+        self.assertEqual((receipt['key'], receipt['profile_id']), (f"arena_fight:{run['run_id']}:1:0", self.pid))
+        self.assertEqual(await self.rows("SELECT * FROM resource_ledger WHERE resource='item'"), [])
 
     async def test_floor_1_boss_win_advances_without_ticket(self):
         run = await self.at_fight(slot=2)
