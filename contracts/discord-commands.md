@@ -1480,13 +1480,13 @@ shows name, CP and types. Gym defenders say "unavailable: deployed"; companions
 and specials remain selectable. arena_team_pick accepts exactly one eligible,
 distinct UID on the current page, up to three. arena_team_clear empties picks.
 Start (arena_start) is disabled until three valid members are selected. Each
-picked special adds "<name> is a special Pok?mon: it only earns Candy from boss
+picked special adds "<name> is a special Pokémon: it only earns Candy from boss
 knockouts." This warning does not block starting. The picker uses rows 0-2:
 navigation/sort/Back, the select, then Clear/Start.
 
 arena_start passes the saved list to service.start. started/live opens the
 read-only break screen. Other refusals retain the picker with a notice: stale
-says "A Pok?mon changed. Pick your team again." and clears picks; deployed
+says "A Pokémon changed. Pick your team again." and clears picks; deployed
 says "A gym defender can't join an Arena team."; cooldown shows the wait;
 paused uses check-in wording ("Check-ins are paused indefinitely." or
 "Check-ins are paused until <until>."); off uses the off line. All start
