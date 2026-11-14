@@ -1492,11 +1492,52 @@ paused uses check-in wording ("Check-ins are paused indefinitely." or
 "Check-ins are paused until <until>."); off uses the off line. All start
 eligibility remains authoritative in the service transaction.
 
-arena_resume and successful start store {phase:arena_break,run_id,run_revision}.
+arena_resume and successful start store {phase:arena_break,run_id,run_revision,berry}.
 The break screen shows the stored next enemy's species, types, CP and exact
 sprite when available, never level or IVs, plus party members in saved order
 with HP / full HP. Back out uses arena and changes no run/enemy/HP or clock.
-Resuming after expiry returns Arena home. ARENA-12 adds break actions. Views
+Resuming after expiry opens the defeat screen (ARENA-12). Views
 stay within five rows, five component widths per row and existing embed/custom
 ID limits. Render functions do no I/O. Tests: test_arena_screens; full M1 and
 live Discord acceptance remain separate.
+
+
+## Arena break actions and results (ARENA-12)
+
+AR-3a, AR-4a, AR-10a, AR-10c, AR-11a and AR-12..AR-15 extend the
+unregistered Arena handler map; services remain authoritative for all writes.
+Row 0 is Fight (arena_fight), Heal all & fight (arena_heal_fight), Back out
+(arena). Row 1 has Heal <name> in party order (arena_heal_one/two/three),
+disabled at full HP. Row 2 is arena_berry, with Razz Berry and Pinap Berry
+stock counts. Row 3 is arena_order, six permutations labelled with party
+positions/names and the current order defaulted. Row 4 remains unused and
+row 0 retains capacity for Phase 2.
+
+Every break redraw saves run_id, run_revision and berry. Initial berry is the
+larger stock, Razz on a tie; a saved choice survives stock changes, actions
+and backing out/resuming and changes only through a valid arena_berry choice.
+Mutation actions pass the saved run ID/revision to heal, set_order, fight or
+heal_all_and_fight. The local berry selection uses the same current-state
+ID/revision guard without writing the run. Stale actions spend/fight nothing,
+redraw the current run and say "The run changed on another screen. This is its
+current state." Invalid berry/order selections use the existing refusal path.
+
+A single heal spends the selected berry through service.heal; missing says
+"You have no <berry>." Full HP just redraws. Heal all & fight uses its atomic
+service; missing says "You need n more <berry>. Nothing was spent." Party
+order uses service.set_order and redraws in that order without resource cost.
+After a win, a result block precedes the next enemy: fought enemy name/CP,
+outcome/ticks, each member's final fight HP, revived-at-1 names and Candy.
+Scheduled boss rewards show "Floor N cleared: <Tier> Ticket" and the separate
+"First clear: +1 <Tier> Ticket" when due. The next break shows revived members
+at 1 HP in their original positions. No event log, enemy level or IVs is shown.
+
+Defeated results and resumed/acted-on expired runs open Arena defeat: reached
+floor/fight and lost, double knockout or time limit, or 18 hours passed.
+Immediate draw results distinguish double knockout from time limit; a later
+resume of a stored draw uses "double knockout or time limit" because the run
+stores only draw. Tickets (arena_tickets) remains disabled until ARENA-13;
+Back (arena) returns home. There is no give-up action. Backing out of a live
+run does not write the run or pause its clock. Renderers remain free of I/O;
+state/inventory queries happen before rendering. Tests: test_arena_screens.
+Full M1 and live Discord acceptance remain separate.

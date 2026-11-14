@@ -1,6 +1,7 @@
 """Private Arena screens; services own lifecycle and resource mutations."""
 
 from functools import partial
+from itertools import permutations
 import json
 import math
 
@@ -16,6 +17,10 @@ from pokewalker.services import arena as service, profiles, storage
 OFF = 'The Arena is turned off in this server.'
 CHANGED = 'A Pokémon changed. Pick your team again.'
 FIGHTS = ('entry', 'middle', 'boss')
+BERRIES = ('razz_berry', 'pinap_berry')
+HEALS = ('arena_heal_one', 'arena_heal_two', 'arena_heal_three')
+BREAK_ACTIONS = ('arena_fight', 'arena_heal_fight', *HEALS, 'arena_berry', 'arena_order')
+STALE = 'The run changed on another screen. This is its current state.'
 
 
 def wait(seconds):
@@ -79,18 +84,66 @@ def render_team(state):
     return {'embed': discord.Embed(title='Arena team', description='\n'.join(lines)), 'view': view}
 
 
+def result_lines(state):
+    result = state.get('result')
+    if not result:
+        return []
+    names = [member['snapshot']['combatant']['name'] for member in state['run']['team']]
+    lines = [f"{result['enemy']['name']} · CP {result['enemy']['cp']}",
+             f"{result['outcome'].title()} · {result['ticks']} ticks"]
+    lines.extend(f'{name}: HP {hp}' for name, hp in zip(names, result['party_hp']))
+    lines.extend(f'{names[position]} revived at 1 HP.' for position in result['revived'])
+    candy = result['candy']
+    lines.append(f"Candy: +{candy['quantity']} for {names[result['finisher']]}." if candy else 'Candy: none.')
+    if result['slot'] == 2 and result['outcome'] == 'win':
+        tickets = result['tickets']
+        lines.append(f"Floor {result['floor']} cleared" + (f": {tickets['tier'].title()} Ticket" if tickets else '.'))
+        if tickets and tickets['first_clear']:
+            lines.append(f"First clear: +1 {tickets['tier'].title()} Ticket")
+    return lines
+
+
 def render_break(state):
     run = state['run']
     enemy = run['enemy']['snapshot']
-    lines = [f"Floor {run['floor']} · {FIGHTS[run['slot']]} fight",
+    lines = result_lines(state) + [f"Floor {run['floor']} · {FIGHTS[run['slot']]} fight",
              f"Next enemy: {enemy['combatant']['name']} · CP {enemy['cp']} · "
              + ' / '.join(t.title() for t in enemy['combatant']['types'])]
     lines.extend(f"{index}: {member['snapshot']['combatant']['name']} · HP {member['hp']} / {member['full_hp']}"
                  for index, member in enumerate(run['team'], 1))
+    if state.get('notice'):
+        lines.append(state['notice'])
     embed = discord.Embed(title='Arena break', description='\n'.join(lines))
     if state['sprite'] is not None:
         embed.set_image(url=state['sprite'])
-    return {'embed': embed, 'view': gyms.buttons(state, [('Back out', 'arena')])}
+    view = discord.ui.View(timeout=None)
+    for label, action in [('Fight', 'arena_fight'), ('Heal all & fight', 'arena_heal_fight'), ('Back out', 'arena')]:
+        view.add_item(discord.ui.Button(label=label, custom_id=custom_id(state, action), row=0))
+    for member, action in zip(run['team'], HEALS):
+        view.add_item(discord.ui.Button(label=f"Heal {member['snapshot']['combatant']['name']}",
+                                       custom_id=custom_id(state, action), row=1, disabled=member['hp'] >= member['full_hp']))
+    view.add_item(discord.ui.Select(placeholder='Healing berry', custom_id=custom_id(state, 'arena_berry'), row=2,
+                                   options=[discord.SelectOption(label=f"{berry.replace('_', ' ').title()} ×{state['stock'].get(berry, 0)}",
+                                                                 value=berry, default=state['berry'] == berry) for berry in BERRIES]))
+    view.add_item(discord.ui.Select(placeholder='Party order', custom_id=custom_id(state, 'arena_order'), row=3,
+                                   options=[discord.SelectOption(label=' → '.join(f"{i + 1}. {run['team'][i]['snapshot']['combatant']['name']}"
+                                                                              for i in order)[:100],
+                                                                 value=''.join(map(str, order)), default=order == (0, 1, 2))
+                                            for order in permutations(range(3))]))
+    return {'embed': embed, 'view': view}
+
+
+def render_defeat(state):
+    run = state['run']
+    reason = {'loss': 'lost', 'draw': 'double knockout or time limit', 'expired': '18 hours passed'}[run['end_reason']]
+    if state.get('result') and run['end_reason'] == 'draw':
+        reason = 'time limit' if state['result']['reason'] == 'tick_limit' else 'double knockout'
+    lines = result_lines(state) + [f"Floor {run['floor']} · {FIGHTS[run['slot']]} fight: {reason}."]
+    if state.get('notice'):
+        lines.append(state['notice'])
+    view = gyms.buttons(state, [('Tickets', 'arena_tickets'), ('Back', 'arena')])
+    view.children[0].disabled = True
+    return {'embed': discord.Embed(title='Arena defeat', description='\n'.join(lines)), 'view': view}
 
 
 def handlers(walker):
@@ -119,21 +172,78 @@ def handlers(walker):
         return {'session': session, 'selection': selection, 'rows': [pokemon_state(row) for row in rows],
                 'members': members, 'total': total, 'notice': notice}
 
-    def open_break(session, run):
-        session['selection'] = json.dumps({'phase': 'arena_break', 'run_id': run['run_id'], 'run_revision': run['revision']})
+    async def open_break(conn, session, run, result=None, notice=None):
+        async with conn.execute('SELECT item_id,quantity FROM inventory WHERE profile_id=? AND item_id IN (?,?)',
+                                (session['profile_id'], *BERRIES)) as cursor:
+            stock = {row['item_id']: row['quantity'] for row in await cursor.fetchall()}
+        berry = json.loads(session['selection']).get('berry')
+        if berry not in BERRIES:
+            berry = max(BERRIES, key=lambda item: stock.get(item, 0))
+        live = run['ended_at'] is None
+        session['selection'] = json.dumps({'phase': 'arena_break' if live else 'arena_defeat',
+                                            'run_id': run['run_id'], 'run_revision': run['revision'], 'berry': berry})
+        state = {'session': session, 'run': run, 'stock': stock, 'berry': berry, 'result': result, 'notice': notice}
+        if not live:
+            return render_defeat(state)
         _, sprite = storage.identify(walker.bot.content, run['enemy']['snapshot'])
-        return render_break({'session': session, 'run': run, 'sprite': sprite})
+        return render_break({**state, 'sprite': sprite})
+
+    async def break_action(action, conn, session, interaction, current, now):
+        selection = json.loads(session['selection'])
+        if selection.get('phase') != 'arena_break':
+            raise _Refused(REOPEN)
+        args = (conn, session, selection['run_id'], selection['run_revision'])
+        berry = selection['berry']
+        values = interaction.data.get('values', [])
+        if action == 'arena_berry':
+            run = current['run']
+            if current['status'] != 'live' or (run['run_id'], run['revision']) != (selection['run_id'], selection['run_revision']):
+                result = {'status': 'stale'}
+            else:
+                if len(values) != 1 or values[0] not in BERRIES:
+                    raise _Refused(REOPEN)
+                selection['berry'] = values[0]
+                session['selection'] = json.dumps(selection)
+                result = {'status': 'selected'}
+        elif action == 'arena_order':
+            if len(values) != 1 or values[0] not in {''.join(map(str, order)) for order in permutations(range(3))}:
+                raise _Refused(REOPEN)
+            result = await service.set_order(*args, [int(i) for i in values[0]], now)
+        elif action in HEALS:
+            result = await service.heal(*args, [HEALS.index(action)], berry, now)
+        else:
+            function = service.fight if action == 'arena_fight' else service.heal_all_and_fight
+            result = await function(*args, *(() if action == 'arena_fight' else (berry,)), now, walker.rng,
+                                    walker.bot.content, walker.multipliers, load_table('battle')['rules'], walker.bot.content['type_chart'])
+        status, notice = result['status'], None
+        if status == 'stale':
+            notice = STALE
+        elif status == 'missing':
+            name = berry.replace('_', ' ').title()
+            notice = f'You need {result["short"]} more {name}. Nothing was spent.' if action == 'arena_heal_fight' else f'You have no {name}.'
+        elif status not in ('won', 'defeated', 'healed', 'ordered', 'full', 'selected'):
+            raise _Refused(EXCLUDED if status == 'excluded' else REOPEN)
+        run = (await service.state(conn, session, now))['run']
+        if run is None:
+            rendered = await dispatch('arena', conn, session, interaction)
+            rendered['embed'].description += '\n' + (notice or STALE)
+            return rendered
+        return await open_break(conn, session, run, result if status in ('won', 'defeated') else None, notice)
 
     async def dispatch(action, conn, session, interaction):
         now = walker.clock()
         current = await service.state(conn, session, now)
         if current['status'] in ('stale', 'excluded'):
             raise _Refused(EXCLUDED if current['status'] == 'excluded' else REOPEN)
-        if action == 'arena_resume' and current['status'] == 'live':
-            return open_break(session, current['run'])
+        if action in BREAK_ACTIONS:
+            return await break_action(action, conn, session, interaction, current, now)
+        selection = json.loads(session['selection'])
+        if (action == 'arena_resume' and current['run'] or action == 'arena'
+                and current['status'] == 'ended' and selection.get('phase') == 'arena_break'):
+            return await open_break(conn, session, current['run'])
         if action in ('arena', 'arena_resume'):
             flags = await profiles.restrictions(conn, session['guild_id'], session['user_id'])
-            session['selection'] = '{}'
+            session['selection'] = json.dumps({'berry': selection['berry']} if selection.get('berry') in BERRIES else {})
             return render_home({'session': session, **current, 'paused': flags.paused,
                                 'until': flags.paused_until.isoformat() if flags.paused_until else None})
         selection = json.loads(session['selection'])
@@ -162,7 +272,7 @@ def handlers(walker):
             result = await service.start(conn, session, selection['team'], now, walker.rng, walker.bot.content, walker.multipliers)
             status = result['status']
             if status in ('started', 'live'):
-                return open_break(session, result['run'])
+                return await open_break(conn, session, result['run'])
             if status == 'excluded':
                 raise _Refused(EXCLUDED)
             notice = {'stale': CHANGED, 'deployed': "A gym defender can't join an Arena team.",
@@ -180,4 +290,4 @@ def handlers(walker):
 
     return {name: partial(dispatch, name) for name in
             ('arena', 'arena_resume', 'arena_team', 'arena_team_prev', 'arena_team_next',
-             'arena_team_sort', 'arena_team_pick', 'arena_team_clear', 'arena_start')}
+             'arena_team_sort', 'arena_team_pick', 'arena_team_clear', 'arena_start', *BREAK_ACTIONS)}
