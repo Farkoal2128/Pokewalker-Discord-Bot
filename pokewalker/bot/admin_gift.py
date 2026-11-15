@@ -1,6 +1,8 @@
 """Owner-bound, temporary EX-Gift package editor (C5)."""
 
 import asyncio
+from datetime import datetime, timezone
+import re
 import time
 from types import SimpleNamespace
 from uuid import uuid4
@@ -75,13 +77,14 @@ async def open(admin, interaction, scope, server_id, user_id):
     await draft.view.editor(interaction)
 
 
-class GiftView(discord.ui.View):
-    def __init__(self, draft):
-        self.draft = draft
-        super().__init__(timeout=max(0, draft.deadline - draft.admin.bot.clock()))
+class OwnerView(discord.ui.View):
+    def __init__(self, admin, owner_id, deadline, expired):
+        self.admin, self.owner_id = admin, owner_id
+        self.deadline, self.expired = deadline, expired
+        super().__init__(timeout=max(0, deadline - admin.bot.clock()))
 
     async def on_timeout(self):
-        discard(self.draft)
+        self.stop()
 
     async def refuse(self, interaction, text):
         await interaction.followup.send(content=text, ephemeral=True,
@@ -89,27 +92,36 @@ class GiftView(discord.ui.View):
 
     async def interaction_check(self, interaction):
         await interaction.response.defer(ephemeral=True)
-        draft, admin = self.draft, self.draft.admin
-        if (interaction.user.id != draft.owner_id
+        admin = self.admin
+        if (interaction.user.id != self.owner_id
                 or interaction.user.id not in admin.bot.settings.owner_ids
                 or interaction.guild_id != admin.bot.settings.admin_guild_id):
-            await self.refuse(interaction, 'Only the configured owner in the admin guild may use this draft.')
+            await self.refuse(interaction, 'Only the configured owner in the admin guild may use this control.')
             return False
-        if admin.bot.clock() >= draft.deadline:
-            discard(draft)
-            await self.refuse(interaction, EXPIRED)
+        if admin.bot.clock() >= self.deadline or self.is_finished():
+            await self.on_timeout()
+            await self.refuse(interaction, self.expired)
             return False
         confirm = interaction.data.get('custom_id', '').startswith('gift_confirm:')
         wait = admin.throttled(admin.requests if confirm else admin.gift_callbacks,
-                               draft.owner_id, 5 if confirm else 30)
+                               self.owner_id, 5 if confirm else 30)
         if wait is not None:
             await self.refuse(interaction, f'Slow down, try again in {wait} s.')
             return False
         if await admin.bot.writer.run(lambda conn: admin.excluded(conn, interaction)):
             await self.refuse(interaction, 'Excluded owners cannot use admin commands.')
             return False
-        self.timeout = max(0, draft.deadline - admin.bot.clock())
+        self.timeout = max(0, self.deadline - admin.bot.clock())
         return True
+
+
+class GiftView(OwnerView):
+    def __init__(self, draft):
+        self.draft = draft
+        super().__init__(draft.admin, draft.owner_id, draft.deadline, EXPIRED)
+
+    async def on_timeout(self):
+        discard(self.draft)
 
     async def editable(self, interaction):
         draft = self.draft
@@ -299,3 +311,65 @@ class GiftView(discord.ui.View):
             await self.receipt(interaction, snapshot)
         else:
             await self.refuse(interaction, 'Nothing was sent.')
+
+
+async def history(admin, interaction, send_id):
+    if send_id is None:
+        view = HistoryView(admin, interaction.user.id)
+        await view.page(interaction, 0)
+        return
+    row = None
+    if re.fullmatch(r'[0-9a-f]{32}', send_id):
+        row = await admin.bot.writer.run(lambda conn: ex_gift.lookup(conn, send_id))
+    if row is None:
+        await show(interaction, f'No send with ID {send_id} was committed.')
+        return
+    await show_history(interaction, [row], admin.bot.content)
+
+
+def history_text(rows, content, *, compact=False):
+    entries = []
+    for row in rows:
+        scope = ('all servers' if row['scope'] == 'all' else
+                 f'one user in server {row["guild_id"]}' if row['scope'] == 'user' else
+                 f'server {row["guild_id"]}')
+        stamp = datetime.fromtimestamp(row['created_at'], timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
+        slots = (f'{len(row["items"])} slots' if compact else
+                 ', '.join(ex_gift.label(key, content) for key in row['items']))
+        entries.append(f'Send ID: {row["gift_id"]}\n{stamp}\nScope: {scope}\n{slots}\n'
+            f'Counts (committed)\nTargeted servers: {row["servers"]}\n'
+            f'Servers with recipients: {row["servers_with_recipients"]}\nRecipients: {row["recipients"]}')
+    return '\n\n'.join(entries) or 'No sends were committed.'
+
+
+async def show_history(interaction, rows, content, *, view=None):
+    text = history_text(rows, content)
+    if len(text) > 4096:
+        text = history_text(rows, content, compact=True)
+    await interaction.edit_original_response(content=None,
+        embed=discord.Embed(title='EX-Gift history', description=text), view=view,
+        allowed_mentions=discord.AllowedMentions.none())
+
+
+class HistoryView(OwnerView):
+    def __init__(self, admin, owner_id):
+        super().__init__(admin, owner_id, admin.bot.clock() + 900,
+                         'This history expired. Run /admin gift-history again.')
+        self.offset = 0
+        for label, step in (('Prev', -10), ('Next', 10)):
+            item = discord.ui.Button(label=label)
+            async def callback(interaction, step=step):
+                await self.page(interaction, max(0, self.offset + step))
+            item.callback = callback
+            self.add_item(item)
+
+    async def page(self, interaction, offset):
+        rows, total = await self.admin.bot.writer.run(lambda conn: ex_gift.history(conn, offset))
+        if self.is_finished() or self.admin.bot.clock() >= self.deadline:
+            await self.on_timeout()
+            await self.refuse(interaction, self.expired)
+            return
+        self.offset = offset
+        self.children[0].disabled = offset == 0
+        self.children[1].disabled = offset + 10 >= total
+        await show_history(interaction, rows, self.admin.bot.content, view=self)

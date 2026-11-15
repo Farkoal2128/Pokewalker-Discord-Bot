@@ -772,6 +772,29 @@ Producer: Admin and its EX-Gift view; consumers: configured owners and Discord's
 component serializer. Existing commands and persisted data remain compatible;
 tests: `test_admin_gift.py`, `test_admin.py`, `test_cooldown_reset.py`, `test_db.py`.
 
+### EX-Gift history (additive, EXG-7)
+
+`/admin gift-history [send_id]` registers only in the admin guild, defers
+privately and takes the shared five-per-minute owner authorization token.
+It lists every configured owner's committed sends, newest first, ten per page,
+or one send by its exact 32-character lowercase hexadecimal send ID. Invalid
+or missing IDs reply "No send with ID <id> was committed." Reads run through
+the writer; history never sends again and survives draft discard and restart.
+
+Each entry shows send ID, UTC commit time, scope and server ("all servers" or
+"one user in server <id>" where applicable), slot labels and the committed
+counts: targeted servers, servers with recipients, recipients. It never shows
+recipient lists, profile IDs or recipient user IDs. History embeds allow up to
+4096 description characters; when slot labels would exceed that limit, each
+slot list becomes "n slots". Empty history says no sends were committed.
+Prev/Next are bound to the opening owner for 900 seconds. Each press defers
+privately and checks that owner, configured owner IDs, admin guild, expiry and
+current exclusion, taking the shared 30-per-minute callback token. Refusals
+change nothing. All replies suppress mentions. Producer: Admin and its history
+view; consumers: configured owners and Discord. Existing sends, commands and
+persisted data remain compatible. Tests: `test_admin_gift.py`, `test_admin.py`,
+`test_cooldown_reset.py`.
+
 ### M4.5a owner correction after review (2026-11-04)
 All configured-owner requests in the admin guild, across status/errors/restart
 including restart confirmations, share an in-memory per-owner limit: five requests

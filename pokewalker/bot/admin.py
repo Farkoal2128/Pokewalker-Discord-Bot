@@ -98,6 +98,11 @@ class Admin(app_commands.Group):
         if await self.authorize(interaction):
             await admin_gift.open(self, interaction, scope.value, server_id, user_id)
 
+    @app_commands.command(name='gift-history', description='Find committed EX-Gift sends')
+    async def gift_history(self, interaction: discord.Interaction, send_id: str | None = None):
+        if await self.authorize(interaction):
+            await admin_gift.history(self, interaction, send_id)
+
     @app_commands.command(name='status', description='Show bounded process health')
     async def status(self, interaction: discord.Interaction):
         if not await self.authorize(interaction, status=True):
