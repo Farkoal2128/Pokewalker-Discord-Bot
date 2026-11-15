@@ -42,6 +42,55 @@ class ExGiftScreenTests(unittest.IsolatedAsyncioTestCase):
     def buttons(self, rendered):
         return {button.label: button for button in rendered['view'].children if hasattr(button, 'label')}
 
+    async def voucher_snapshot(self):
+        return {table: await self.rows(f'SELECT * FROM {table} ORDER BY 1') for table in
+                ('profiles', 'pokemon', 'ex_items', 'inventory', 'arena_runs', 'arena_tickets',
+                 'action_receipts', 'resource_ledger', 'arena_month_scores')}
+
+    async def test_use_voucher_opens_team_picker_spends_nothing(self):
+        session = await self.seed([list(service.EX_ITEMS)])
+        rendered, session = await self.press(session, 'ex_gift')
+        self.assertNotIn('Use Arena EX-Voucher (1)', self.buttons(rendered))
+        rendered, session = await self.press(session, 'ex_claim')
+        button = self.buttons(rendered)['Use Arena EX-Voucher (1)']
+        match = re.fullmatch(self.module.CUSTOM_ID, button.custom_id)
+        self.assertIsNotNone(match)
+        self.assertEqual(match['action'], 'ex_use_arena_ex_voucher')
+        payload = rendered['view'].to_components()
+        self.assertEqual([len(row['components']) for row in payload], [4, 5, 1])
+        self.assertEqual(button.row, 2)
+        before = await self.voucher_snapshot()
+        rendered, session = await self.press(session, 'ex_use_arena_ex_voucher')
+        self.assertEqual(rendered['embed'].title, 'Arena team')
+        self.assertEqual(json.loads(session['selection']),
+                         {'phase': 'arena_team', 'team': [], 'offset': 0, 'sort': 'newest', 'skip': 0})
+        self.assertTrue(self.buttons(rendered)['Start on floor 81 · EX-Voucher'].disabled)
+        self.assertEqual(await self.voucher_snapshot(), before)
+
+    async def test_use_voucher_during_live_run_spends_nothing(self):
+        session = await self.seed([['arena_ex_voucher']])
+        _, session = await self.press(session, 'ex_claim')
+        for index in range(2):
+            await self.conn.execute('INSERT INTO pokemon(pokemon_uid,profile_id,pokemon_id,level_x2,iv_attack,'
+                                    'iv_defense,iv_stamina,gender,shiny,origin,content_version,caught_at) '
+                                    "VALUES (?,?,1,20,10,10,10,'male',0,'catch','test',0)",
+                                    (f'voucher{index}', session['profile_id']))
+        _, session = await self.press(session, 'arena_team')
+        for row in await self.rows('SELECT pokemon_uid FROM pokemon'):
+            _, session = await self.press(session, 'arena_team_pick', [row['pokemon_uid']])
+        _, session = await self.press(session, 'arena_start')
+        before = await self.voucher_snapshot()
+        for action in ('arena_start', 'arena_voucher_start'):
+            _, session = await self.press(session, 'ex_gift')
+            rendered, session = await self.press(session, 'ex_use_arena_ex_voucher')
+            self.assertEqual(rendered['embed'].title, 'Arena team')
+            self.assertEqual(await self.voucher_snapshot(), before)
+            rendered, session = await self.press(session, action)
+            self.assertEqual(rendered['embed'].title, 'Arena break')
+            self.assertIn('Floor 1', rendered['embed'].description)
+            self.assertNotIn('EX-Voucher used:', rendered['embed'].description)
+            self.assertEqual(await self.voucher_snapshot(), before)
+
     async def test_arm_buttons_only_while_held_and_unarmed(self):
         session = await self.seed([list(service.EX_ITEMS)])
         rendered, session = await self.press(session, 'ex_gift')
@@ -61,8 +110,9 @@ class ExGiftScreenTests(unittest.IsolatedAsyncioTestCase):
                     self.assertTrue(button.custom_id.endswith(f':ex_arm_{item}'))
                     self.assertIsNotNone(re.fullmatch(self.module.CUSTOM_ID, button.custom_id))
             use_buttons = [b for b in rendered['view'].children if b.label.startswith('Use ')]
-            self.assertLessEqual(len(use_buttons), 5)
-            self.assertTrue(all(b.row == 1 for b in use_buttons))
+            self.assertEqual(len(use_buttons), 6 - attack - defense)
+            self.assertTrue(all(b.row == (2 if b.custom_id.endswith(':ex_use_arena_ex_voucher') else 1)
+                                for b in use_buttons))
         await self.conn.execute('UPDATE ex_items SET quantity=0')
         rendered, _ = await self.press(session, 'ex_gift')
         for name in ('EX-Attack', 'EX-Defense'):

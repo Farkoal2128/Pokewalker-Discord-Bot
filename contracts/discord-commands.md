@@ -2000,6 +2000,28 @@ calls storage_detail. Refusals spend nothing. Existing IV screens stay compatibl
 Producer: bot.ex_gift; consumers: private Walker interactions and C3 iv_items.
 Tests: tests/test_ex_gift_screens.py.
 
+## C5: Arena EX-Voucher screens (EXG-17, additive)
+Producer: bot.arena and bot.ex_gift; consumers: private Walker interactions and
+services.arena.start. While arena_ex_voucher is held, Arena team row 2 adds
+"Start on floor 81 · EX-Voucher" (arena_voucher_start) after Start. The floor is
+rules.ex_items.voucher_floor + 1. It has exactly Start's disabled state: three
+eligible members are required. Navigation and team select retain rows 0-1;
+Clear/Start/voucher use row 2, and the skip selects retain rows 3-4.
+In arena_team phase the action calls start with skip=0, voucher=True, ignoring
+the selected skip. On started it opens the break with "EX-Voucher used: floors
+1-80 paid +2 Bronze, +8 Silver, +12 Gold, +6 Platinum, +2 Diamond Tickets. Your
+run starts on floor 81." The floor boundary comes from voucher_floor and the
+counts and tiers come from the result's tickets, so prior clears change them.
+no_voucher keeps the picker with "You have no Arena EX-Voucher." All other
+statuses use arena_start behavior, including live opening the existing break
+without spending anything or showing a voucher-used notice.
+While held, EX-Gift adds "Use Arena EX-Voucher (<n>)"
+(ex_use_arena_ex_voucher) on row 2, leaving existing Use buttons on row 1.
+It calls walker.handlers['arena_team'] to open the team picker, including for a
+live-run player. Opening the picker spends nothing; only a committed new start
+consumes a voucher. No service, persisted-state or slash-command changes.
+Tests: test_arena_screens.py and test_ex_gift_screens.py.
+
 ## C5: EX boost arming and break screens (EXG-15, additive)
 Producer: bot.ex_gift and bot.arena; consumers: private Walker interactions and
 services.arena.arm/use_x. EX-Gift reads profile armed flags through get_profile.
