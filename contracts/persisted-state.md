@@ -1808,6 +1808,43 @@ guard. Rollback requires a compatible backup, never lowering `user_version`.
 Verification: `tests/test_ex_gift_schema.py` and the ticket-named schema/deletion
 regressions; no EX-Gift service behavior is introduced by this migration alone.
 
+## EX-Gift claim and EX inventory
+
+`services.ex_gift` exclusively writes `ex_items`; gameplay never grants EX-items
+and trading never reads or writes that table (EX-2, EX-22). This additive boundary
+uses schema 0030. Producers are player claim/use writer jobs; consumers are the
+EX-Gift screens and item services. Existing receipts and inbox behavior remain.
+`held(profile_id)` returns all six EX IDs with zero for missing rows. `take`
+atomically decrements a positive quantity and returns whether it changed a row;
+quantities never fall below zero and have no storage cap.
+
+`unclaimed(profile_id, offset)` returns ten `{gift_id, created_at, items}` rows
+and the total, oldest first (gift ID breaks timestamp ties). `has_unclaimed`
+uses the profile/claimed index. Unclaimed gifts never expire. `recorded(key,
+action, profile_id)` returns the saved result, None for an absent key, or
+`{status: stale}` for a different action or profile; callers authorize first.
+
+`claim(conn, session, now)` requires the caller's active writer transaction.
+Session ownership and exclusion precede replay (`stale` or `excluded` changes
+nothing). The profile-owned receipt is `ex_claim:<session_id>:<rev>`, action
+`ex_claim`, with `rev = session.get('_original_revision', session['revision'])`.
+An authorized retry returns its recorded result before reading mutable state.
+One `claimed_at IS NULL` update claims every unclaimed recipient row; gifts
+are routed oldest first and slots retain package order. Each ordinary slot
+inserts one unit into the reward inbox under `ex_gift:<gift_id>`, resource
+`item`; `arena_ticket:<tier>` inserts resource `arena_ticket`, ID `<tier>`.
+EX slots increment uncapped `ex_items`. One ledger line per credited EX ID is
+`ex_item / <id> / +n / ex_claim`. The result is `{status: claimed, gifts, inbox,
+ex: {id: n}}`, counting gifts and inserted inbox slots. With no gifts those
+counts are zero and `ex` is empty. Separate sessions cannot credit a gift twice.
+
+Recipient transitions, inbox/EX credits, ledger and receipt commit or roll back
+together. Profile deletion (including prune), restored-backup marker replay
+and repeated replay remove recipients, EX inventory, gift inbox rows and owned
+receipts. Re-enrollment gains no old gifts; aggregate `ex_gifts` survives with
+the sending owner's ID and no recipient ID. No migration or rollback change.
+Verification: `test_ex_gift`, `test_deletion`, and the ticket's regressions.
+
 ## EX-Gift send
 
 `services.ex_gift.send` runs inside the caller's active writer transaction. Its
