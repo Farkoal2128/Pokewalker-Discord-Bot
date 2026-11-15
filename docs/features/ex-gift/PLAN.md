@@ -124,7 +124,7 @@ Every build row is `seam` (PIPELINE.md seam domains): at most 2 production files
 | 14 | [EXG-12](tickets/EXG-12.md) Shiny Patch: EX-Gift picker, preview, confirm | build | seam | M | ✅ done · e5d1f40 · GO review-seam r1 |
 | 15 | [EXG-13](tickets/EXG-13.md) Golden Bottlecap | build | seam | S | ✅ done · e946e93 · GO review-seam r1 |
 | 16 | [EXG-14](tickets/EXG-14.md) service: EX-Attack/EX-Defense arming, run flags, boosted fights, X block | build | seam | M | ✅ done · 577fbe5 · GO review-seam r1 |
-| 17 | [EXG-15](tickets/EXG-15.md) screens: arm from EX-Gift; EX lines and X block on the break screen | build | seam | S | pending |
+| 17 | [EXG-15](tickets/EXG-15.md) screens: EX-Gift arm; EX lines and X block on break | build | seam | S | ✅ done · 185d047 · GO review-seam r1 |
 | 18 | [EXG-16](tickets/EXG-16.md) service: Arena EX-Voucher start | build | seam | M | pending |
 | 19 | [EXG-17](tickets/EXG-17.md) screens: voucher start on the team screen; EX-Gift opens it | build | seam | S | pending |
 | 20 | [EXG-18](tickets/EXG-18.md) Pokémon details: Shiny Patch and Golden Bottlecap buttons | build | seam | S | pending |
