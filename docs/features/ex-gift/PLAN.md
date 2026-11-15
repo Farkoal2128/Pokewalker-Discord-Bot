@@ -2,7 +2,7 @@
 
 **Status:** approved — in execution · owner approved G-A · G-P 2026-11-15 (owner pre-authorized approval in session once the audit loop reached 0 MUST)
 **Home:** feature/ex-gift · none
-**Review:** 2026-11-15 · Codex gpt-6-astra ponytail-audit, read-only, fixes by Opus: r1 of c7bcc1f (7 MUST, 4 SHOULD), r2 of 1dcf6aa (1 MUST, 1 SHOULD, 1 NIT), r3 of 3b3bb74 clean (0/0/0); all fixed
+**Review:** 2026-11-15 · Codex gpt-6-astra ponytail-audit read-only r3 of 3b3bb74 clean (0/0/0); prior rounds and Opus fixes in Git
 **Inputs:** [SYNTHESIS.md](SYNTHESIS.md), intake closed 2026-11-15: EX-1..EX-27 and its recorded readings are approved requirements, R1..R20 the approved design, §6 the acceptance cases · [PIPELINE.md](../../../PIPELINE.md) · `AGENTS.md` · `rules/*.md`
 
 ## 1. Outcome and non-goals
@@ -119,7 +119,7 @@ Every build row is `seam` (PIPELINE.md:13: slash commands and interactions, pers
 | 9 | [EXG-7](tickets/EXG-7.md) `/admin gift-history` | build | seam | S | ✅ done · ad4507d · GO review-seam r1 |
 | 10 | [EXG-8](tickets/EXG-8.md) service: claim and EX inventory | build | seam | M | ✅ done · 56b678e · GO review-seam r1 |
 | 11 | [EXG-9](tickets/EXG-9.md) EX-Gift screen with Claim | build | seam | M | ✅ done · e64f122 · GO review-seam r1 |
-| 12 | [EXG-10](tickets/EXG-10.md) `/walker` home EX-Gift button and (!) | build | seam | S | pending |
+| 12 | [EXG-10](tickets/EXG-10.md) `/walker` home EX-Gift button and (!) | build | seam | S | ✅ done · 1e0cdd1 · GO review-seam r1 |
 | 13 | [EXG-11](tickets/EXG-11.md) Time Gear Fragment | build | seam | S | pending |
 | 14 | [EXG-12](tickets/EXG-12.md) Shiny Patch: EX-Gift picker, preview, confirm | build | seam | M | pending |
 | 15 | [EXG-13](tickets/EXG-13.md) Golden Bottlecap | build | seam | S | pending |
