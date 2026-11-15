@@ -708,6 +708,41 @@ Existing command shapes, persisted data and lifecycle exit meanings are compatib
 Tests: test_admin.py, test_client_lifecycle.py and affected adapter/config regressions.
 Live Discord, systemd restart handling and host acceptance remain unverified.
 
+### EX-Gift manager (additive, EXG-5)
+
+`/admin gift scope:<all|server> [server_id] [user_id]` registers only in the
+admin guild. `all` takes neither ID; `server` requires a server ID and optionally
+an enrolled user in that server. IDs use `config.snowflake`; invalid combinations,
+unknown servers and missing profiles are refused privately without writing data.
+The command shares the existing five-per-minute owner authorization bucket.
+
+An owner-bound in-memory draft expires absolutely after 900 monotonic seconds.
+It holds target IDs, 0–10 quantity-one item slots (duplicates allowed), revision
+and a UUID send ID. Package changes increment the revision, replace the send ID
+and clear the selected slot. Category and EX changes reset the item page.
+
+The editor rows are: Balls/Berries/Rare/IV items/Arena; Evolution/EX/Prev/Next;
+an item select with at most 25 catalog labels; a numbered slot select; and
+Remove/Clear/Preview/Cancel. Zero slots omit the slot select and disable Preview;
+ten slots disable item picking. Remove needs a selected slot. This is at most
+five rows and 15 components (four rows and 14 components when empty).
+
+Every callback defers ephemerally, checks the draft owner, configured owner IDs,
+admin guild, deadline, a separate per-owner 30-per-minute bucket shared across
+drafts, and current exclusion through the writer. After awaits it rechecks draft
+identity and permits editor changes/redraws only while editing. Refusals suppress
+mentions and change nothing. Cancel, expiry and view timeout use one discard
+operation: mark discarded, unregister only that draft, stop its view and clear
+target IDs. Cancel leaves text without controls.
+
+Preview shows the send ID, scope, exact server/user target, every slot and the
+provisional targeted-server, populated-server and recipient counts. Zero recipients
+adds "No enrolled recipients: nothing can be sent." Edit preserves the package
+revision; Cancel discards. Confirm is introduced separately by EXG-6.
+Producer: Admin and its EX-Gift view; consumers: configured owners and Discord's
+component serializer. Existing commands and persisted data remain compatible;
+tests: `test_admin_gift.py`, `test_admin.py`, `test_cooldown_reset.py`.
+
 ### M4.5a owner correction after review (2026-11-04)
 All configured-owner requests in the admin guild, across status/errors/restart
 including restart confirmations, share an in-memory per-owner limit: five requests
