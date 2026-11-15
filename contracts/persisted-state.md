@@ -1301,7 +1301,7 @@ stored as `level_x2` 40-50) instead of `wild_level_range`; IVs, gender and shiny
 as before, and no level is displayed. Existing raid encounters keep their rolls.
 Ordinary wild encounters are unchanged. Tests: tests/test_raids.py, tests/test_encounters.py.
 
-## Owner amendment: Bottlecap and Vitamin (2026-11-12)
+## Owner amendment: Bottlecap and Vitamin (2026-11-12), Shiny Patch (EXG-12)
 `bottlecap` and `vitamin` are ordinary stackable Bag items, not rare pockets. They convert
 at 2,500 and 500 Stardust and come from the survivor roll (Bottlecap), the hourly gym
 income and check-in rolls (Vitamin) and the Vitamin purchase below (C4). No schema change:
@@ -1336,6 +1336,23 @@ bag_limit) return without mutation. Success debits the price, adds one vitamin a
 the ledger lines stardust -5000 and item vitamin +1, both with reason buy. buy_evolution_item
 keeps its behavior. Producers: item services; consumers: Pokemon details, Bag and receipt
 readers. Tests: tests/test_iv_items.py, tests/test_evolution_items.py.
+
+Shiny Patch is an additive EX inventory effect in services.iv_items, consumed by the
+EX-Gift picker and the shared preview/confirm handlers. quote for shiny_patch returns
+have (ex_gift.held) and shiny, or None when not owned. use accepts shiny_patch in
+addition to the ordinary ITEMS; Bottlecap and Vitamin retain the order above. For
+Shiny Patch, session_owner runs first, then ex_gift.recorded checks the profile-owned
+shiny_patch:<uid>:<pokemon revision> receipt before any mutable refusal, including
+storage.detail. Replay returns the saved result even after stock, revision or ownership
+changes; another profile's or action's receipt is stale. Without a receipt, missing or
+non-owned Pokemon and revision changes are stale, already shiny is shiny, and no stock
+is missing. Refusals write nothing. Gym-deployed Pokemon are allowed; no combat stat
+changes and live Arena snapshots stay unchanged. Inside the writer transaction and
+receipt, UPDATE pokemon SET shiny=1,revision=revision+1 checks uid, profile, revision
+and state='owned', ex_gift.take consumes one patch, and a single ex_item/shiny_patch
+ledger line records -1 with reason shiny_patch. Success returns used and the updated
+Pokemon. Trade, research and evolution continue to reject stale revisions. No schema
+or rollback migration is needed. Tests: tests/test_ex_items.py, tests/test_iv_items.py.
 
 ## Owner amendment: ball trade-up (2026-11-12)
 `items.trade_up(conn, session, item_id, outputs)` requires a writer transaction and returns

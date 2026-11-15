@@ -6,6 +6,145 @@ import unittest
 
 from pokewalker.services import cooldowns
 import test_arena
+import test_iv_items
+
+
+class ShinyPatchTests(unittest.IsolatedAsyncioTestCase):
+    _base = test_iv_items.IVItemTests
+    asyncSetUp, connect, close = _base.asyncSetUp, _base.connect, _base.close
+    rows, pokemon, current, mon = _base.rows, _base.pokemon, _base.current, _base.mon
+    deploy = _base.deploy
+
+    async def use(self, revision=0, uid='mon', session=None):
+        from pokewalker.services import iv_items
+        return await self.writer.run(lambda conn: iv_items.use(
+            conn, session or self.session, uid, revision, 'shiny_patch',
+            self.bot.content, self.walker.multipliers))
+
+    async def stock(self):
+        self.session = await self.current()
+        await self.conn.execute("INSERT INTO ex_items VALUES ('p','shiny_patch',1)")
+
+    async def snapshot(self):
+        return {table: await self.rows(f'SELECT * FROM {table} ORDER BY 1') for table in
+                ('pokemon', 'ex_items', 'inventory', 'action_receipts', 'resource_ledger')}
+
+    async def test_shiny_patch_makes_shiny_bumps_revision_spends_one(self):
+        from pokewalker.services import iv_items
+        await self.stock()
+        before = await self.mon()
+        quote = await iv_items.quote(self.conn, 'p', 'mon', 'shiny_patch',
+                                     self.bot.content, self.walker.multipliers)
+        self.assertEqual(quote, {'have': 1, 'shiny': False})
+        result = await self.use()
+        self.assertEqual(result, {'status': 'used', 'pokemon': {**before, 'shiny': 1, 'revision': 1}})
+        self.assertEqual(await self.rows('SELECT quantity FROM ex_items'), [{'quantity': 0}])
+        self.assertEqual(await self.rows('SELECT key,action,profile_id FROM action_receipts'),
+                         [{'key': 'shiny_patch:mon:0', 'action': 'shiny_patch', 'profile_id': 'p'}])
+        self.assertEqual(await self.rows('SELECT resource,resource_id,delta,reason FROM resource_ledger'),
+                         [{'resource': 'ex_item', 'resource_id': 'shiny_patch', 'delta': -1,
+                           'reason': 'shiny_patch'}])
+
+    async def test_already_shiny_refused_item_kept(self):
+        await self.stock()
+        await self.conn.execute('UPDATE pokemon SET shiny=1')
+        before = await self.snapshot()
+        self.assertEqual((await self.use())['status'], 'shiny')
+        self.assertEqual(await self.snapshot(), before)
+
+    async def test_stale_after_trade_research_or_evolution_refused(self):
+        from pokewalker.services import trading, research, evolution
+        await self.stock()
+        other = {**self.session, 'session_id': 'other', 'user_id': '789', 'profile_id': 'q'}
+        await self.conn.execute("INSERT INTO sessions(session_id,guild_id,user_id,profile_id,expires_at) "
+                                "VALUES ('other','123','789','q',9000)")
+        await self.pokemon('theirs', pid='q')
+        trade = await self.writer.run(lambda c: trading.open_or_join(c, self.session, '789', 1000, False))
+        tid = trade['trade_id']
+        await self.writer.run(lambda c: trading.open_or_join(c, other, '456', 1001, False))
+        await self.writer.run(lambda c: trading.offer(c, self.session, tid, 'mon', 1002))
+        await self.writer.run(lambda c: trading.offer(c, other, tid, 'theirs', 1003))
+        await self.writer.run(lambda c: trading.confirm(c, self.session, tid, 2, 1004, self.bot.content))
+        swapped = await self.writer.run(lambda c: trading.confirm(c, other, tid, 2, 1005, self.bot.content))
+        self.assertEqual(swapped['status'], 'completed')
+        await self.pokemon('research')
+        picks, preview = [['research', 0]], {'id': 'exg-research', 'expires_at': 2000}
+        session = {**self.session, 'selection': json.dumps({'picks': picks, 'preview': preview})}
+        sent = await self.writer.run(lambda c: research.send(c, session, picks, preview, 1000, self.bot.content))
+        self.assertEqual(sent['status'], 'sent')
+        await self.pokemon('evolution')
+        await self.conn.execute("INSERT OR REPLACE INTO candy VALUES ('p',1,1000)")
+        edge = evolution.options(self.bot.content, await self.mon('evolution'))[0]
+        evolved = await self.writer.run(lambda c: evolution.evolve(
+            c, self.session, 'evolution', edge['edge_id'], 0, self.bot.content, self.walker.multipliers, 1000))
+        self.assertEqual(evolved['status'], 'evolved')
+        for uid in ('mon', 'research', 'evolution'):
+            with self.subTest(service=uid):
+                before = await self.snapshot()
+                self.assertEqual((await self.use(uid=uid))['status'], 'stale')
+                self.assertEqual(await self.snapshot(), before)
+
+    async def test_gym_deployed_allowed_arena_snapshot_unchanged(self):
+        await self.stock()
+        await self.deploy()
+        self.assertEqual((await self.use(revision=(await self.mon())['revision']))['status'], 'used')
+        for uid in ('arena', 'arena2', 'arena3'):
+            await self.pokemon(uid)
+        from pokewalker.services import arena
+        import random
+        run = await self.writer.run(lambda c: arena.start(
+            c, self.session, [('arena', 0), ('arena2', 0), ('arena3', 0)], 1000,
+            random.Random(7), self.bot.content, self.walker.multipliers))
+        self.assertEqual(run['status'], 'started')
+        before = await self.rows('SELECT * FROM arena_runs')
+        await self.conn.execute('UPDATE ex_items SET quantity=1')
+        self.assertEqual((await self.use(uid='arena'))['status'], 'used')
+        self.assertEqual(await self.rows('SELECT * FROM arena_runs'), before)
+
+    async def test_replay_returns_used_after_revision_and_stock_change(self):
+        await self.stock()
+        result = await self.use()
+        for change in ("UPDATE pokemon SET revision=revision+1", "UPDATE pokemon SET profile_id='q'",
+                       "UPDATE pokemon SET state='sent'", 'DELETE FROM ex_items'):
+            await self.conn.execute(change)
+            before = await self.snapshot()
+            self.assertEqual(await self.use(), result)
+            self.assertEqual(await self.snapshot(), before)
+
+    async def test_other_profile_receipt_stale(self):
+        await self.stock()
+        await self.use()
+        for column, value in (('profile_id', 'q'), ('action', 'ex_claim')):
+            with self.subTest(column=column):
+                await self.conn.execute("UPDATE action_receipts SET profile_id='p',action='shiny_patch'")
+                await self.conn.execute(f'UPDATE action_receipts SET {column}=?', (value,))
+                before = await self.snapshot()
+                self.assertEqual((await self.use())['status'], 'stale')
+                self.assertEqual(await self.snapshot(), before)
+
+    async def test_missing_spends_nothing(self):
+        self.session = await self.current()
+        before = await self.snapshot()
+        self.assertEqual((await self.use())['status'], 'missing')
+        self.assertEqual(await self.snapshot(), before)
+
+    async def test_shiny_patch_authorization_before_replay_and_atomic_failure(self):
+        await self.stock()
+        await self.conn.execute("CREATE TRIGGER fail_patch BEFORE INSERT ON resource_ledger "
+                                "WHEN NEW.resource='ex_item' BEGIN SELECT RAISE(ABORT,'patch ledger'); END")
+        before = await self.snapshot()
+        with self.assertRaisesRegex(sqlite3.IntegrityError, 'patch ledger'):
+            await self.use()
+        self.assertEqual(await self.snapshot(), before)
+        await self.conn.execute('DROP TRIGGER fail_patch')
+        await self.conn.execute("INSERT INTO restrictions(guild_id,user_id,paused,paused_until) "
+                                "VALUES ('123','456',1,9999999999)")
+        self.assertEqual((await self.use())['status'], 'used')
+        await self.conn.execute('UPDATE restrictions SET excluded=1')
+        before = await self.snapshot()
+        self.assertEqual((await self.use())['status'], 'excluded')
+        self.assertEqual(await self.snapshot(), before)
+        self.assertEqual((await self.use(session={**self.session, 'profile_id': 'q'}))['status'], 'stale')
 
 
 class TimeGearTests(unittest.IsolatedAsyncioTestCase):

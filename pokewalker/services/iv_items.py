@@ -4,7 +4,7 @@ import json
 
 from pokewalker.db import with_receipt
 from pokewalker.domain.cp import appraisal, cp
-from pokewalker.services import storage
+from pokewalker.services import ex_gift, storage
 from pokewalker.services.profiles import session_owner
 
 
@@ -39,6 +39,8 @@ async def quote(conn, profile_id, uid, item, content, multipliers):
     pokemon = await storage.detail(conn, profile_id, uid)
     if pokemon is None:
         return None
+    if item == 'shiny_patch':
+        return {'have': (await ex_gift.held(conn, profile_id))[item], 'shiny': bool(pokemon['shiny'])}
     identity, _ = storage.identify(content, pokemon)
     base = [identity[key] for key in ('base_attack', 'base_defense', 'base_stamina')]
     before = tuple(pokemon[key] for key in IVS)
@@ -54,29 +56,45 @@ async def quote(conn, profile_id, uid, item, content, multipliers):
 async def use(conn, session, uid, expected_revision, item, content, multipliers):
     if not conn.in_transaction:
         raise RuntimeError('Bottlecap and Vitamin use requires an active writer transaction')
-    if item not in ITEMS:
+    if item not in (*ITEMS, 'shiny_patch'):
         return {'status': 'refused', 'pokemon': None}
     profile, refusal = await session_owner(conn, session)
     if refusal is not None:
         return {**refusal, 'pokemon': None}
     pid = profile['profile_id']
+    key = f'{item}:{uid}:{expected_revision}'
+    if item == 'shiny_patch':
+        receipt = await ex_gift.recorded(conn, key, item, pid)
+        if receipt is not None:
+            return receipt
     pokemon = await storage.detail(conn, pid, uid)
     if pokemon is None:
         return {'status': 'stale', 'pokemon': None}
-    key = f'{item}:{uid}:{expected_revision}'
-    async with conn.execute('SELECT profile_id,result FROM action_receipts WHERE key=? AND action=?',
-                            (key, item)) as cursor:
-        receipt = await cursor.fetchone()
-    if receipt is not None:
-        return json.loads(receipt['result']) if receipt['profile_id'] == pid else {'status': 'stale', 'pokemon': pokemon}
-    status = ('deployed' if pokemon['gym_deployment_id'] is not None else
-              'stale' if pokemon['revision'] != expected_revision else
-              'perfect' if perfect(pokemon) else
-              'missing' if (await held(conn, pid))[item] < 1 else None)
+    if item == 'shiny_patch':
+        status = ('stale' if pokemon['revision'] != expected_revision else
+                  'shiny' if pokemon['shiny'] else
+                  'missing' if (await ex_gift.held(conn, pid))[item] < 1 else None)
+    else:
+        async with conn.execute('SELECT profile_id,result FROM action_receipts WHERE key=? AND action=?',
+                                (key, item)) as cursor:
+            receipt = await cursor.fetchone()
+        if receipt is not None:
+            return json.loads(receipt['result']) if receipt['profile_id'] == pid else {'status': 'stale', 'pokemon': pokemon}
+        status = ('deployed' if pokemon['gym_deployment_id'] is not None else
+                  'stale' if pokemon['revision'] != expected_revision else
+                  'perfect' if perfect(pokemon) else
+                  'missing' if (await held(conn, pid))[item] < 1 else None)
     if status is not None:
         return {'status': status, 'pokemon': pokemon}
 
     async def compute(conn):
+        if item == 'shiny_patch':
+            await conn.execute('UPDATE pokemon SET shiny=1,revision=revision+1 '
+                               "WHERE pokemon_uid=? AND profile_id=? AND revision=? AND state='owned'",
+                               (uid, pid, expected_revision))
+            await ex_gift.take(conn, pid, item)
+            lines = [{'profile_id': pid, 'resource': 'ex_item', 'resource_id': item, 'delta': -1, 'reason': item}]
+            return {'status': 'used', 'pokemon': await storage.detail(conn, pid, uid)}, lines
         changed = dict(zip(IVS, apply(item, tuple(pokemon[key] for key in IVS))))
         await conn.execute('UPDATE pokemon SET iv_attack=?,iv_defense=?,iv_stamina=?,revision=revision+1 '
                            "WHERE pokemon_uid=? AND profile_id=? AND revision=? AND state='owned'",

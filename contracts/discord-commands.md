@@ -1948,6 +1948,25 @@ apply; service excluded and stale refusals use EXCLUDED and REOPEN respectively.
 Producer: bot.ex_gift and Walker; consumers: private Discord interactions and
 services.ex_gift. No slash command or service change. Tests: test_ex_gift_screens.py.
 
+## C5: Shiny Patch (EXG-12, additive)
+Producer: bot.ex_gift with services.iv_items; consumers: private walker interactions.
+While held, EX-Gift shows Use Shiny Patch (<n>) (ex_use_shiny_patch). It opens a
+10-owned-Pokemon picker, newest first via storage.page, with selection
+{phase: ex_pick, ex_item: shiny_patch, offset} and no ex_preview. ex_pick selects a
+Pokemon labelled <name> · CP <n>, with · Shiny when shiny. Prev/Next use
+ex_pick_prev/ex_pick_next; Back uses ex_gift. A pick records pokemon_uid,
+pokemon_revision and ex_back=ex_pick, then opens ex_preview_shiny_patch.
+The shared preview requires the selected owned Pokemon at its saved revision, else
+REOPEN. Already shiny says "It is already shiny. No Shiny Patch was used."; no stock
+says "You have no Shiny Patch. Nothing was used.". Otherwise it records
+ex_preview=shiny_patch and shows Use Shiny Patch with "<name> becomes shiny. Uses 1
+Shiny Patch (have <n>).", Confirm (ex_shiny_patch_confirm) and Back (ex_back, or
+storage_detail). Confirm requires that matching preview, otherwise "Preview the Shiny
+Patch before confirming.". It calls iv_items.use; stale says "That Pokémon changed.
+Pick it again.". Success from the picker returns to EX-Gift with "<name> is now
+shiny."; from details it calls storage_detail. Refusals spend nothing. Existing IV
+item screens stay compatible. Tests: tests/test_ex_gift_screens.py.
+
 ## C5: Time Gear Fragment (EXG-11, additive)
 Producer: bot.ex_gift; consumers: private Discord interactions and
 services.cooldowns.time_gear. While held, EX-Gift adds "Use Time Gear Fragment (<n>)"
