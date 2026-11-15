@@ -97,6 +97,49 @@ class DeletionTests(unittest.IsolatedAsyncioTestCase):
     def records(self):
         return [json.loads(line) for line in self.path.read_text().splitlines()]
 
+    async def test_listen_registers_dict_subclass_weakly(self):
+        import gc
+        import weakref
+        class Listener(dict):
+            pass
+        service = self.service()
+        listener = Listener()
+        service.listen(listener)
+        key, reference = id(listener), weakref.ref(listener)
+        self.assertIs(service._listeners[key], listener)
+        del listener
+        gc.collect()
+        self.assertIsNone(reference())
+        self.assertNotIn(key, service._listeners)
+
+    async def test_profile_delete_notifies_listeners_with_guild_and_user(self):
+        from unittest.mock import Mock
+        service = self.service()
+        listener = Mock()
+        def observe(guild, user):
+            self.assertTrue(self.conn.in_transaction)
+            self.assertEqual((guild, user), ('1', '2'))
+        listener.profile_deleted.side_effect = observe
+        service.listen(listener)
+        self.addCleanup(service._listeners.pop, id(listener), None)
+        await self.run_marker()
+        listener.profile_deleted.assert_called_once_with('1', '2')
+        self.assertEqual(await self.scalar('SELECT count(*) FROM profiles'), 0)
+
+    async def test_replay_calls_listeners_harmlessly(self):
+        from unittest.mock import Mock
+        service = self.service()
+        listener = Mock()
+        service.listen(listener)
+        self.addCleanup(service._listeners.pop, id(listener), None)
+        await self.run_marker()
+        listener.profile_deleted.reset_mock()
+        await service.replay_markers(self.writer, self.path)
+        await service.replay_markers(self.writer, self.path)
+        self.assertEqual(listener.profile_deleted.call_args_list,
+                         [unittest.mock.call('1', '2')] * 2)
+        self.assertEqual(await self.scalar('SELECT count(*) FROM profiles'), 0)
+
     async def test_marker_fsynced_before_delete_and_has_marker_id(self):
         service = self.service()
         apply = service.apply
@@ -347,6 +390,39 @@ class DeletionTests(unittest.IsolatedAsyncioTestCase):
         for _ in range(2):
             await self.service().replay_markers(writer, self.path)
             await self.assert_arena_traces_removed(restored)
+
+    async def test_replay_after_restore_removes_ex_gift_rows_and_receipts(self):
+        from pokewalker.services import ex_gift
+        from test_ex_gift import CONTENT
+        self.assertTrue(callable(getattr(ex_gift, 'claim', None)), 'EX-Gift claim provider is absent')
+        session = dict(session_id=str(uuid4()), profile_id=self.profile_id, guild_id='1', user_id='2', revision=0)
+        await self.conn.execute('INSERT INTO sessions(session_id,guild_id,user_id,profile_id,expires_at) '
+                                'VALUES (?,?,?,?,1e12)',
+                                tuple(session[k] for k in ('session_id', 'guild_id', 'user_id', 'profile_id')))
+
+        async def send(conn, gift_id):
+            return await ex_gift.send(conn, send_id=gift_id, owner_id='owner', admin_guild_id='1',
+                                      scope='user', guild_id='1', user_id='2',
+                                      items=['poke_ball', 'ex_attack'], content=CONTENT, now=10)
+
+        await self.writer.run(lambda conn: send(conn, 'claimed'))
+        await self.writer.run(lambda conn: ex_gift.claim(conn, session, 20))
+        await self.writer.run(lambda conn: send(conn, 'unclaimed'))
+        backup = self.db_path.parent / 'ex-before-delete.sqlite3'
+        with closing(sqlite3.connect(backup)) as destination:
+            await self.conn.backup(destination)
+        await self.run_marker()
+        restored = await open_db(backup)
+        self.addAsyncCleanup(restored.close)
+        writer = Writer(restored)
+        self.addAsyncCleanup(writer.close)
+        for table, count in [('ex_gift_recipients', 2), ('ex_items', 1), ('inbox_items', 1), ('action_receipts', 1)]:
+            self.assertEqual(len(await restored.execute_fetchall(f'SELECT * FROM {table}')), count, table)
+        for _ in range(2):
+            await self.service().replay_markers(writer, self.path)
+            for table in ('ex_gift_recipients', 'ex_items', 'inbox_items', 'action_receipts', 'resource_ledger'):
+                self.assertEqual(await restored.execute_fetchall(f'SELECT * FROM {table}'), [], table)
+            self.assertEqual(len(await restored.execute_fetchall('SELECT * FROM ex_gifts')), 2)
 
     async def holder(self):
         await self.conn.execute(

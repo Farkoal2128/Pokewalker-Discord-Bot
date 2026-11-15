@@ -326,6 +326,126 @@ class MilestoneTests(unittest.IsolatedAsyncioTestCase):
             'INSERT INTO inbox_items(profile_id,milestone_id,resource,resource_id,remaining,created_at) '
             'VALUES (?,?,?,?,?,1000)', [(self.profile['profile_id'], *row) for row in rewards]))
 
+    async def test_claim_credits_arena_ticket_rows_with_ledger_lines(self):
+        session = await self.ready()
+        tiers = ('bronze', 'silver', 'gold', 'platinum', 'diamond')
+        await self.writer.run(lambda conn: conn.execute(
+            'INSERT INTO arena_tickets VALUES (?,?,7)', (self.profile['profile_id'], 'bronze')))
+        await self.seed_gym_inbox([('ex_gift:ticket-grant', 'arena_ticket', tier, 1001) for tier in tiers])
+        before = await self.snapshot()
+        execute = self.conn.execute
+        def fail(sql, parameters=()):
+            if 'INSERT INTO resource_ledger' in sql:
+                raise RuntimeError('ledger unavailable')
+            return execute(sql, parameters)
+        with patch.object(self.conn, 'execute', side_effect=fail):
+            with self.assertRaisesRegex(RuntimeError, 'ledger unavailable'):
+                await self.claim(session)
+        self.assertEqual(await self.snapshot(), before)
+        self.assertEqual(await self.rows('SELECT tier,quantity FROM arena_tickets'),
+                         [{'tier': 'bronze', 'quantity': 7}])
+        result = await self.claim(session)
+        self.assertEqual(result, {'status': 'claimed', 'moved': {
+            'item': 0, 'stardust': 0, 'candy': 0, 'arena_ticket': 5005}})
+        self.assertEqual(await self.rows('SELECT tier,quantity FROM arena_tickets ORDER BY tier'),
+                         [{'tier': tier, 'quantity': 1008 if tier == 'bronze' else 1001}
+                          for tier in sorted(tiers)])
+        self.assertEqual(await self.rows('SELECT * FROM inbox_items'), [])
+        self.assertEqual(await self.rows(
+            "SELECT profile_id,resource,resource_id,delta,reason FROM resource_ledger WHERE reason='milestone_claim'"),
+            [{'profile_id': self.profile['profile_id'], 'resource': 'arena_ticket', 'resource_id': tier,
+              'delta': 1001, 'reason': 'milestone_claim'} for tier in tiers])
+
+    async def test_ticket_rows_move_with_full_bag_and_occupied_pockets(self):
+        session = await self.ready()
+        await self.writer.run(lambda conn: conn.execute('DELETE FROM inventory'))
+        await self.inventory(poke_ball=250, **{item: 1 for item in items.RARE})
+        before = await self.rows('SELECT * FROM inventory ORDER BY item_id')
+        await self.seed_gym_inbox([('ex_gift:full', 'arena_ticket', 'bronze', 3)])
+        self.assertEqual((await self.claim(session))['moved']['arena_ticket'], 3)
+        self.assertEqual(await self.rows('SELECT tier,quantity FROM arena_tickets'),
+                         [{'tier': 'bronze', 'quantity': 3}])
+        self.assertEqual(await self.rows('SELECT * FROM inventory ORDER BY item_id'), before)
+        self.assertEqual(await self.service().waiting(self.conn, self.profile['profile_id']), {})
+
+    async def test_mixed_ex_gift_rows_claim_items_and_tickets_once(self):
+        session = await self.ready()
+        await self.writer.run(lambda conn: conn.execute('DELETE FROM inventory'))
+        await self.inventory(poke_ball=248)
+        await self.seed_gym_inbox([('ex_gift:mixed', 'item', 'poke_ball', 1)] * 5
+                                 + [('ex_gift:mixed', 'arena_ticket', 'bronze', 1)])
+        result = await self.claim(session)
+        self.assertEqual(result['moved'], {'item': 2, 'stardust': 0, 'candy': 0, 'arena_ticket': 1})
+        self.assertEqual(await self.service().waiting(self.conn, self.profile['profile_id']), {'item': 3})
+        self.assertEqual(await items.bag_units(self.conn, self.profile['profile_id']), 250)
+        self.assertEqual(await self.rows('SELECT tier,quantity FROM arena_tickets'),
+                         [{'tier': 'bronze', 'quantity': 1}])
+        after = await self.snapshot()
+        self.assertEqual(await self.claim(session), result)
+        self.assertEqual(await self.snapshot(), after)
+        await self.inventory(poke_ball=247)
+        _, other = await self.open()
+        self.assertEqual((await self.claim(other))['moved'], {'item': 3, 'stardust': 0, 'candy': 0})
+        self.assertEqual(await self.rows('SELECT * FROM inbox_items'), [])
+        self.assertEqual(await self.rows('SELECT quantity FROM arena_tickets'), [{'quantity': 1}])
+
+    async def test_inbox_names_ticket_rows_and_ex_gift_label_without_id(self):
+        session = await self.ready()
+        tiers = ('bronze', 'silver', 'gold', 'platinum', 'diamond')
+        await self.seed_gym_inbox([('ex_gift:private-gift-id', 'arena_ticket', tier, 1) for tier in tiers])
+        for action in ('inbox', 'claim'):
+            shown = await self.click(await self.current(session), action)
+            rendered = shown.edit_original_response.await_args.kwargs
+            description = rendered['embed'].description
+            self.assertIn('EX-Gift: ', description)
+            for tier in tiers:
+                self.assertIn(f'{tier.title()} Arena Ticket \u00d71', description)
+            self.assertNotIn('ex_gift:', description)
+            self.assertNotIn('private-gift-id', description)
+            self.assertNotIn('Items wait for bag space', description)
+            self.assertEqual([button.label for button in rendered['view'].children], ['Claim', 'Back'])
+
+    async def test_ticket_line_only_when_tickets_moved_or_waiting(self):
+        from pokewalker.bot import milestones as screen
+        session = await self.ready()
+        for moved, waiting in (({}, {}), ({'arena_ticket': 0}, {'arena_ticket': 0}),
+                               ({'arena_ticket': 2}, {}), ({}, {'arena_ticket': 3})):
+            with self.subTest(moved=moved, waiting=waiting):
+                description = screen.render({'session': session, 'moved': moved, 'waiting': waiting},
+                                            self.bot.content)['embed'].description
+                expected = (f"Arena tickets: moved {moved.get('arena_ticket', 0)} / "
+                            f"waiting {waiting.get('arena_ticket', 0)}")
+                if sum(moved.values()) + sum(waiting.values()) > 0:
+                    self.assertIn('Candy: moved 0 / waiting 0\n' + expected, description)
+                else:
+                    self.assertNotIn('Arena tickets:', description)
+                self.assertNotIn('Items wait for bag space', description)
+
+    async def test_same_claim_press_credits_tickets_once(self):
+        session = await self.ready()
+        await self.seed_gym_inbox([('ex_gift:replay', 'arena_ticket', 'bronze', 2)])
+        results = await asyncio.gather(self.claim(session), self.claim(session))
+        self.assertEqual(results[0], results[1])
+        await self.restart()
+        self.assertEqual(await self.claim(session), results[0])
+        self.assertEqual(await self.rows('SELECT tier,quantity FROM arena_tickets'),
+                         [{'tier': 'bronze', 'quantity': 2}])
+        self.assertEqual(await self.rows("SELECT resource_id,delta FROM resource_ledger WHERE resource='arena_ticket'"),
+                         [{'resource_id': 'bronze', 'delta': 2}])
+        self.assertEqual(await self.rows("SELECT key,profile_id FROM action_receipts WHERE action='claim'"),
+                         [{'key': f"claim:{session['session_id']}:{session['revision']}",
+                           'profile_id': self.profile['profile_id']}])
+
+    async def test_ordinary_claim_result_keeps_three_keys(self):
+        session = await self.seed_gold()
+        self.assertEqual(set((await self.claim(session))['moved']), {'item', 'stardust', 'candy'})
+
+    async def test_pending_count_counts_one_ex_gift_key_once(self):
+        await self.ready()
+        await self.seed_gym_inbox([('ex_gift:one', 'item', 'poke_ball', 1)] * 5
+                                 + [('ex_gift:one', 'arena_ticket', 'bronze', 1)])
+        self.assertEqual(await self.service().pending_count(self.conn, self.profile['profile_id']), 1)
+
     async def test_inbox_items_waiting_offers_expand_bag_and_convert(self):
         session = await self.ready()
         await self.seed_gym_inbox([('pokedex:5', 'item', 'great_ball', 5)])

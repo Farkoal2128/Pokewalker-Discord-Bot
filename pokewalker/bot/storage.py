@@ -11,6 +11,7 @@ from pokewalker.bot import share
 from pokewalker.domain.cp import appraisal
 from pokewalker.services import storage as service
 from pokewalker.services import profiles, research, capacity, evolution, iv_items
+from pokewalker.services import ex_gift as ex_gift_service
 
 
 def render_page(state):
@@ -80,6 +81,10 @@ def render_detail(state):
         view.add_item(discord.ui.Button(label=label, custom_id=custom_id(state, f"iv_{item}"), row=2,
                                        disabled=perfect or state.get("protection") == "deployed"
                                        or state.get("iv_items", {}).get(item, 0) < 1))
+    for item in ("shiny_patch", "golden_bottlecap"):
+        if state.get("ex_items", {}).get(item, 0) > 0:
+            view.add_item(discord.ui.Button(label=f"Use {ex_gift_service.EX_ITEMS[item]}",
+                                           custom_id=custom_id(state, f"ex_preview_{item}"), row=2))
     return {"embed": embed, "view": view}
 
 
@@ -173,7 +178,8 @@ def handlers(walker):
     async def show_detail(conn, session, pokemon):
         selection = json.loads(session["selection"])
         selection.update(pokemon_uid=pokemon["pokemon_uid"], pokemon_revision=pokemon["revision"])
-        selection.pop("iv_item", None)
+        for key in ("iv_item", "ex_back", "ex_item", "ex_preview"):
+            selection.pop(key, None)
         session["selection"] = json.dumps(selection)
         item = item_state(pokemon)
         profile = await profiles.get_profile(conn, session["guild_id"], session["user_id"])
@@ -189,6 +195,7 @@ def handlers(walker):
         return render_detail({"session": session, **item,
                               "gym_name": gym_name,
                               "iv_items": await iv_items.held(conn, session["profile_id"]),
+                              "ex_items": await ex_gift_service.held(conn, session["profile_id"]),
                               "can_evolve": bool(evolution.options(walker.bot.content, pokemon)),
                               "share_allowed": await share.allowed(conn, session, pokemon),
                               "companion": profile["companion_uid"] == pokemon["pokemon_uid"],

@@ -708,6 +708,93 @@ Existing command shapes, persisted data and lifecycle exit meanings are compatib
 Tests: test_admin.py, test_client_lifecycle.py and affected adapter/config regressions.
 Live Discord, systemd restart handling and host acceptance remain unverified.
 
+### EX-Gift manager (additive, EXG-5/EXG-6)
+
+`/admin gift scope:<all|server> [server_id] [user_id]` registers only in the
+admin guild. `all` takes neither ID; `server` requires a server ID and optionally
+an enrolled user in that server. IDs use `config.snowflake`; invalid combinations,
+unknown servers and missing profiles are refused privately without writing data.
+The command shares the existing five-per-minute owner authorization bucket.
+
+An owner-bound in-memory draft expires absolutely after 900 monotonic seconds.
+It holds target IDs, 0–10 quantity-one item slots (duplicates allowed), revision
+and a UUID send ID. Package changes increment the revision, replace the send ID
+and clear the selected slot. Category and EX changes reset the item page.
+
+The editor rows are: Balls/Berries/Rare/IV items/Arena; Evolution/EX/Prev/Next;
+an item select with at most 25 catalog labels; a numbered slot select; and
+Remove/Clear/Preview/Cancel. Zero slots omit the slot select and disable Preview;
+ten slots disable item picking. Remove needs a selected slot. This is at most
+five rows and 15 components (four rows and 14 components when empty).
+
+Every callback defers ephemerally, checks the draft owner, configured owner IDs,
+admin guild, deadline, the applicable per-owner bucket shared across drafts,
+and current exclusion through the writer. After awaits it rechecks draft
+identity and permits editor changes/redraws only while editing. Refusals suppress
+mentions and change nothing. Cancel, expiry and view timeout use one discard
+operation: while sending, mark discard pending for settlement; otherwise mark
+discarded, unregister only that draft, stop its view, clear target IDs and drop
+the stored receipt. Cancel leaves text without controls. Profile deletion (delete-data, opt-out,
+reset or member prune) also discards every draft targeting that guild/user,
+including sent drafts; other drafts remain live. Retained controls cannot edit
+or send, even after re-enrollment. Deletion while sending marks discard pending
+for the queued job and settlement. No persistent draft state is added.
+
+Preview shows the send ID, scope, exact server/user target, every slot and the
+provisional targeted-server, populated-server and recipient counts. Zero recipients
+adds "No enrolled recipients: nothing can be sent." Edit preserves the package
+revision; Cancel discards. Preview includes Confirm bound to that revision.
+Confirm takes the shared five-per-minute authorization token; other controls use
+the 30-per-minute callback bucket. After authorization/exclusion awaits, sent
+returns its stored receipt, sending refuses with "This gift is being sent.",
+discarded/unregistered refuses as expired, and a changed revision refuses with
+"The package changed. Preview it again." A valid Confirm changes editing to
+sending before queuing its writer job.
+
+The writer job checks draft identity, sending state, no pending discard and the
+absolute deadline before and after send; a failed latter check raises to roll
+back every send write. The last check authorizes commit, which may finish after
+the deadline. A discard while sending sets pending discard: before the last check
+it prevents sending; during commit it preserves the committed send. The synchronous
+post-commit observer only sets sent and stores the aggregate result.
+A task shielded from callback cancellation owns settlement and always leaves
+sending: refusal or rollback restores editing with the same revision/send ID;
+expiry or pending discard completes discard and drops any stored receipt.
+Callback cancellation never implies rollback. While sending, Edit, Cancel and
+retained picks refuse; after commit every stale control returns the same
+component-free receipt (send ID, scope, exact target, slots and committed counts),
+never an editor, until expiry/discard. Confirm renders from its own local snapshot,
+so cleanup during commit does not erase its receipt target. Unsent results say
+"Nothing was sent." privately. Sent drafts remain registered until their deadline.
+On restart old controls have no registered handler, receive no acknowledgement
+and cannot send; committed sends remain available to gift-history (EXG-7).
+Producer: Admin and its EX-Gift view; consumers: configured owners and Discord's
+component serializer. Existing commands and persisted data remain compatible;
+tests: `test_admin_gift.py`, `test_admin.py`, `test_cooldown_reset.py`, `test_db.py`.
+
+### EX-Gift history (additive, EXG-7)
+
+`/admin gift-history [send_id]` registers only in the admin guild, defers
+privately and takes the shared five-per-minute owner authorization token.
+It lists every configured owner's committed sends, newest first, ten per page,
+or one send by its exact 32-character lowercase hexadecimal send ID. Invalid
+or missing IDs reply "No send with ID <id> was committed." Reads run through
+the writer; history never sends again and survives draft discard and restart.
+
+Each entry shows send ID, UTC commit time, scope and server ("all servers" or
+"one user in server <id>" where applicable), slot labels and the committed
+counts: targeted servers, servers with recipients, recipients. It never shows
+recipient lists, profile IDs or recipient user IDs. History embeds allow up to
+4096 description characters; when slot labels would exceed that limit, each
+slot list becomes "n slots". Empty history says no sends were committed.
+Prev/Next are bound to the opening owner for 900 seconds. Each press defers
+privately and checks that owner, configured owner IDs, admin guild, expiry and
+current exclusion, taking the shared 30-per-minute callback token. Refusals
+change nothing. All replies suppress mentions. Producer: Admin and its history
+view; consumers: configured owners and Discord. Existing sends, commands and
+persisted data remain compatible. Tests: `test_admin_gift.py`, `test_admin.py`,
+`test_cooldown_reset.py`.
+
 ### M4.5a owner correction after review (2026-11-04)
 All configured-owner requests in the admin guild, across status/errors/restart
 including restart confirmations, share an in-memory per-owner limit: five requests
@@ -875,6 +962,10 @@ Home renders the exact line "Rewards waiting: N", dropping the historical
 N remains milestones.pending_count: distinct inbox milestone_id values with
 remaining rewards. The Inbox button and private session guards are unchanged; home has
 no Claim button (Q20, M6.8o) — Inbox → Claim claims.
+After Inbox, home renders EX-Gift (action ex_gift), disabled only when its
+handler is unavailable. Its label is "EX-Gift (!)" while the current server
+profile has any unclaimed gift, otherwise "EX-Gift". It never shows a count;
+claiming every gift clears (!), and held or armed EX-items do not restore it.
 Producer: bot.screens.home; consumers: private Walker screens. Tests:
 test_home_rewards_waiting_line_has_no_milestones_word and test_screens.
 
@@ -1430,8 +1521,20 @@ then returns the updated details, whose CP and "Appraisal: N stars" reflect the 
 Preview and confirm refusals are private and spend nothing: perfect "Its IVs are already
 perfect. No <Item> was used.", missing "You have no <Item>. Nothing was used.", deployed
 "Recall it from the gym first", a confirm without its preview "Preview the <Item> before
-confirming.", and every other refusal the reopen text. Details keep at most 9 components
-in 3 rows.
+confirming.", and every other refusal the reopen text.
+
+EX-24 adds `Use Shiny Patch` (`ex_preview_shiny_patch`) and `Use Golden Bottlecap`
+(`ex_preview_golden_bottlecap`) after Bottlecap and Vitamin on row 2. Each EX button
+is shown only while the caller holds at least one of that item in their EX inventory;
+it stays enabled for shiny, perfect or gym-deployed targets so the existing EX preview
+can explain the refusal. Row 2 holds at most four buttons; details keep at most 11
+components in 3 rows. These entry points reuse the EX-Gift preview and confirm handlers
+and their private, no-spend refusals. Shiny Patch remains allowed on a gym defender;
+Golden Bottlecap requires recall. Back and successful confirm return to updated details.
+Every details redraw clears `iv_item`, `ex_back`, `ex_item` and `ex_preview`, so confirms
+require a fresh matching preview. No slash command or action-ID grammar changes.
+Producer: bot.storage; consumers: private Walker interactions and bot.ex_gift.
+Tests: tests/test_storage.py and tests/test_ex_gift_screens.py.
 
 Check-in replies name the new pack "Vitamin ×1".
 
@@ -1813,6 +1916,16 @@ A finished confirmed run replies "Deleted the game data of {d} of {m} profiles w
 left this server." The command manifest changes, so `sync-commands --global --yes` follows
 delivery. Tests: tests/test_admin_prune.py, tests/test_readme.py.
 
+## C5: EX-Gift reward inbox labels (EXG-3, additive)
+Inbox and Claim name arena_ticket rows by title-cased tier, such as "Bronze Arena
+Ticket". Every ex_gift: key is labelled "EX-Gift" without exposing the gift ID,
+for both waiting and moved details. After the Candy summary, "Arena tickets: moved
+<m> / waiting <w>" appears only when either ticket count is positive. Ticket rows
+do not trigger the bag-space explanation or bag expansion/conversion shortcuts.
+Existing ordinary reward summaries, claim receipts and lossless retention remain.
+Producers: services.milestones and bot.milestones; consumers: private Walker reward
+inbox and Arena ticket storage. Tests: tests/test_milestones.py.
+
 ## Owner amendment: D67 cooldown resets (2026-11-14)
 `/admin cooldown-user server_id user_id cooldown` and `/admin cooldown-server server_id
 cooldown` join the M4.5a `/admin` group: registered only in the admin guild, same
@@ -1826,3 +1939,139 @@ players and cooldowns reset. One mod_audit row per call records target guild, ow
 actor, target kind user|guild, action cooldown_reset and the choice as reason.
 Adding these commands changes the admin guild's command manifest, so that guild must
 be re-synced. Tests: tests/test_cooldown_reset.py.
+
+## C5: EX-Gift screen (EXG-9, additive)
+The private EX-Gift screen is titled "EX-Gift". It lists unclaimed gifts oldest
+first, ten per page: "New gifts: <total> · page <p>/<pages>", then one line per
+gift, "<YYYY-MM-DD UTC>: <labels joined by comma and space>" using the EX-Gift
+catalog labels. At zero it says "No new gifts.". "EX items:" follows, with one
+"<name> ×<n>" line per held kind, or "No EX items yet.". Any notice follows.
+Row 0 contains Claim (ex_claim, disabled without gifts), Prev (ex_gift_prev),
+Next (ex_gift_next), and Back (home). Prev and Next are disabled at their ends.
+Opening ex_gift resets selection to phase ex_gift, offset 0; paging moves by ten
+within the total, falling back to the last page when another claim removes gifts.
+Claim takes every unclaimed gift, resets the offset to zero, and reports
+"Claimed <g> gifts: <i> items went to your Inbox." followed by
+"EX items added: Shiny Patch ×1, …" for credited EX kinds, when any. With no
+gifts it reports "No new gifts to claim.". Ordinary items and Arena Tickets go
+to the reward inbox; EX-items stay in the separate EX inventory. Paused members
+may claim. The router's excluded, opted-out, session and revision guards still
+apply; service excluded and stale refusals use EXCLUDED and REOPEN respectively.
+Producer: bot.ex_gift and Walker; consumers: private Discord interactions and
+services.ex_gift. No slash command or service change. Tests: test_ex_gift_screens.py.
+
+## C5: Shiny Patch (EXG-12, additive)
+Producer: bot.ex_gift with services.iv_items; consumers: private walker interactions.
+While held, EX-Gift shows Use Shiny Patch (<n>) (ex_use_shiny_patch). It opens a
+10-owned-Pokemon picker, newest first via storage.page, with selection
+{phase: ex_pick, ex_item: shiny_patch, offset} and no ex_preview. ex_pick selects a
+Pokemon labelled <name> · CP <n>, with · Shiny when shiny. Prev/Next use
+ex_pick_prev/ex_pick_next; Back uses ex_gift. A pick records pokemon_uid,
+pokemon_revision and ex_back=ex_pick, then opens ex_preview_shiny_patch.
+The shared preview requires the selected owned Pokemon at its saved revision, else
+REOPEN. Already shiny says "It is already shiny. No Shiny Patch was used."; no stock
+says "You have no Shiny Patch. Nothing was used.". Otherwise it records
+ex_preview=shiny_patch and shows Use Shiny Patch with "<name> becomes shiny. Uses 1
+Shiny Patch (have <n>).", Confirm (ex_shiny_patch_confirm) and Back (ex_back, or
+storage_detail). Confirm requires that matching preview, otherwise "Preview the Shiny
+Patch before confirming.". It calls iv_items.use; stale says "That Pokémon changed.
+Pick it again.". Success from the picker returns to EX-Gift with "<name> is now
+shiny."; from details it calls storage_detail. Refusals spend nothing. Existing IV
+item screens stay compatible. Tests: tests/test_ex_gift_screens.py.
+
+## C5: Time Gear Fragment (EXG-11, additive)
+Producer: bot.ex_gift; consumers: private Discord interactions and
+services.cooldowns.time_gear. While held, EX-Gift adds "Use Time Gear Fragment (<n>)"
+(ex_use_time_gear_fragment). Use buttons occupy rows 1-2 in EX_ITEMS order.
+It opens "Use Time Gear Fragment" with selection phase ex_time_gear and text
+"Reset your cooldowns in this server?", the six PLAYER labels, "Share and message
+limits stay.", and "Uses 1 Time Gear Fragment (have <n>).". Confirm
+(ex_time_gear_confirm) requires that phase, otherwise REOPEN; Back (ex_gift)
+returns without spending. Confirm uses one fragment and returns to EX-Gift with
+"Time Gear Fragment used: your cooldowns in this server are reset.". Missing
+stock, including stock lost since preview, returns to EX-Gift with "You have no
+Time Gear Fragment.". Excluded and stale refusals use EXCLUDED and REOPEN.
+Paused members may use it; the router's other guards remain. No slash command
+changes. Tests: test_ex_gift_screens.py and test_ex_items.py.
+
+## C5: Golden Bottlecap (EXG-13, additive)
+While held, EX-Gift shows Use Golden Bottlecap (<n>) (ex_use_golden_bottlecap).
+It reuses the Shiny Patch picker with ex_item=golden_bottlecap, including paging,
+selection revision, preview clearing and Back. ex_preview_golden_bottlecap
+requires the selected owned Pokemon at its saved revision, else REOPEN.
+Deployed says "Recall it from the gym first"; perfect says "Its IVs are already
+perfect. No Golden Bottlecap was used."; no stock says "You have no Golden
+Bottlecap. Nothing was used.". Success records ex_preview=golden_bottlecap and
+shows Use Golden Bottlecap with "CP <a> → <b> · Appraisal <x> → <y> stars · uses 1
+Golden Bottlecap (have <n>)", Confirm (ex_golden_bottlecap_confirm), and Back
+(ex_back, else storage_detail). Confirm requires that exact preview, else
+"Preview the Golden Bottlecap before confirming.". It calls C3 iv_items.use;
+stale says "That Pokémon changed. Pick it again.". Success from the picker
+returns to EX-Gift with "<name>'s IVs are now 15 / 15 / 15."; from details it
+calls storage_detail. Refusals spend nothing. Existing IV screens stay compatible.
+Producer: bot.ex_gift; consumers: private Walker interactions and C3 iv_items.
+Tests: tests/test_ex_gift_screens.py.
+
+## C5: Arena EX-Voucher screens (EXG-17, additive)
+Producer: bot.arena and bot.ex_gift; consumers: private Walker interactions and
+services.arena.start. While arena_ex_voucher is held, Arena team row 2 adds
+"Start on floor 81 · EX-Voucher" (arena_voucher_start) after Start. The floor is
+rules.ex_items.voucher_floor + 1. It has exactly Start's disabled state: three
+eligible members are required. Navigation and team select retain rows 0-1;
+Clear/Start/voucher use row 2, and the skip selects retain rows 3-4.
+In arena_team phase the action calls start with skip=0, voucher=True, ignoring
+the selected skip. On started it opens the break with "EX-Voucher used: floors
+1-80 paid +2 Bronze, +8 Silver, +12 Gold, +6 Platinum, +2 Diamond Tickets. Your
+run starts on floor 81." The floor boundary comes from voucher_floor and the
+counts and tiers come from the result's tickets, so prior clears change them.
+no_voucher keeps the picker with "You have no Arena EX-Voucher." All other
+statuses use arena_start behavior, including live opening the existing break
+without spending anything or showing a voucher-used notice.
+While held, EX-Gift adds "Use Arena EX-Voucher (<n>)"
+(ex_use_arena_ex_voucher) on row 2, leaving existing Use buttons on row 1.
+It calls walker.handlers['arena_team'] to open the team picker, including for a
+live-run player. Opening the picker spends nothing; only a committed new start
+consumes a voucher. No service, persisted-state or slash-command changes.
+Tests: test_arena_screens.py and test_ex_gift_screens.py.
+
+## C5: EX boost arming and break screens (EXG-15, additive)
+Producer: bot.ex_gift and bot.arena; consumers: private Walker interactions and
+services.arena.arm/use_x. EX-Gift reads profile armed flags through get_profile.
+For each held, unarmed kind it shows Use EX-Attack (<n>) (ex_arm_ex_attack) or
+Use EX-Defense (<n>) (ex_arm_ex_defense) in EX_ITEMS order on rows 1-2. An armed
+kind instead shows "EX-Attack armed for your next new Arena run." (or EX-Defense),
+even when none remain held. One press calls arena.arm and returns to EX-Gift.
+Armed says "EX-Attack armed: ×2 attack for your whole next new Arena run. A run
+in progress does not get it."; armed_already says "EX-Attack is already armed.
+Nothing was spent."; missing says "You have no EX-Attack.". Substitute EX-Defense
+and defense for that kind; multiplier comes from rules.x_items.multiplier and
+stat from rules.ex_items. Excluded uses EXCLUDED; stale and invalid use REOPEN.
+Arming during a live run leaves that run unchanged. Paused members may arm.
+After the X lines, the break screen shows "EX-Attack: ×2 attack · whole run"
+and/or "EX-Defense: ×2 defense · whole run" for the run's flags, using the same
+rule-driven multiplier and stats. The row-1 X button mapped by rules.ex_items
+is disabled and labelled "X-Attack: EX-Attack active" (or the defense names),
+including without X stock; the other kind retains its existing behavior.
+A stale matching X press returning ex_active redraws the break with "EX-Attack
+is active for this run, so X-Attack can't be used. Nothing was spent." (or the
+defense names). The defeat screen does not change. No slash-command, service
+or persisted-state changes. Tests: test_ex_gift_screens.py, test_arena_screens.py.
+
+## C5: Arena team EX boosts and player help (EXG-19, additive)
+Producer: bot.arena; consumers: private Walker interactions and services.arena.arm.
+The team state reads both armed flags with profiles.get_profile. After the voucher,
+row 2 adds EX-Attack (arena_arm_ex_attack) and EX-Defense (arena_arm_ex_defense),
+each only while held and unarmed. An armed kind instead shows "EX-Attack armed
+for your next new Arena run." (or EX-Defense), even with no stock remaining.
+Row 2 holds at most Clear, Start, voucher and both boosts; skip selects remain on
+rows 3-4. Both actions require the arena_team phase, call arena.arm, reuse the
+EXG-15 notices and refusals, and redraw with the same team and skip selection.
+The EX-Gift voucher entry can open the team screen during a live run; arming
+there leaves that run unchanged and waits for the next new run. Resume has no
+arming buttons. No service or persisted-state changes.
+Player help before the admin page describes owner event gifts, the waiting (!)
+badge, no expiry, Claim routing ordinary items and Arena Tickets to Inbox,
+unlimited non-tradeable EX stock, all six items and their entry points, next-new-run
+boosts and voucher rewards for floors 1-80 with a start on floor 81. The gym
+sentence stays on page 3 and every page fits 4096 UTF-16 units.
+Tests: test_arena_screens.py, test_readme.py.

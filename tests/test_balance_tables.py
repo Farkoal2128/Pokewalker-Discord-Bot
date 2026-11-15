@@ -8,6 +8,7 @@ from datetime import date
 from dataclasses import fields
 from pathlib import Path
 
+from pokewalker.domain import arena as domain
 from pokewalker.domain.battle import Combatant
 
 
@@ -87,7 +88,9 @@ class BalanceTableTests(unittest.TestCase):
         self.assertIn("https://www.serebii.net/scarletviolet/paradoxpokemon.shtml", table["source"])
         self.assertIn("AR-12a party heal (owner ruling 2026-11-14)", table["source"])
         self.assertEqual(table["checked"], "2026-11-14")
-        self.assertEqual(table["version"], 4)
+        self.assertIn("docs/features/ex-gift/SYNTHESIS.md EX-14..EX-16, EX-26 (owner 2026-11-15)",
+                      table["source"])
+        self.assertEqual(table["version"], 5)
         self.assertEqual(table["rules"], {
             "run_seconds": 64800, "cooldown_seconds": 64800, "team_size": 3,
             "heal_items": ["razz_berry", "pinap_berry"],
@@ -131,6 +134,11 @@ class BalanceTableTests(unittest.TestCase):
                 "items": {"x_attack": {"stat": "attack", "stardust": 300},
                           "x_defense": {"stat": "defense", "stardust": 300}},
             },
+            "ex_items": {
+                "voucher_floor": 80,
+                "items": {"ex_attack": {"stat": "attack", "x_item": "x_attack"},
+                          "ex_defense": {"stat": "defense", "x_item": "x_defense"}},
+            },
         })
 
     def test_arena_leaderboard_rewards_are_rare_pocket_items(self):
@@ -163,6 +171,21 @@ class BalanceTableTests(unittest.TestCase):
                 self.assertNotIn(item_id, pockets)
                 self.assertNotIn(item_id, conversion["stardust_per_unit"])
                 self.assertNotIn(item_id, conversion["purchase_stardust"])
+
+    def test_arena_ex_items_double_their_x_item_stat(self):
+        rules = self.load("arena")["rules"]
+        ex_items = rules["ex_items"]
+        self.assertCountEqual([item["stat"] for item in ex_items["items"].values()],
+                              ["attack", "defense"])
+        for item_id, item in ex_items["items"].items():
+            with self.subTest(item=item_id):
+                self.assertIn(item["x_item"], rules["x_items"]["items"])
+                self.assertEqual(item["stat"], rules["x_items"]["items"][item["x_item"]]["stat"])
+        floor = ex_items["voucher_floor"]
+        self.assertIs(type(floor), int)
+        self.assertGreater(floor, 0)
+        self.assertIsNotNone(domain.ticket_for(floor, rules))
+        self.assertEqual(domain.max_skip(floor, rules), rules["skip"]["max"])
 
     def test_arena_ultra_beasts_equal_milestone_first_catch_list(self):
         species = self.load("arena")["rules"]["special"]["ultra_beast_species"]
@@ -425,7 +448,7 @@ class BalanceTableTests(unittest.TestCase):
                 date.fromisoformat(table["checked"])
                 versions = {"find_table": 2, "conversion_rates": 4, "capacities": 3, "routes": 2,
                             "survivor_table": 3, "catch": 4, "gym_income_table": 2, "checkin_table": 2,
-                            "battle": 2, "arena": 4}
+                            "battle": 2, "arena": 5}
                 self.assertEqual(table["version"], versions.get(name, 1))
                 amended = {"survivor_table", "conversion_rates", "gym_income_table", "checkin_table"}
                 if name == "catch":

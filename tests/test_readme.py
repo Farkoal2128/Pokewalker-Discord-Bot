@@ -41,13 +41,23 @@ class ReadmeTests(IsolatedAsyncioTestCase):
     def test_approved_text_verbatim(self):
         content = Path('content/help.md').read_bytes()
         self.assertEqual(hashlib.sha256(content).hexdigest(),
-                         'c78127a735a7087c87e11a753e014d603ffd0821d9c6416c9bf977676fb7845f')
+                         '7cd7a6d33f941592c671e2a02575564a4a3e3863618faaf4fdade7d7386568a1')
 
     def test_help_describes_x_items(self):
         player = next(page for page in self.pages() if '**Arena.**' in page)
         for phrase in ('X-Attack', 'X-Defense', 'doubles', 'attack', 'defense', '3 fights',
                        '300 Stardust', 'Arena home', 'break screen', 'one of each kind',
                        'unused fights are lost', 'run ends'):
+            self.assertIn(phrase, player)
+
+    def test_help_describes_ex_gift(self):
+        pages = self.pages()
+        player = next(page for page in pages[:-1] if '**EX-Gift.**' in page)
+        for phrase in ('EX-Gift', '(!)', 'owner event gifts', 'never expire', 'Claim', 'Inbox',
+                       'Arena Tickets', 'no limit', 'cannot be traded', 'Time Gear Fragment',
+                       'Shiny Patch', 'Golden Bottlecap', 'EX-Attack', 'EX-Defense',
+                       'Arena EX-Voucher', 'next new run', 'floor 81', 'floors 1-80',
+                       'details', 'team screen'):
             self.assertIn(phrase, player)
 
     def test_help_describes_monthly_leaderboard(self):

@@ -358,7 +358,12 @@ rewards and extra difficulty bundles are independent one-time milestones.
 and exclusion inside the writer transaction before replay. Refusals return stale
 or excluded without mutation. Success returns claimed with moved quantities by
 resource and writes owner-bearing `claim:<session_id>:<revision>` receipts and
-positive milestone_claim ledger lines. Stardust and family Candy move fully;
+positive milestone_claim ledger lines. Inbox resources are item, stardust, candy,
+or arena_ticket. Arena Tickets credit arena_tickets in full using resource_id as
+the tier, without a storage cap or bag/pocket checks, and record arena_ticket /
+<tier> / +quantity / milestone_claim ledger lines. Ordinary claims retain exactly
+the item, stardust, candy moved keys; arena_ticket is added only for ticket rows.
+Stardust and family Candy move fully;
 ordinary items fill the shared 250-unit bag excluding master_ball/shiny_lure.
 Each rare pocket holds one; blocked quantities stay in the inbox unchanged.
 Remaining rows decrement by exactly the credited amount and delete only at zero.
@@ -518,6 +523,15 @@ replay, even when the marked profile is already absent. Other guilds, unrelated
 results, later profile IDs and the D28/D60 raid participation exception are preserved.
 This intentionally narrows immutable replay snapshots for privacy; replay of the
 retained terminal receipt cannot simulate or reward another battle. No migration.
+EXG-20 adds weak in-memory deletion listeners, keyed by object identity (dict
+subclasses need no hash). After each profile delete, inside the writer job,
+`apply` notifies a snapshot of live listeners with `(guild_id, user_id)`.
+The EX-Gift draft registry discards matching one-user drafts; queued sending
+drafts become discard-pending and cannot send to a re-enrolled profile.
+Rollback may discard a draft early; replay is harmless with no live drafts.
+No persisted format, marker or caller change. Producers: deletion and replay;
+consumer: the EX-Gift manager. Tests: test_deletion and test_admin_gift.
+
 For each member, opted_out True inserts the minimal membership row if absent, False
 removes it, and None preserves it. `opted_out(conn,guild_id,user_id)` returns a bool.
 Each reset writes a user-targeted reset audit with its saved actor/reason/time under
@@ -1287,7 +1301,7 @@ stored as `level_x2` 40-50) instead of `wild_level_range`; IVs, gender and shiny
 as before, and no level is displayed. Existing raid encounters keep their rolls.
 Ordinary wild encounters are unchanged. Tests: tests/test_raids.py, tests/test_encounters.py.
 
-## Owner amendment: Bottlecap and Vitamin (2026-11-12)
+## Owner amendment: Bottlecap and Vitamin (2026-11-12), Shiny Patch (EXG-12)
 `bottlecap` and `vitamin` are ordinary stackable Bag items, not rare pockets. They convert
 at 2,500 and 500 Stardust and come from the survivor roll (Bottlecap), the hourly gym
 income and check-in rolls (Vitamin) and the Vitamin purchase below (C4). No schema change:
@@ -1322,6 +1336,23 @@ bag_limit) return without mutation. Success debits the price, adds one vitamin a
 the ledger lines stardust -5000 and item vitamin +1, both with reason buy. buy_evolution_item
 keeps its behavior. Producers: item services; consumers: Pokemon details, Bag and receipt
 readers. Tests: tests/test_iv_items.py, tests/test_evolution_items.py.
+
+Shiny Patch is an additive EX inventory effect in services.iv_items, consumed by the
+EX-Gift picker and the shared preview/confirm handlers. quote for shiny_patch returns
+have (ex_gift.held) and shiny, or None when not owned. use accepts shiny_patch in
+addition to the ordinary ITEMS; Bottlecap and Vitamin retain the order above. For
+Shiny Patch, session_owner runs first, then ex_gift.recorded checks the profile-owned
+shiny_patch:<uid>:<pokemon revision> receipt before any mutable refusal, including
+storage.detail. Replay returns the saved result even after stock, revision or ownership
+changes; another profile's or action's receipt is stale. Without a receipt, missing or
+non-owned Pokemon and revision changes are stale, already shiny is shiny, and no stock
+is missing. Refusals write nothing. Gym-deployed Pokemon are allowed; no combat stat
+changes and live Arena snapshots stay unchanged. Inside the writer transaction and
+receipt, UPDATE pokemon SET shiny=1,revision=revision+1 checks uid, profile, revision
+and state='owned', ex_gift.take consumes one patch, and a single ex_item/shiny_patch
+ledger line records -1 with reason shiny_patch. Success returns used and the updated
+Pokemon. Trade, research and evolution continue to reject stale revisions. No schema
+or rollback migration is needed. Tests: tests/test_ex_items.py, tests/test_iv_items.py.
 
 ## Owner amendment: ball trade-up (2026-11-12)
 `items.trade_up(conn, session, item_id, outputs)` requires a writer transaction and returns
@@ -1455,6 +1486,31 @@ Pokemon/form row builder and the same snapshot helper. It stores snapshot,
 battle_hp (domain.enemy_hp) and special. Run starts at floor=1, slot=0, revision=0.
 The arena_start:<session_id>:<_original_revision> receipt (session revision fallback)
 returns started with run; repeat presses cannot create another run or reroll one.
+
+EX-Voucher start (EX-16, EX-20, EX-26, R7, R12) extends start with
+skip=0, voucher=False. After state authorizes the session (stale/excluded), a
+voucher request looks up the profile-owned arena_start receipt before mutable
+refusals, returning its recorded result with the latest run attached. Thus a
+voucher replay returns started even with a live run or no voucher remaining;
+normal-start replays retain their existing live response. Paused, off, live and
+new-run cooldown refusals remain in their existing order. Then voucher starts
+refuse nonzero skip with invalid, absent EX inventory with no_voucher, and use
+the existing team validation. Refusals spend no voucher or tickets.
+
+In the same start receipt and writer transaction, the voucher rolls the entry
+enemy at rules.ex_items.voucher_floor + 1 (81) and creates the full-HP run there.
+Every scheduled ticket floor in 1..voucher_floor grants one copy plus
+first_clear_bonus(floor, old best_floor, rules); additive arena_tickets upserts
+and arena_ticket / tier / +copies / arena_voucher ledger lines record the total
+per tier. It raises arena_best_floor to MAX(old best_floor, voucher_floor),
+unlocking the floor-40 skip, takes one arena_ex_voucher through ex_gift.take and
+records ex_item / arena_ex_voucher / -1 / arena_voucher. Armed EX flags transfer
+as on any new run. The stored result is {status: started, voucher: True,
+tickets: {tier: copies}}, with run attached outside the receipt. No monthly
+score or Candy is granted at start: monthly scores begin with the floor-81 boss
+win. Normal skip limits and payouts remain unchanged. This additive service
+boundary uses the existing schema; producers: services.arena and ex_gift;
+consumers: Arena screens and fights. Tests: test_arena.
 
 set_order(conn,session,run_id,revision,order,now) takes a permutation of (0,1,2),
 saves that team order, increments revision and returns ordered with run, without
@@ -1764,6 +1820,107 @@ its audit; the row may exist for a run whose first deletion never committed. Res
 opt-outs and prior audit of pruned users remain. Producer: WalkerAdmin. Consumers:
 `/walker-mod log`, startup replay. Tests: tests/test_admin_prune.py.
 
+## EX-Gift schema (0030)
+Migration 0030 adds `ex_gifts`, `ex_gift_recipients` and `ex_items` (EX-4, EX-6,
+R4, R8, R9, R13, R20). Producers are migrations and the EX-Gift writer services;
+consumers are EX-Gift send/history/claim, EX inventory and Arena services.
+
+`ex_gifts` is the aggregate send receipt: non-null send ID primary key, sending
+owner ID, scope (`all`, `server`, `user`), guild ID (NULL exactly for `all`, with
+no guild foreign key), valid JSON package of 1-10 slots, nonnegative integer
+`servers` and `servers_with_recipients`, positive integer `recipients`, and
+`created_at`. An index on `created_at` supports history. It never stores a user
+or recipient ID; the sending owner's ID remains for accountability.
+`ex_gift_recipients` uniquely keys `(gift_id, profile_id)`, cascades on gift or
+profile deletion, and has nullable `claimed_at` plus a `(profile_id, claimed_at)`
+index. `ex_items` uniquely keys `(profile_id, item_id)`, cascades with the profile,
+and stores uncapped nonnegative integer quantities of `time_gear_fragment`,
+`shiny_patch`, `golden_bottlecap`, `ex_attack`, `ex_defense`, `arena_ex_voucher`.
+
+`profiles.ex_attack_armed`, `profiles.ex_defense_armed`, `arena_runs.ex_attack`
+and `arena_runs.ex_defense` are non-null integer flags constrained to 0 or 1;
+existing and new rows default to 0. The `inbox_items` rebuild preserves every
+existing row and `inbox_id`, widens resource to `item`, `stardust`, `candy`,
+`arena_ticket`, and retains its profile index and deletion cascade.
+Deleting a profile removes its recipients, EX inventory and inbox rows while
+keeping aggregate `ex_gifts` receipts without recipient identifiers.
+
+This is additive. Older code refuses schema 30 through the existing newer-schema
+guard. Rollback requires a compatible backup, never lowering `user_version`.
+Verification: `tests/test_ex_gift_schema.py` and the ticket-named schema/deletion
+regressions; no EX-Gift service behavior is introduced by this migration alone.
+
+## EX-Gift claim and EX inventory
+
+`services.ex_gift` exclusively writes `ex_items`; gameplay never grants EX-items
+and trading never reads or writes that table (EX-2, EX-22). This additive boundary
+uses schema 0030. Producers are player claim/use writer jobs; consumers are the
+EX-Gift screens and item services. Existing receipts and inbox behavior remain.
+`held(profile_id)` returns all six EX IDs with zero for missing rows. `take`
+atomically decrements a positive quantity and returns whether it changed a row;
+quantities never fall below zero and have no storage cap.
+
+`unclaimed(profile_id, offset)` returns ten `{gift_id, created_at, items}` rows
+and the total, oldest first (gift ID breaks timestamp ties). `has_unclaimed`
+uses the profile/claimed index. Unclaimed gifts never expire. `recorded(key,
+action, profile_id)` returns the saved result, None for an absent key, or
+`{status: stale}` for a different action or profile; callers authorize first.
+
+`claim(conn, session, now)` requires the caller's active writer transaction.
+Session ownership and exclusion precede replay (`stale` or `excluded` changes
+nothing). The profile-owned receipt is `ex_claim:<session_id>:<rev>`, action
+`ex_claim`, with `rev = session.get('_original_revision', session['revision'])`.
+An authorized retry returns its recorded result before reading mutable state.
+One `claimed_at IS NULL` update claims every unclaimed recipient row; gifts
+are routed oldest first and slots retain package order. Each ordinary slot
+inserts one unit into the reward inbox under `ex_gift:<gift_id>`, resource
+`item`; `arena_ticket:<tier>` inserts resource `arena_ticket`, ID `<tier>`.
+EX slots increment uncapped `ex_items`. One ledger line per credited EX ID is
+`ex_item / <id> / +n / ex_claim`. The result is `{status: claimed, gifts, inbox,
+ex: {id: n}}`, counting gifts and inserted inbox slots. With no gifts those
+counts are zero and `ex` is empty. Separate sessions cannot credit a gift twice.
+
+Recipient transitions, inbox/EX credits, ledger and receipt commit or roll back
+together. Profile deletion (including prune), restored-backup marker replay
+and repeated replay remove recipients, EX inventory, gift inbox rows and owned
+receipts. Re-enrollment gains no old gifts; aggregate `ex_gifts` survives with
+the sending owner's ID and no recipient ID. No migration or rollback change.
+Verification: `test_ex_gift`, `test_deletion`, and the ticket's regressions.
+
+## EX-Gift send
+
+`services.ex_gift.send` runs inside the caller's active writer transaction. Its
+producers are owner-confirmed gift drafts; consumers are history and subsequent
+player claims. This additive service uses schema 0030 without changing it.
+Checks run in order: sending owner's exclusion in the admin guild, send-ID
+lookup, package validation, target resolution, then the zero-recipient refusal.
+An excluded owner gets `excluded` even for a replay. A committed send ID returns
+its stored package, target, timestamp and counts with `status: sent` and
+`replayed: true`, before checking mutable inputs; another owner's ID is `invalid`.
+
+Packages contain 1-10 known ordinary, Arena-ticket or EX keys, one unit per slot;
+duplicates remain separate slots. Invalid packages or scope/ID combinations are
+`invalid`. Unknown guilds are `unknown_server`; a user without a profile in that
+guild is `no_profile`; an empty valid population is `no_recipients`. Refusals
+write nothing. Draft identity, authorization and deadline checks belong to the
+caller in the same writer job.
+
+`target` reports `servers`, `servers_with_recipients` and `recipients`: `all`
+counts every persisted guild (including empty ones) and every profile; `server`
+counts that guild and its profiles; `user` counts that guild and its one matching
+profile. Restrictions and opt-out do not filter the snapshot, and an owner may
+receive their own send. Success inserts one aggregate `ex_gifts` receipt and one
+set-based `INSERT INTO ex_gift_recipients ... SELECT ... FROM profiles` in the
+same transaction, returning `status: sent`, `replayed: false` and stored fields.
+No action receipt, moderation audit, recipient ID in the send receipt, or ID log
+is created. Later enrollment (including deletion/re-enrollment) gains no old gift.
+
+`lookup(send_id)` returns the stored row (decoded package) or None. `history`
+returns ten newest rows and total count, across sending owners, using a row
+offset; equal timestamps sort by descending gift ID. Rollback of the caller's
+job rolls back the aggregate and snapshot together. Verification:
+`tests/test_ex_gift.py` on real SQLite via `Writer.run`.
+
 ## D67 cooldown resets (migration 0029)
 Migration 0029 adds nullable REAL `profiles.arena_cooldown_reset_at` and
 `guilds.force_raid_reset_at`; existing rows read NULL, so nothing changes until an owner
@@ -1774,3 +1931,69 @@ deployments). Arena run history and the force-raid audit rows are never rewritte
 the Arena cooldown is zero when `arena_cooldown_reset_at >= ` the latest run's
 `started_at`, and the force-raid cooldown ignores a last force raid at or before
 `force_raid_reset_at`. Rollback: older code ignores both columns.
+
+## Time Gear Fragment (EXG-11, additive)
+Producer: services.cooldowns.time_gear; consumers: the private EX-Gift screen and
+the existing D67 cooldown readers. In a writer transaction, session_owner refuses
+stale or excluded members before looking up a profile-owned ex_time_gear receipt.
+The key is ex_time_gear:<session_id>:<rev>, where rev is _original_revision when
+present, otherwise revision. A matching receipt returns its stored result before
+inventory checks; a receipt owned by another profile or action returns stale.
+Without a receipt, no Time Gear Fragment returns missing and writes nothing.
+Otherwise ex_gift.take spends one, and the shared D67 clear helper resets only the
+current server profile's check-in, gym battle, live gym feeding, Arena new run,
+daily trade and trade invite ping cooldowns. It returns status used with the six
+PLAYER keys in order. The effect, profile-owned receipt and one ledger line
+(resource ex_item, resource_id time_gear_fragment, delta -1, reason ex_time_gear)
+commit atomically. No mod_audit row is written. Force-raid, last_share_at and
+message step-credit limits stay intact. Paused members may use it. Admin reset
+continues using the same updates and writing its moderation audit row unchanged.
+No migration is needed. Tests: test_ex_items.py and unchanged test_cooldown_reset.py.
+
+## Golden Bottlecap (EXG-13, additive C3)
+services.iv_items.quote for golden_bottlecap returns the same CP, appraisal,
+perfect and deployed fields as Bottlecap, but computes after values from
+(15, 15, 15) and reads have from ex_gift.held. use checks session_owner, then
+the profile-owned golden_bottlecap:<uid>:<pokemon revision> receipt before
+storage.detail and every mutable refusal. Refusals are deployed, stale (not
+owned or revision mismatch), perfect (all IVs 15), then missing, spending nothing.
+In one writer transaction it sets all three IVs to 15 and increments revision
+where UID, profile, revision and owned state match, consumes one through
+ex_gift.take and records ex_item / golden_bottlecap / -1 / golden_bottlecap.
+Replay returns the recorded used result even after IVs, ownership, state or
+stock change. Authorization still precedes replay; foreign receipts are stale.
+Ordinary Bottlecap and Vitamin retain their lowest-IV effect and existing order.
+Producers: services.iv_items; consumers: EX-Gift previews and confirmations.
+Tests: tests/test_ex_items.py; tests/test_iv_items.py unchanged.
+
+## Arena EX boosts
+
+`services.arena.arm(conn, session, item, now)` accepts only the EX boost IDs in
+`rules.ex_items.items`. Invalid IDs return `invalid`. Session ownership and
+exclusion are checked before the profile-owned `ex_arm:<session_id>:<rev>`
+receipt, action `ex_arm`; rev is `_original_revision` when present, otherwise
+`revision`. Replay returns the recorded result before inspecting mutable flags
+or stock; mismatched receipt ownership/action returns `stale`. Already armed
+returns `armed_already`, absent stock returns `missing`, and neither writes.
+Paused members, a live run and Arena off may arm. Success takes one EX-item,
+sets its profile armed flag and records `ex_item / <item> / -1 / ex_arm` with
+`{status: armed, item}` in one writer transaction.
+
+A successful new run reads both profile armed flags inside its receipt compute,
+stores them as `arena_runs.ex_attack` and `ex_defense`, then clears both profile
+flags atomically. Refused starts leave them armed; resuming a live run never
+reads them. Armed flags survive restart. Start result and receipt shapes stay
+unchanged. Ended runs never refund their flags or inventory.
+
+Every fight (including chain steps and heal-and-fight) uses the union of active
+X-counter stats and the EX run flags' `rules.ex_items.items` stats. Each stat is
+multiplied once by `rules.x_items.multiplier`, for the whole run regardless of
+floor changes. Stored snapshots and enemies stay unboosted. X counters, fight
+results and receipts keep their existing behavior. After stale/invalid checks,
+`use_x` returns `{status: ex_active}` without writes when an active run EX flag
+names that X-item in its `x_item` rule; the other X kind and `buy_x` remain allowed.
+
+This additive service contract consumes schema 0030's existing columns and
+the EX inventory helpers; no migration or domain/engine change is needed.
+Producers: services.arena and services.ex_gift; consumers: Arena combat and later
+EX-Gift/Arena screens. Tests: tests/test_ex_items.py and tests/test_arena.py.

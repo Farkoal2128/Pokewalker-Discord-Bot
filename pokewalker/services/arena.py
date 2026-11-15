@@ -10,7 +10,7 @@ from content.balance import limits, load_table
 from pokewalker.db import with_receipt
 from pokewalker.domain import arena as domain
 from pokewalker.domain import battle as battle_engine
-from pokewalker.services import gyms, items, profiles, stepping, storage
+from pokewalker.services import ex_gift, gyms, items, profiles, stepping, storage
 
 
 STOP_PCTS = range(10, 100, 10)
@@ -136,10 +136,16 @@ def _roll_enemy(floor, slot, rng, content, multipliers):
     return _enemy_snapshot(rolled, content, multipliers)
 
 
-async def start(conn, session, team, now, rng, content, multipliers, skip=0):
+async def start(conn, session, team, now, rng, content, multipliers, skip=0, voucher=False):
     current = await state(conn, session, now)
     if current['status'] in ('stale', 'excluded'):
         return current
+    revision = session.get('_original_revision', session['revision'])
+    key = f"arena_start:{session['session_id']}:{revision}"
+    if voucher:
+        saved = await ex_gift.recorded(conn, key, 'arena_start', session['profile_id'])
+        if saved is not None:
+            return {**saved, 'run': current['run']} if saved['status'] == 'started' else saved
     flags = await profiles.restrictions(conn, session['guild_id'], session['user_id'])
     if flags.paused:
         return {'status': 'paused', 'until': flags.paused_until.isoformat() if flags.paused_until else None}
@@ -152,6 +158,11 @@ async def start(conn, session, team, now, rng, content, multipliers, skip=0):
     rules = load_table('arena')['rules']
     if type(skip) is not int or not 0 <= skip <= domain.max_skip(current['best_floor'], rules):
         return {'status': 'invalid'}
+    if voucher:
+        if skip != 0:
+            return {'status': 'invalid'}
+        if not (await ex_gift.held(conn, session['profile_id']))['arena_ex_voucher']:
+            return {'status': 'no_voucher'}
     if (not isinstance(team, (list, tuple)) or len(team) != rules['team_size']
             or any(not isinstance(pair, (list, tuple)) or len(pair) != 2
                    or not isinstance(pair[0], str) or type(pair[1]) is not int for pair in team)
@@ -174,20 +185,38 @@ async def start(conn, session, team, now, rng, content, multipliers, skip=0):
             snapshots.append({'uid': pokemon['pokemon_uid'], 'family_id': identity['family_id'],
                               'special': domain.is_special(identity, rules), 'full_hp': combatant.hp,
                               'hp': combatant.hp, 'snapshot': snapshot})
-        enemy = _roll_enemy(skip + 1, 0, rng, content, multipliers)
-        await conn.execute('INSERT INTO arena_runs(run_id,profile_id,started_at,floor,slot,team,enemy) '
-                           'VALUES (?,?,?,?,0,?,?)',
-                           (str(uuid4()), session['profile_id'], now, skip + 1, json.dumps(snapshots), json.dumps(enemy)))
+        paid_floor = rules['ex_items']['voucher_floor'] if voucher else skip
+        enemy = _roll_enemy(paid_floor + 1, 0, rng, content, multipliers)
+        async with conn.execute('SELECT ex_attack_armed,ex_defense_armed FROM profiles WHERE profile_id=?',
+                                (session['profile_id'],)) as cursor:
+            armed = await cursor.fetchone()
+        await conn.execute('INSERT INTO arena_runs(run_id,profile_id,started_at,floor,slot,team,enemy,ex_attack,ex_defense) '
+                           'VALUES (?,?,?,?,0,?,?,?,?)',
+                           (str(uuid4()), session['profile_id'], now, paid_floor + 1, json.dumps(snapshots), json.dumps(enemy),
+                            armed['ex_attack_armed'], armed['ex_defense_armed']))
+        await conn.execute('UPDATE profiles SET ex_attack_armed=0,ex_defense_armed=0 WHERE profile_id=?',
+                           (session['profile_id'],))
         lines = []
-        for tier, copies in domain.skip_tickets(skip, rules).items():
+        tickets = domain.skip_tickets(paid_floor, rules)
+        if voucher:
+            for floor in range(1, paid_floor + 1):
+                if domain.first_clear_bonus(floor, current['best_floor'], rules):
+                    tickets[domain.ticket_for(floor, rules)] += 1
+        for tier, copies in tickets.items():
             await conn.execute('INSERT INTO arena_tickets VALUES (?,?,?) ON CONFLICT(profile_id,tier) '
                                'DO UPDATE SET quantity=quantity+excluded.quantity', (session['profile_id'], tier, copies))
             lines.append({'profile_id': session['profile_id'], 'resource': 'arena_ticket', 'resource_id': tier,
-                          'delta': copies, 'reason': 'arena_skip'})
+                          'delta': copies, 'reason': 'arena_voucher' if voucher else 'arena_skip'})
+        if voucher:
+            await conn.execute('UPDATE profiles SET arena_best_floor=MAX(arena_best_floor,?) WHERE profile_id=?',
+                               (paid_floor, session['profile_id']))
+            await ex_gift.take(conn, session['profile_id'], 'arena_ex_voucher')
+            lines.append({'profile_id': session['profile_id'], 'resource': 'ex_item',
+                          'resource_id': 'arena_ex_voucher', 'delta': -1, 'reason': 'arena_voucher'})
+            return {'status': 'started', 'voucher': True, 'tickets': tickets}, lines
         return {'status': 'started'}, lines
 
-    revision = session.get('_original_revision', session['revision'])
-    result = await with_receipt(conn, f"arena_start:{session['session_id']}:{revision}", 'arena_start', compute,
+    result = await with_receipt(conn, key, 'arena_start', compute,
                                 profile_id=session['profile_id'])
     # The run is attached after the receipt so receipts stay small (never pruned).
     return {**result, 'run': await _latest_run(conn, session['profile_id'])} if result['status'] == 'started' else result
@@ -240,6 +269,35 @@ async def set_auto_order(conn, session, run_id, revision, on, now):
     return {'status': 'set', 'run': run}
 
 
+async def arm(conn, session, item, now):
+    if item not in load_table('arena')['rules']['ex_items']['items']:
+        return {'status': 'invalid'}
+    if not conn.in_transaction:
+        raise RuntimeError('Arena requires an active writer transaction')
+    profile, refusal = await profiles.session_owner(conn, session)
+    if refusal:
+        return refusal
+    pid = profile['profile_id']
+    revision = session.get('_original_revision', session['revision'])
+    key = f"ex_arm:{session['session_id']}:{revision}"
+    saved = await ex_gift.recorded(conn, key, 'ex_arm', pid)
+    if saved is not None:
+        return saved
+    column = f'{item}_armed'
+    if profile[column]:
+        return {'status': 'armed_already'}
+    if (await ex_gift.held(conn, pid))[item] < 1:
+        return {'status': 'missing'}
+
+    async def compute(conn):
+        await ex_gift.take(conn, pid, item)
+        await conn.execute(f'UPDATE profiles SET {column}=1 WHERE profile_id=?', (pid,))
+        return {'status': 'armed', 'item': item}, [
+            {'profile_id': pid, 'resource': 'ex_item', 'resource_id': item, 'delta': -1, 'reason': 'ex_arm'}]
+
+    return await with_receipt(conn, key, 'ex_arm', compute, profile_id=pid)
+
+
 async def buy_x(conn, session, item):
     rule = load_table('arena')['rules']['x_items']['items'].get(item)
     if rule is None:
@@ -258,6 +316,9 @@ async def use_x(conn, session, run_id, revision, item, now):
     rules = load_table('arena')['rules']['x_items']
     if item not in rules['items']:
         return {'status': 'invalid'}
+    if any(run[ex] and rule['x_item'] == item
+           for ex, rule in load_table('arena')['rules']['ex_items']['items'].items()):
+        return {'status': 'ex_active'}
     column = f'{item}_left'
     if run[column] > 0:
         return {'status': 'active', 'left': run[column]}
@@ -338,7 +399,8 @@ async def fight(conn, session, run_id, revision, now, rng, content, multipliers,
 
     async def compute(conn):
         x_rules = rules['x_items']
-        boosted_stats = [rule['stat'] for item, rule in x_rules['items'].items() if run[f'{item}_left'] > 0]
+        boosted_stats = {rule['stat'] for item, rule in x_rules['items'].items() if run[f'{item}_left'] > 0}
+        boosted_stats.update(rule['stat'] for item, rule in rules['ex_items']['items'].items() if run[item])
         party = [replace(fighter(member['snapshot']), hp=member['hp'],
                          **{stat: member['snapshot']['combatant'][stat] * x_rules['multiplier']
                             for stat in boosted_stats}) for member in run['team']]

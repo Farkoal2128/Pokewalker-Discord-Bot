@@ -11,7 +11,7 @@ from content.balance import limits, load_table
 from pokewalker.bot import gyms
 from pokewalker.bot.screens_catch import custom_id
 from pokewalker.domain import arena as domain
-from pokewalker.services import arena as service, profiles, storage
+from pokewalker.services import arena as service, ex_gift, profiles, storage
 
 
 OFF = 'The Arena is turned off in this server.'
@@ -156,6 +156,16 @@ def render_team(state):
     view.add_item(discord.ui.Button(label='Clear', custom_id=custom_id(state, 'arena_team_clear'), row=2))
     view.add_item(discord.ui.Button(label='Start', custom_id=custom_id(state, 'arena_start'), row=2,
                                    disabled=len(state['members']) != 3 or any(not item or item['reason'] for item in state['members'])))
+    if state['held']['arena_ex_voucher']:
+        view.add_item(discord.ui.Button(label=f"Start on floor {state['voucher_floor'] + 1} · EX-Voucher",
+                                       custom_id=custom_id(state, 'arena_voucher_start'), row=2,
+                                       disabled=view.children[-1].disabled))
+    for item in ('ex_attack', 'ex_defense'):
+        name = ex_gift.EX_ITEMS[item]
+        if state['profile'][f'{item}_armed']:
+            lines.append(f'{name} armed for your next new Arena run.')
+        elif state['held'][item]:
+            view.add_item(discord.ui.Button(label=name, custom_id=custom_id(state, f'arena_arm_{item}'), row=2))
     skip = selection.get('skip', 0)
     if skip:
         paid = ', '.join(f'{copies} {tier.title()}' for tier, copies in state['skip_tickets'].items()) or 'nothing'
@@ -219,6 +229,9 @@ def render_break(state):
         if left := run[f'{item}_left']:
             lines.append(f"{x_name(item)}: ×{state['x_rules']['multiplier']} {state['x_rules']['items'][item]['stat']} · "
                          + fights_left(left))
+    for item, rule in state['ex_rules']['items'].items():
+        if run[item]:
+            lines.append(f"{ex_gift.EX_ITEMS[item]}: ×{state['x_rules']['multiplier']} {rule['stat']} · whole run")
     if state.get('notice'):
         lines.append(state['notice'])
     embed = discord.Embed(title='Arena break', description='\n'.join(lines))
@@ -234,10 +247,13 @@ def render_break(state):
                                        custom_id=custom_id(state, action), row=1, disabled=member['hp'] >= member['full_hp']))
     for item in X_ITEMS:
         left, held = run[f'{item}_left'], state['x_items'][item]
-        action = 'arena_use_' + item if left or held else 'arena_buy_' + item
-        label = (f'{x_name(item)}: {fights_left(left)}' if left else f'Use {x_name(item)} ({held})' if held
+        active_ex = next((ex for ex, rule in state['ex_rules']['items'].items()
+                          if run[ex] and rule['x_item'] == item), None)
+        action = 'arena_use_' + item if active_ex or left or held else 'arena_buy_' + item
+        label = (f"{x_name(item)}: {ex_gift.EX_ITEMS[active_ex]} active" if active_ex
+                 else f'{x_name(item)}: {fights_left(left)}' if left else f'Use {x_name(item)} ({held})' if held
                  else f"Buy {x_name(item)} · {state['x_rules']['items'][item]['stardust']}")
-        view.add_item(discord.ui.Button(label=label, custom_id=custom_id(state, action), row=1, disabled=left > 0))
+        view.add_item(discord.ui.Button(label=label, custom_id=custom_id(state, action), row=1, disabled=bool(active_ex) or left > 0))
     view.add_item(discord.ui.Select(placeholder='Healing berry', custom_id=custom_id(state, 'arena_berry'), row=2,
                                    options=[discord.SelectOption(label=f"{berry.replace('_', ' ').title()} ×{state['stock'].get(berry, 0)}"
                                                                        + (' · heals party' if service.heals_party(berry) else ''),
@@ -332,7 +348,9 @@ def handlers(walker):
             members.append(item)
         return {'session': session, 'selection': selection, 'rows': [pokemon_state(row) for row in rows],
                 'members': members, 'total': total, 'notice': notice, 'max_skip': domain.max_skip(best_floor, rules),
-                'skip_tickets': domain.skip_tickets(selection.get('skip', 0), rules)}
+                'skip_tickets': domain.skip_tickets(selection.get('skip', 0), rules),
+                'held': await ex_gift.held(conn, session['profile_id']), 'voucher_floor': rules['ex_items']['voucher_floor'],
+                'profile': await profiles.get_profile(conn, session['guild_id'], session['user_id'])}
 
     async def open_break(conn, session, run, current, result=None, notice=None, fights=None):
         async with conn.execute(f"SELECT item_id,quantity FROM inventory WHERE profile_id=? AND item_id IN ({','.join('?' * len(BERRIES))})",
@@ -344,7 +362,7 @@ def handlers(walker):
         live = run['ended_at'] is None
         session['selection'] = json.dumps({'phase': 'arena_break' if live else 'arena_defeat',
                                             'run_id': run['run_id'], 'run_revision': run['revision'], 'berry': berry})
-        state = {**current, 'session': session, 'x_rules': rules['x_items'], 'run': run,
+        state = {**current, 'session': session, 'x_rules': rules['x_items'], 'ex_rules': rules['ex_items'], 'run': run,
                  'stock': stock, 'berry': berry, 'result': result, 'notice': notice, 'fights': fights}
         if not live:
             return render_defeat(state)
@@ -389,6 +407,10 @@ def handlers(walker):
         status, notice = result['status'], None
         if status == 'stale':
             notice = STALE
+        elif action in USE_X and status == 'ex_active':
+            item = USE_X[action]
+            ex = next(ex for ex, rule in rules['ex_items']['items'].items() if rule['x_item'] == item)
+            notice = f"{ex_gift.EX_ITEMS[ex]} is active for this run, so {x_name(item)} can't be used. Nothing was spent."
         elif action in USE_X and status in ('used', 'active', 'missing'):
             item, x_rules = USE_X[action], rules['x_items']
             name, stat = x_name(item), x_rules['items'][item]['stat']
@@ -524,6 +546,17 @@ def handlers(walker):
             selection['team'] = []
         state = await team_state(conn, session, selection, current['best_floor'])
         notice = None
+        if action in ('arena_arm_ex_attack', 'arena_arm_ex_defense'):
+            item = action.removeprefix('arena_arm_')
+            result = await service.arm(conn, session, item, now)
+            status = result['status']
+            if status not in ('armed', 'armed_already', 'missing'):
+                raise _Refused(EXCLUDED if status == 'excluded' else REOPEN)
+            name = ex_gift.EX_ITEMS[item]
+            notice = {'armed': f"{name} armed: ×{rules['x_items']['multiplier']} {rules['ex_items']['items'][item]['stat']} "
+                               'for your whole next new Arena run. A run in progress does not get it.',
+                      'armed_already': f'{name} is already armed. Nothing was spent.',
+                      'missing': f'You have no {name}.'}[status]
         if action == 'arena_team_pick':
             values = interaction.data.get('values', [])
             item = next((item for item in state['rows'] if len(values) == 1 and item['pokemon']['pokemon_uid'] == values[0]), None)
@@ -531,19 +564,26 @@ def handlers(walker):
                     or any(uid == values[0] for uid, _ in selection['team'])):
                 raise _Refused('Choose a distinct eligible Pokémon on this page.')
             selection['team'].append([values[0], item['pokemon']['revision']])
-        if action == 'arena_start':
+        if action in ('arena_start', 'arena_voucher_start'):
+            voucher = action == 'arena_voucher_start'
             result = await service.start(conn, session, selection['team'], now, walker.rng, walker.bot.content,
-                                         walker.multipliers, skip=selection['skip'])
+                                         walker.multipliers, skip=0 if voucher else selection['skip'], voucher=voucher)
             status = result['status']
             if status in ('started', 'live'):
-                if status == 'started' and selection['skip']:
+                if status == 'started' and voucher:
+                    floor = rules['ex_items']['voucher_floor']
+                    paid = ', '.join(f'+{copies} {tier.title()}' for tier, copies in result['tickets'].items())
+                    notice = (f'EX-Voucher used: floors 1-{floor} paid {paid} Tickets. '
+                              f'Your run starts on floor {floor + 1}.')
+                elif status == 'started' and selection['skip']:
                     paid = ', '.join(f'+{copies} {tier.title()}' for tier, copies in domain.skip_tickets(selection['skip'], rules).items())
                     notice = f"Skipped {selection['skip']} floors: " + (f'{paid} Tickets.' if paid else 'no Tickets.')
                 return await open_break(conn, session, result['run'], current, notice=notice)
             if status == 'excluded':
                 raise _Refused(EXCLUDED)
             notice = {'stale': CHANGED, 'deployed': "A gym defender can't join an Arena team.",
-                      'off': OFF, 'invalid': 'Choose three distinct eligible Pokémon.'}.get(status)
+                      'off': OFF, 'invalid': 'Choose three distinct eligible Pokémon.',
+                      'no_voucher': 'You have no Arena EX-Voucher.'}.get(status)
             if status == 'cooldown':
                 notice = wait(result['seconds_left'])
             elif status == 'paused':
@@ -557,5 +597,7 @@ def handlers(walker):
 
     return {name: partial(dispatch, name) for name in
             ('arena', 'arena_leaderboard', 'arena_resume', 'arena_team', 'arena_team_prev', 'arena_team_next',
-             'arena_team_sort', 'arena_team_pick', 'arena_team_clear', 'arena_start', 'arena_skip', 'arena_skip_more', *BREAK_ACTIONS,
+             'arena_team_sort', 'arena_team_pick', 'arena_team_clear', 'arena_start', 'arena_voucher_start',
+             'arena_arm_ex_attack', 'arena_arm_ex_defense',
+             'arena_skip', 'arena_skip_more', *BREAK_ACTIONS,
              'arena_tickets', *REDEEM, 'arena_redeem_confirm', *BUY_X)}

@@ -519,3 +519,56 @@ Stardust sink; AR-46's figures come from an uncommitted scratch simulation.
 Only the report's manifest hash and `arena.json` version input lines change.
 Tests: `test_balance_tables`, `test_content_integrity` and report regeneration
 comparison.
+
+## EX-Gift giftable catalog
+
+`services.ex_gift.catalog(content)` builds a deduplicated catalog on every call
+from conversion-rate `stardust_per_unit` keys except `evolution_item`, capacity
+rare-pocket keys, concrete `content.evolution_items` IDs, Arena
+`rules.x_items.items`, and `arena_ticket:<tier>` for each `rules.tickets.tiers`
+key. Table/artifact authors produce these inputs; the gift manager and send
+validation consume this additive catalog. No balance table is edited. Currencies
+and the evolution placeholder are not slots. Coverage tests scan weighted rows
+of every balance table, milestone bundles, leaderboard rewards, starter kit and
+purchase items, expanding `evolution_item`, so an omitted grantable item fails.
+
+Categories are Balls (`*_ball` except rare pockets), Berries (`*_berry`), IV items
+(`bottlecap`, `vitamin`, pinned to `iv_items.ITEMS`), Arena (X-items and tickets),
+Evolution (concrete evolution IDs), and Rare (remaining keys, including rare
+pockets). The current category counts are 3, 4, 2, 7, 50 and 6 (72 total).
+Each category sorts by display label and key and pages at 25 options. Page
+numbers are zero-based; out-of-range pages are empty. The EX toggle pages the
+six `EX_ITEMS` keys instead, disjoint from ordinary IDs and matching schema 0030:
+Time Gear Fragment, Shiny Patch, Golden Bottlecap, EX-Attack, EX-Defense and
+Arena EX-Voucher. Labels use those names, `<Tier> Arena Ticket`, the evolution
+`name_en`, `Poké Ball`, or the title-cased underscored ID. Services do not import
+bot renderers. Verification: `tests/test_ex_gift.py` and `test_balance_tables.py`.
+
+## Arena EX-item rules (version 5)
+
+[EX-Gift EX-14 through EX-16 and EX-26](../docs/features/ex-gift/SYNTHESIS.md)
+(owner 2026-11-15) add `rules.ex_items` after `x_items`. Repository authors
+produce `arena.json` version 5 and its manifest balance hash. This is additive:
+existing consumers select known keys; no persisted data or artifact bytes change.
+
+| Key | Payload and units |
+|---|---|
+| `voucher_floor` | 80, a positive integer count of paid floors: 1 through 80; the run starts on 81 |
+| `items.ex_attack` | `{"stat": "attack", "x_item": "x_attack"}` |
+| `items.ex_defense` | `{"stat": "defense", "x_item": "x_defense"}` |
+
+Each `items` key is an EX-item ID. `stat` names the `battle.Combatant` field
+boosted for one whole Arena run: attack and defense each occur once. `x_item`
+names an `x_items.items` key with the same stat, whose use the EX boost blocks.
+The factor is the existing `x_items.multiplier` (2); exactly one factor applies.
+The voucher floor awards a scheduled ticket and unlocks the full `skip.max`.
+Consumers are the EX boost and voucher services (EXG-14, EXG-16) and Arena
+screens (EXG-15, EXG-17, EXG-19).
+
+`source` appends `docs/features/ex-gift/SYNTHESIS.md EX-14..EX-16, EX-26 (owner 2026-11-15)`
+and retains every existing citation; `checked` stays `2026-11-14`.
+`artifact_sha256` stays unchanged. EX-items are gift-only with no Stardust price,
+so the economy report does not model them. Only its manifest hash and
+`arena.json` version input lines change. Tests: `test_balance_tables`,
+`test_content_integrity`, Arena domain/service and economy suites, and report
+regeneration comparison.
