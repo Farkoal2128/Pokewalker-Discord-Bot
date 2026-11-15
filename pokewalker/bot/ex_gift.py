@@ -6,7 +6,7 @@ import json
 import discord
 
 from pokewalker.bot.screens_catch import custom_id
-from pokewalker.services import ex_gift as service
+from pokewalker.services import cooldowns, ex_gift as service
 
 
 def render(state):
@@ -28,7 +28,21 @@ def render(state):
             ('Next', 'ex_gift_next', offset + 10 >= total), ('Back', 'home', False)):
         view.add_item(discord.ui.Button(label=label, custom_id=custom_id(state, action),
                                         disabled=disabled, row=0))
+    quantity = state['held'].get('time_gear_fragment', 0)
+    if quantity > 0:
+        view.add_item(discord.ui.Button(label=f'Use Time Gear Fragment ({quantity})',
+                                        custom_id=custom_id(state, 'ex_use_time_gear_fragment'), row=1))
     return {'embed': discord.Embed(title='EX-Gift', description='\n'.join(lines)), 'view': view}
+
+
+def render_time_gear(state):
+    text = '\n'.join(['Reset your cooldowns in this server?', *cooldowns.PLAYER.values(),
+                      'Share and message limits stay.',
+                      f"Uses 1 Time Gear Fragment (have {state['quantity']})."])
+    view = discord.ui.View(timeout=None)
+    for label, action in (('Confirm', 'ex_time_gear_confirm'), ('Back', 'ex_gift')):
+        view.add_item(discord.ui.Button(label=label, custom_id=custom_id(state, action)))
+    return {'embed': discord.Embed(title='Use Time Gear Fragment', description=text), 'view': view}
 
 
 def handlers(walker):
@@ -73,4 +87,23 @@ def handlers(walker):
             notice += '\nEX items added: ' + ', '.join(added)
         return await show(conn, session, {'phase': 'ex_gift', 'offset': 0}, notice)
 
-    return {'ex_gift': open_gifts, 'ex_gift_prev': previous, 'ex_gift_next': next_page, 'ex_claim': claim}
+    async def time_gear_preview(conn, session, interaction):
+        quantity = (await service.held(conn, session['profile_id']))['time_gear_fragment']
+        if quantity < 1:
+            return await show(conn, session, {'phase': 'ex_gift', 'offset': 0},
+                              'You have no Time Gear Fragment.')
+        session['selection'] = json.dumps({'phase': 'ex_time_gear'})
+        return render_time_gear({'session': session, 'quantity': quantity})
+
+    async def time_gear_confirm(conn, session, interaction):
+        if json.loads(session['selection']).get('phase') != 'ex_time_gear':
+            raise _Refused(REOPEN)
+        result = await cooldowns.time_gear(conn, session, walker.clock())
+        if result['status'] not in ('used', 'missing'):
+            raise _Refused(EXCLUDED if result['status'] == 'excluded' else REOPEN)
+        notice = ('Time Gear Fragment used: your cooldowns in this server are reset.'
+                  if result['status'] == 'used' else 'You have no Time Gear Fragment.')
+        return await show(conn, session, {'phase': 'ex_gift', 'offset': 0}, notice)
+
+    return {'ex_gift': open_gifts, 'ex_gift_prev': previous, 'ex_gift_next': next_page, 'ex_claim': claim,
+            'ex_use_time_gear_fragment': time_gear_preview, 'ex_time_gear_confirm': time_gear_confirm}

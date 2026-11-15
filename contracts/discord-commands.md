@@ -1947,3 +1947,18 @@ may claim. The router's excluded, opted-out, session and revision guards still
 apply; service excluded and stale refusals use EXCLUDED and REOPEN respectively.
 Producer: bot.ex_gift and Walker; consumers: private Discord interactions and
 services.ex_gift. No slash command or service change. Tests: test_ex_gift_screens.py.
+
+## C5: Time Gear Fragment (EXG-11, additive)
+Producer: bot.ex_gift; consumers: private Discord interactions and
+services.cooldowns.time_gear. While held, EX-Gift adds "Use Time Gear Fragment (<n>)"
+(ex_use_time_gear_fragment). Use buttons occupy rows 1-2 in EX_ITEMS order.
+It opens "Use Time Gear Fragment" with selection phase ex_time_gear and text
+"Reset your cooldowns in this server?", the six PLAYER labels, "Share and message
+limits stay.", and "Uses 1 Time Gear Fragment (have <n>).". Confirm
+(ex_time_gear_confirm) requires that phase, otherwise REOPEN; Back (ex_gift)
+returns without spending. Confirm uses one fragment and returns to EX-Gift with
+"Time Gear Fragment used: your cooldowns in this server are reset.". Missing
+stock, including stock lost since preview, returns to EX-Gift with "You have no
+Time Gear Fragment.". Excluded and stale refusals use EXCLUDED and REOPEN.
+Paused members may use it; the router's other guards remain. No slash command
+changes. Tests: test_ex_gift_screens.py and test_ex_items.py.
