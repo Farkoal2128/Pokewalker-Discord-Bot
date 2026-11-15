@@ -112,7 +112,7 @@ Every build row is `seam` (PIPELINE.md:13: slash commands and interactions, pers
 | 2 | [EXG-1](tickets/EXG-1.md) balance: `arena.json` `rules.ex_items` and the manifest hash | build | seam | S | ✅ done · 286aea7 · GO review-seam r1 |
 | 3 | [EXG-2](tickets/EXG-2.md) migration 0030: gifts, recipients, EX inventory, flags, inbox `arena_ticket` | build | seam | M | ✅ done · 0282cb0 · GO review-seam r1 |
 | 4 | [EXG-3](tickets/EXG-3.md) reward inbox: ticket rows claim into `arena_tickets`; EX-Gift labels | build | seam | S | ✅ done · b2b6cbe · GO review-seam r2 |
-| 5 | [EXG-4](tickets/EXG-4.md) service: giftable catalog, send fan-out, history reads | build | seam | M | pending |
+| 5 | [EXG-4](tickets/EXG-4.md) service: giftable catalog, send fan-out, history reads | build | seam | M | ✅ done · 47bc703 · GO review-seam r1 |
 | 6 | [EXG-5](tickets/EXG-5.md) `/admin gift`: manager editor and preview | build | seam | L | pending |
 | 7 | [EXG-6](tickets/EXG-6.md) manager Confirm, draft states, receipt | build | seam | M | pending |
 | 8 | [EXG-20](tickets/EXG-20.md) profile deletion discards drafts targeting it | build | seam | S | pending |
