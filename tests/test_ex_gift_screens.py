@@ -1,6 +1,7 @@
 """EX-Gift private screens through the durable router and real gift service."""
 
 import copy
+from datetime import datetime, timezone
 import importlib
 import json
 import re
@@ -40,6 +41,54 @@ class ExGiftScreenTests(unittest.IsolatedAsyncioTestCase):
 
     def buttons(self, rendered):
         return {button.label: button for button in rendered['view'].children}
+
+    async def test_badge_shows_while_unclaimed_clears_after_claim(self):
+        session = await self.seed([['poke_ball'], ['shiny_patch']])
+        home, session = await self.press(session, 'home')
+        self.assertIn('EX-Gift (!)', self.buttons(home))
+        self.assertFalse(self.buttons(home)['EX-Gift (!)'].disabled)
+        gift, session = await self.press(session, 'ex_gift')
+        self.assertEqual(gift['embed'].title, 'EX-Gift')
+        await self.conn.execute("UPDATE ex_gift_recipients SET claimed_at=999 WHERE gift_id='gift-000'")
+        home, session = await self.press(session, 'home')
+        self.assertIn('EX-Gift (!)', self.buttons(home))
+        _, session = await self.press(session, 'ex_claim')
+        home, _ = await self.press(session, 'home')
+        self.assertIn('EX-Gift', self.buttons(home))
+        self.assertNotIn('EX-Gift (!)', self.buttons(home))
+        self.assertFalse(self.buttons(home)['EX-Gift'].disabled)
+
+    async def test_badge_ignores_held_and_armed_ex_items(self):
+        session = await self.seed([list(service.EX_ITEMS)])
+        _, session = await self.press(session, 'ex_claim')
+        for quantity, attack, defense in ((5, 0, 0), (0, 1, 0), (0, 0, 1), (5, 1, 1)):
+            with self.subTest(quantity=quantity, attack=attack, defense=defense):
+                await self.conn.execute('UPDATE ex_items SET quantity=?', (quantity,))
+                await self.conn.execute('UPDATE profiles SET ex_attack_armed=?,ex_defense_armed=?',
+                                        (attack, defense))
+                home, session = await self.press(session, 'home')
+                labels = [button.label for button in home['view'].children
+                          if button.custom_id.endswith(':ex_gift')]
+                self.assertEqual(labels, ['EX-Gift'])
+
+    async def test_badge_per_server_profile(self):
+        session = await self.seed([['shiny_patch']])
+        other = await self.writer.run(lambda conn: self.module.profiles.enroll(
+            conn, 789, 456, 1, self.bot.content, self.walker.rng, datetime.now(timezone.utc)))
+        await self.conn.execute('INSERT INTO ex_gift_recipients(gift_id,profile_id) VALUES (?,?)',
+                                ('gift-000', other['profile_id']))
+        for guild in (123, 789):
+            interaction = self.interaction(guild=guild)
+            await self.walker.open(interaction)
+            self.assertIn('EX-Gift (!)', self.buttons(interaction.edit_original_response.await_args.kwargs))
+        _, session = await self.press(session, 'ex_claim')
+        for guild, label in ((123, 'EX-Gift'), (789, 'EX-Gift (!)')):
+            interaction = self.interaction(guild=guild)
+            await self.walker.open(interaction)
+            rendered = interaction.edit_original_response.await_args.kwargs
+            labels = [button.label for button in rendered['view'].children
+                      if button.custom_id.endswith(':ex_gift')]
+            self.assertEqual(labels, [label])
 
     async def test_gift_list_pages_ten_with_prev_and_next(self):
         session = await self.seed([['poke_ball']] * 10 + [['shiny_patch']])

@@ -30,7 +30,7 @@ class ScreenTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(buttons[0].label, "Open encounter")
             self.assertEqual(buttons[0].disabled, count == 0)
             self.assertTrue(all(button.disabled for button in buttons[1:]))
-            self.assertEqual([button.label for button in buttons[1:]], ["Storage", "Bag", "Pokédex", "Route", "Gyms", "Arena", "Inbox (0)"])
+            self.assertEqual([button.label for button in buttons[1:]], ["Storage", "Bag", "Pokédex", "Route", "Gyms", "Arena", "Inbox (0)", "EX-Gift"])
             self.assertTrue(all(button.custom_id.startswith("pw:v1:abcd:2:") for button in buttons))
 
     async def test_home_has_gyms_button_enabled_when_registered(self):
@@ -60,7 +60,25 @@ class ScreenTests(unittest.IsolatedAsyncioTestCase):
         components = self.screens.home(self.state)['view'].to_components()
         self.assertLessEqual(len(components), 5)
         self.assertTrue(all(len(row['components']) <= 5 for row in components))
-        self.assertEqual(sum(len(row['components']) for row in components), 8)
+        self.assertEqual(sum(len(row['components']) for row in components), 9)
+
+    async def test_home_ex_gift_label_with_and_without_badge(self):
+        for changes, label in (({}, 'EX-Gift'), ({'ex_gift_new': False}, 'EX-Gift'),
+                               ({'ex_gift_new': True}, 'EX-Gift (!)')):
+            rendered = self.screens.home({**self.state, **changes})
+            buttons = rendered['view'].children
+            self.assertEqual(buttons[-1].label, label)
+            self.assertEqual(buttons[-2].label, 'Inbox (0)')
+            self.assertEqual(buttons[-1].custom_id, 'pw:v1:abcd:2:ex_gift')
+
+    async def test_home_ex_gift_enabled_when_registered(self):
+        for available in (set(), {'inbox'}, {'ex_gift'}, {'inbox', 'ex_gift'}):
+            for unclaimed in (False, True):
+                rendered = self.screens.home({**self.state, 'available': available,
+                                              'ex_gift_new': unclaimed})
+                button = rendered['view'].children[-1]
+                self.assertEqual(button.custom_id, 'pw:v1:abcd:2:ex_gift')
+                self.assertEqual(button.disabled, 'ex_gift' not in available)
 
     async def test_home_inbox_button_shows_waiting_count_disabled_at_zero(self):
         for waiting, disabled in ((2, False), (0, True)):

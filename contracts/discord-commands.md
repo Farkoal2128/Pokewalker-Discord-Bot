@@ -962,6 +962,10 @@ Home renders the exact line "Rewards waiting: N", dropping the historical
 N remains milestones.pending_count: distinct inbox milestone_id values with
 remaining rewards. The Inbox button and private session guards are unchanged; home has
 no Claim button (Q20, M6.8o) — Inbox → Claim claims.
+After Inbox, home renders EX-Gift (action ex_gift), disabled only when its
+handler is unavailable. Its label is "EX-Gift (!)" while the current server
+profile has any unclaimed gift, otherwise "EX-Gift". It never shows a count;
+claiming every gift clears (!), and held or armed EX-items do not restore it.
 Producer: bot.screens.home; consumers: private Walker screens. Tests:
 test_home_rewards_waiting_line_has_no_milestones_word and test_screens.
 
