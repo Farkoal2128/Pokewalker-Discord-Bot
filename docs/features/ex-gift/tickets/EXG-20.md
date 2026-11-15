@@ -7,7 +7,7 @@
 **Goal.** Deleting a profile, by delete, opt-out, reset or member prune, leaves no live draft naming that user, and a Confirm racing the deletion cannot send to a re-enrolled profile. C3 and C5 first.
 
 - **`services/deletion.py`:** module-level `_listeners = weakref.WeakValueDictionary()` and `listen(obj)`: `_listeners[id(obj)] = obj` (a dict subclass is weak-referenceable but unhashable, so no `WeakSet`). `apply` calls `obj.profile_deleted(guild_id, user_id)` for each `list(_listeners.values())` after each profile delete (:129-131), inside the job. An early discard on rollback is harmless; replay at startup finds no drafts.
-- **`bot/admin_gift.py`:** `attach` makes `gift_drafts` a `Drafts(dict)` and calls `deletion.listen(gift_drafts)`. `Drafts.profile_deleted(guild_id, user_id)` calls `discard` (EXG-5) on every draft whose `(guild_id, user_id)` matches, so its View stops and its IDs clear; a `sending` draft's job then finds it unregistered and sends nothing (EXG-6).
+- **`bot/admin_gift.py`:** `attach` makes `gift_drafts` a `Drafts(dict)` and calls `deletion.listen(gift_drafts)`. `Drafts.profile_deleted(guild_id, user_id)` calls `discard` (EXG-5) on every draft whose `(guild_id, user_id)` matches, so its View stops and its IDs clear. A `sending` draft is only marked `discard_pending`: its queued job finds `live()` false and sends nothing, and `settle` finishes the cleanup (EXG-6). Deletion runs in the writer, so it never lands inside a send job.
 - **C3:** M4.1b notes the listener (no persisted change). **C5:** drafts end when their target profile is deleted.
 
 **Files.** Production: `pokewalker/services/deletion.py`, `pokewalker/bot/admin_gift.py`. Tests: `tests/test_deletion.py`, `tests/test_admin_gift.py`. Contracts: `contracts/persisted-state.md`, `contracts/discord-commands.md`.
@@ -21,6 +21,7 @@ In `tests/test_admin_gift.py`:
 - `test_new_bot_registers_drafts_without_error` (startup through `attach`)
 - `test_delete_discards_matching_one_user_drafts_only`
 - `test_delete_and_reenrol_while_confirm_waits_sends_nothing` (Confirm held in its exclusion check; the new profile gets no recipient row)
+- `test_delete_and_reenrol_while_send_job_queued_sends_nothing` (real deletion; the job finds `live()` false)
 - `test_retained_controls_after_delete_change_nothing`
 - `test_deleted_recipient_id_absent_owner_id_kept` (no EX-Gift table, receipt, ledger or captured log line holds the user ID; `ex_gifts.owner_id` stays)
 
