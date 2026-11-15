@@ -2,6 +2,7 @@
 
 import importlib
 import json
+import re
 import unittest
 from unittest.mock import patch
 
@@ -63,6 +64,43 @@ class StorageTests(unittest.IsolatedAsyncioTestCase):
             conn, session, gym["gym_id"], uid, pokemon["revision"], 1000, self.bot.content))
         self.assertEqual(result["status"], "deployed")
         return result["deployment"]
+
+    async def test_details_ex_buttons_hidden_without_ex_items(self):
+        session = await self.prepared()
+        for stock in ('absent', 'zero'):
+            with self.subTest(stock=stock):
+                if stock == 'zero':
+                    await self.writer.run(lambda conn: conn.executemany(
+                        'INSERT INTO ex_items VALUES (?,?,0)',
+                        [(session['profile_id'], item) for item in ('shiny_patch', 'golden_bottlecap')]))
+                rendered, session = await self.details(session)
+                self.assertNotIn('Use Shiny Patch', self.buttons(rendered))
+                self.assertNotIn('Use Golden Bottlecap', self.buttons(rendered))
+                self.assertEqual([button.label for button in rendered['view'].children if button.row == 2],
+                                 ['Use Bottlecap', 'Use Vitamin'])
+
+    async def test_details_ex_buttons_shown_while_held_row_2_fits(self):
+        session = await self.prepared()
+        for held in (('shiny_patch',), ('golden_bottlecap',), ('shiny_patch', 'golden_bottlecap')):
+            with self.subTest(held=held):
+                await self.writer.run(lambda conn: conn.execute('DELETE FROM ex_items'))
+                await self.writer.run(lambda conn: conn.executemany(
+                    'INSERT INTO ex_items VALUES (?,?,1)', [(session['profile_id'], item) for item in held]))
+                rendered, session = await self.details(session)
+                expected = ['Use Bottlecap', 'Use Vitamin']
+                for item, label in (('shiny_patch', 'Use Shiny Patch'),
+                                    ('golden_bottlecap', 'Use Golden Bottlecap')):
+                    if item not in held:
+                        self.assertNotIn(label, self.buttons(rendered))
+                        continue
+                    expected.append(label)
+                    button = self.buttons(rendered)[label]
+                    self.assertFalse(button.disabled)
+                    self.assertTrue(button.custom_id.endswith(f':ex_preview_{item}'))
+                    self.assertIsNotNone(re.fullmatch(self.module.CUSTOM_ID, button.custom_id))
+                self.assertEqual([button.label for button in rendered['view'].children if button.row == 2], expected)
+                self.assertLessEqual(len(expected), 4)
+                self.assertEqual({button.row for button in rendered['view'].children}, {0, 1, 2})
 
     async def test_details_shows_gym_name_and_disables_four_buttons(self):
         session = await self.prepared(2)
