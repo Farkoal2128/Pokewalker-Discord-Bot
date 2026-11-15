@@ -83,6 +83,8 @@ class CapacityTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(after.pop('arena_stop_pct', 'missing'), 50)
                 self.assertEqual(after.pop('arena_auto_order', 'missing'), 0)
                 self.assertIsNone(after.pop('arena_cooldown_reset_at', 'missing'))
+                self.assertEqual(after.pop('ex_attack_armed'), 0)
+                self.assertEqual(after.pop('ex_defense_armed'), 0)
                 self.assertEqual(after, before)
                 self.assertEqual((await upgraded.execute_fetchall('PRAGMA foreign_key_check')), [])
                 self.assertEqual((await upgraded.execute_fetchall('PRAGMA user_version'))[0][0],

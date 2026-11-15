@@ -93,6 +93,8 @@ class TradingSchemaTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(profile.pop('arena_auto_order', 'missing'), 0)
                 # D67 reset timestamps start empty for existing rows.
                 self.assertIsNone(profile.pop('arena_cooldown_reset_at', 'missing'))
+                self.assertEqual(profile.pop('ex_attack_armed'), 0)
+                self.assertEqual(profile.pop('ex_defense_armed'), 0)
                 self.assertIsNone(after['guilds'][0].pop('force_raid_reset_at', 'missing'))
                 self.assertEqual((profile.pop('last_trade_at', 'missing'),
                                   profile.pop('last_trade_ping_at', 'missing')), (None, None))

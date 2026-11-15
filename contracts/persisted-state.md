@@ -1764,6 +1764,36 @@ its audit; the row may exist for a run whose first deletion never committed. Res
 opt-outs and prior audit of pruned users remain. Producer: WalkerAdmin. Consumers:
 `/walker-mod log`, startup replay. Tests: tests/test_admin_prune.py.
 
+## EX-Gift schema (0030)
+Migration 0030 adds `ex_gifts`, `ex_gift_recipients` and `ex_items` (EX-4, EX-6,
+R4, R8, R9, R13, R20). Producers are migrations and the EX-Gift writer services;
+consumers are EX-Gift send/history/claim, EX inventory and Arena services.
+
+`ex_gifts` is the aggregate send receipt: non-null send ID primary key, sending
+owner ID, scope (`all`, `server`, `user`), guild ID (NULL exactly for `all`, with
+no guild foreign key), valid JSON package of 1-10 slots, nonnegative integer
+`servers` and `servers_with_recipients`, positive integer `recipients`, and
+`created_at`. An index on `created_at` supports history. It never stores a user
+or recipient ID; the sending owner's ID remains for accountability.
+`ex_gift_recipients` uniquely keys `(gift_id, profile_id)`, cascades on gift or
+profile deletion, and has nullable `claimed_at` plus a `(profile_id, claimed_at)`
+index. `ex_items` uniquely keys `(profile_id, item_id)`, cascades with the profile,
+and stores uncapped nonnegative integer quantities of `time_gear_fragment`,
+`shiny_patch`, `golden_bottlecap`, `ex_attack`, `ex_defense`, `arena_ex_voucher`.
+
+`profiles.ex_attack_armed`, `profiles.ex_defense_armed`, `arena_runs.ex_attack`
+and `arena_runs.ex_defense` are non-null integer flags constrained to 0 or 1;
+existing and new rows default to 0. The `inbox_items` rebuild preserves every
+existing row and `inbox_id`, widens resource to `item`, `stardust`, `candy`,
+`arena_ticket`, and retains its profile index and deletion cascade.
+Deleting a profile removes its recipients, EX inventory and inbox rows while
+keeping aggregate `ex_gifts` receipts without recipient identifiers.
+
+This is additive. Older code refuses schema 30 through the existing newer-schema
+guard. Rollback requires a compatible backup, never lowering `user_version`.
+Verification: `tests/test_ex_gift_schema.py` and the ticket-named schema/deletion
+regressions; no EX-Gift service behavior is introduced by this migration alone.
+
 ## D67 cooldown resets (migration 0029)
 Migration 0029 adds nullable REAL `profiles.arena_cooldown_reset_at` and
 `guilds.force_raid_reset_at`; existing rows read NULL, so nothing changes until an owner
