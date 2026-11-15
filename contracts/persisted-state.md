@@ -358,7 +358,12 @@ rewards and extra difficulty bundles are independent one-time milestones.
 and exclusion inside the writer transaction before replay. Refusals return stale
 or excluded without mutation. Success returns claimed with moved quantities by
 resource and writes owner-bearing `claim:<session_id>:<revision>` receipts and
-positive milestone_claim ledger lines. Stardust and family Candy move fully;
+positive milestone_claim ledger lines. Inbox resources are item, stardust, candy,
+or arena_ticket. Arena Tickets credit arena_tickets in full using resource_id as
+the tier, without a storage cap or bag/pocket checks, and record arena_ticket /
+<tier> / +quantity / milestone_claim ledger lines. Ordinary claims retain exactly
+the item, stardust, candy moved keys; arena_ticket is added only for ticket rows.
+Stardust and family Candy move fully;
 ordinary items fill the shared 250-unit bag excluding master_ball/shiny_lure.
 Each rare pocket holds one; blocked quantities stay in the inbox unchanged.
 Remaining rows decrement by exactly the credited amount and delete only at zero.
