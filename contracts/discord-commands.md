@@ -734,7 +734,11 @@ identity and permits editor changes/redraws only while editing. Refusals suppres
 mentions and change nothing. Cancel, expiry and view timeout use one discard
 operation: while sending, mark discard pending for settlement; otherwise mark
 discarded, unregister only that draft, stop its view, clear target IDs and drop
-the stored receipt. Cancel leaves text without controls.
+the stored receipt. Cancel leaves text without controls. Profile deletion (delete-data, opt-out,
+reset or member prune) also discards every draft targeting that guild/user,
+including sent drafts; other drafts remain live. Retained controls cannot edit
+or send, even after re-enrollment. Deletion while sending marks discard pending
+for the queued job and settlement. No persistent draft state is added.
 
 Preview shows the send ID, scope, exact server/user target, every slot and the
 provisional targeted-server, populated-server and recipient counts. Zero recipients

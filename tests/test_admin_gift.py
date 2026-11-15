@@ -24,6 +24,8 @@ class GiftTests(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self):
         await test_admin.AdminTests.asyncSetUp(self)
+        from pokewalker.services import marker_log
+        marker_log.create_empty(self.settings.marker_log_path)
         self.clock = 100.0
         self.bot.clock = lambda: self.clock
         self.bot.content = json.loads(Path('content/artifact/content.json').read_text(encoding='utf-8'))
@@ -336,6 +338,164 @@ class GiftTests(unittest.IsolatedAsyncioTestCase):
         await entered.wait()
         await asyncio.sleep(0)
         return task, release
+
+    async def delete_target(self, guild='123', user='456', kind='delete', **kwargs):
+        from pokewalker.services import deletion
+        return await deletion.run_marker(self.bot.writer, self.settings.marker_log_path,
+            kind=kind, guild_id=guild, user_id=user, now=100, **kwargs)
+
+    async def reenrol(self, conn):
+        await conn.execute("INSERT INTO profiles(profile_id,guild_id,user_id,created_at) "
+                           "VALUES ('replacement','123','456',100)")
+
+    def assert_discarded(self, draft):
+        self.assertEqual(draft.state, 'discarded')
+        self.assertNotIn(draft.draft_id, self.group.gift_drafts)
+        self.assertTrue(draft.view.is_finished())
+        self.assertIsNone(draft.guild_id)
+        self.assertIsNone(draft.user_id)
+        self.assertFalse(hasattr(draft, 'result'))
+
+    async def test_new_bot_registers_drafts_without_error(self):
+        from pokewalker.services import deletion
+        self.assertIsInstance(self.group.gift_drafts, dict)
+        self.assertIs(deletion._listeners[id(self.group.gift_drafts)], self.group.gift_drafts)
+        await self.open()
+        self.assertEqual(len(self.group.gift_drafts), 1)
+
+    async def test_delete_discards_matching_one_user_drafts_only(self):
+        await self.bot.db.execute("INSERT INTO profiles(profile_id,guild_id,user_id,created_at) "
+                                  "VALUES ('c','999','456',0),('d','123','789',0)")
+        drafts = []
+        for scope, guild, user in (('server', '123', '456'), ('server', '123', '456'),
+                ('server', '999', '456'), ('server', '123', '789'),
+                ('server', '123', None), ('all', None, None)):
+            self.group.requests.clear()
+            await self.open(scope, guild, user)
+            drafts.append(self.draft())
+        await self.delete_target()
+        for draft in drafts[:2]:
+            self.assert_discarded(draft)
+        for draft in drafts[2:]:
+            self.assertIs(self.group.gift_drafts[draft.draft_id], draft)
+            self.assertEqual(draft.state, 'editing')
+            self.assertFalse(draft.view.is_finished())
+
+    async def test_delete_opt_out_reset_discard_targeting_drafts(self):
+        for kind in ('delete', 'reset', 'opt_out'):
+            with self.subTest(kind=kind):
+                self.group.requests.clear()
+                await self.open('server', '123', '456')
+                draft = self.draft()
+                fields = {'actor_id': '456', 'reason': 'test reset'} if kind == 'reset' else {}
+                await self.delete_target(kind=kind, **fields)
+                self.assert_discarded(draft)
+                if kind != 'opt_out':
+                    await self.bot.writer.run(self.reenrol)
+
+    async def test_delete_and_reenrol_while_confirm_waits_sends_nothing(self):
+        draft, confirm = await self.preview(scope='server', server_id='123', user_id='456')
+        original = self.bot.writer.run
+        entered, release = asyncio.Event(), asyncio.Event()
+        self.addCleanup(release.set)
+        waiting = True
+        async def run(fn, **kwargs):
+            nonlocal waiting
+            result = await original(fn, **kwargs)
+            if waiting:
+                waiting = False
+                entered.set()
+                await release.wait()
+            return result
+        with patch.object(self.bot.writer, 'run', side_effect=run):
+            task = asyncio.create_task(self.click('Confirm', draft=draft, control=confirm))
+            await entered.wait()
+            self.assertEqual(draft.state, 'editing')
+            await self.delete_target()
+            await original(self.reenrol)
+            release.set()
+            reply = await task
+        self.assert_discarded(draft)
+        self.assertIn('expired', self.reply_text(reply))
+        self.assertEqual(await self.gifts(), [])
+        async with self.bot.db.execute('SELECT count(*) FROM ex_gift_recipients') as cursor:
+            self.assertEqual((await cursor.fetchone())[0], 0)
+
+    async def test_delete_and_reenrol_while_send_job_queued_sends_nothing(self):
+        draft, confirm = await self.preview(scope='server', server_id='123', user_id='456')
+        original = self.bot.writer.run
+        entered, release = asyncio.Event(), asyncio.Event()
+        self.addCleanup(release.set)
+        async def authorize(conn):
+            entered.set()
+            await release.wait()
+        async def run(fn, **kwargs):
+            if kwargs.get('after_commit') is None:
+                return await original(fn, **kwargs)
+            deleting = asyncio.create_task(self.delete_target(authorize=authorize))
+            await entered.wait()
+            enrolling = asyncio.create_task(original(self.reenrol))
+            await asyncio.sleep(0)
+            sending = asyncio.create_task(original(fn, **kwargs))
+            await asyncio.sleep(0)
+            self.assertEqual(self.bot.writer._queue.qsize(), 2)
+            self.assertEqual(draft.state, 'sending')
+            release.set()
+            await deleting
+            await enrolling
+            return await sending
+        with patch.object(self.bot.writer, 'run', side_effect=run):
+            reply = await self.click('Confirm', draft=draft, control=confirm)
+        self.assert_discarded(draft)
+        self.assertEqual(self.reply_text(reply), 'Nothing was sent.')
+        self.assertEqual(await self.gifts(), [])
+        async with self.bot.db.execute('SELECT count(*) FROM ex_gift_recipients') as cursor:
+            self.assertEqual((await cursor.fetchone())[0], 0)
+        async with self.bot.db.execute("SELECT profile_id FROM profiles WHERE user_id='456'") as cursor:
+            self.assertEqual((await cursor.fetchone())[0], 'replacement')
+
+    async def test_retained_controls_after_delete_change_nothing(self):
+        draft, confirm = await self.preview(scope='server', server_id='123', user_id='456')
+        await self.click('Edit')
+        pick = self.control('Choose item')
+        await self.click('Preview')
+        controls = [confirm, pick, self.control('Edit'), self.control('Cancel')]
+        await self.delete_target()
+        before = (draft.revision, draft.send_id, list(draft.slots), await self.snapshot())
+        for control in controls:
+            reply = await self.click('retained', draft=draft, control=control, value='poke_ball')
+            self.assertIn('expired', self.reply_text(reply))
+        self.assertEqual((draft.revision, draft.send_id, draft.slots, await self.snapshot()), before)
+        self.assert_discarded(draft)
+
+    async def test_deleted_recipient_id_absent_owner_id_kept(self):
+        import logging
+        from unittest.mock import Mock
+        handler = logging.StreamHandler()
+        handler.emit = Mock()
+        root = logging.getLogger()
+        self.addCleanup(root.setLevel, root.level)
+        root.setLevel(logging.INFO)
+        root.addHandler(handler)
+        self.addCleanup(root.removeHandler, handler)
+        recipient = '876543210987654321'
+        await self.bot.db.execute("UPDATE profiles SET user_id=? WHERE profile_id='b'", (recipient,))
+        draft, confirm = await self.preview(scope='server', server_id='999', user_id=recipient)
+        await self.click('Confirm', draft=draft, control=confirm)
+        self.assertEqual(await self.gifts(), [(draft.send_id, 1)])
+        await self.delete_target('999', recipient)
+        self.assert_discarded(draft)
+        for table in ('ex_gifts', 'ex_gift_recipients', 'ex_items', 'action_receipts', 'resource_ledger'):
+            async with self.bot.db.execute(f'SELECT * FROM {table}') as cursor:
+                rows = [tuple(row) for row in await cursor.fetchall()]
+            self.assertNotIn(recipient, json.dumps(rows), table)
+            if table in ('ex_gift_recipients', 'ex_items'):
+                self.assertEqual(rows, [])
+        async with self.bot.db.execute('SELECT owner_id FROM ex_gifts WHERE gift_id=?',
+                                       (draft.send_id,)) as cursor:
+            self.assertEqual((await cursor.fetchone())[0], '456')
+        for call in handler.emit.call_args_list:
+            self.assertNotIn(recipient, call.args[0].getMessage())
 
     async def test_confirm_sends_once_receipt_has_counts_no_components(self):
         draft, confirm = await self.preview(scope='server', server_id='123', user_id='456')

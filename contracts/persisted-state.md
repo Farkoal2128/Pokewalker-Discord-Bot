@@ -523,6 +523,15 @@ replay, even when the marked profile is already absent. Other guilds, unrelated
 results, later profile IDs and the D28/D60 raid participation exception are preserved.
 This intentionally narrows immutable replay snapshots for privacy; replay of the
 retained terminal receipt cannot simulate or reward another battle. No migration.
+EXG-20 adds weak in-memory deletion listeners, keyed by object identity (dict
+subclasses need no hash). After each profile delete, inside the writer job,
+`apply` notifies a snapshot of live listeners with `(guild_id, user_id)`.
+The EX-Gift draft registry discards matching one-user drafts; queued sending
+drafts become discard-pending and cannot send to a re-enrolled profile.
+Rollback may discard a draft early; replay is harmless with no live drafts.
+No persisted format, marker or caller change. Producers: deletion and replay;
+consumer: the EX-Gift manager. Tests: test_deletion and test_admin_gift.
+
 For each member, opted_out True inserts the minimal membership row if absent, False
 removes it, and None preserves it. `opted_out(conn,guild_id,user_id)` returns a bool.
 Each reset writes a user-targeted reset audit with its saved actor/reason/time under

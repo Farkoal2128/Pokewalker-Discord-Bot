@@ -8,7 +8,7 @@ from uuid import uuid4
 import discord
 
 from pokewalker.config import snowflake
-from pokewalker.services import ex_gift
+from pokewalker.services import deletion, ex_gift
 
 EXPIRED = 'This gift draft expired. Run /admin gift again.'
 CATEGORIES = ('Balls', 'Berries', 'Rare', 'IV items', 'Arena', 'Evolution')
@@ -18,8 +18,16 @@ class _Expired(Exception):
     pass
 
 
+class Drafts(dict):
+    def profile_deleted(self, guild_id, user_id):
+        for draft in list(self.values()):
+            if (str(draft.guild_id), str(draft.user_id)) == (str(guild_id), str(user_id)):
+                discard(draft)
+
+
 def attach(admin):
-    admin.gift_drafts, admin.gift_callbacks = {}, {}
+    admin.gift_drafts, admin.gift_callbacks = Drafts(), {}
+    deletion.listen(admin.gift_drafts)
 
 
 def discard(draft):
