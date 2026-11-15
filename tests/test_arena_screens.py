@@ -1040,6 +1040,29 @@ class ArenaScreenTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('Floor 10 cleared: Silver Ticket', text)
         self.assertIn('First clear: +1 Silver Ticket', text)
 
+    async def test_until_hurt_ignores_hurt_bench_and_checks_only_the_lead(self):
+        # D69 (owner request 2026-11-15): a healthy lead may fight even with 1 HP members behind it.
+        await self.start_run()
+        run = await self.run_state()
+        full = [m['full_hp'] for m in run['team']]
+        await self.hurt_team((full[0], 1, 1))
+        with patch.object(test_arena.battle_engine, 'simulate',
+                          side_effect=[self.outcome(hp=(full[0], 1, 1)), self.outcome(hp=(1, 1, 1))]) as simulate:
+            text = (await self.click('arena_until_hurt'))['embed'].description
+        self.assertEqual(simulate.call_count, 2)
+        self.assertIn('Stopped: Bulbasaur is below 50%.', text)
+
+    async def test_until_hurt_with_auto_order_checks_the_reordered_lead(self):
+        await self.start_run()
+        await self.click('arena_auto_order')
+        run = await self.run_state()
+        full = [m['full_hp'] for m in run['team']]
+        await self.hurt_team((1, full[1], 1))
+        with patch.object(test_arena.battle_engine, 'simulate', side_effect=[self.outcome(hp=(1, 1, 1))]) as simulate:
+            text = (await self.click('arena_until_hurt'))['embed'].description
+        self.assertEqual(simulate.call_count, 1)
+        self.assertRegex(text, r'Stopped: \w+ is below 50%\.')
+
     async def test_hurt_member_or_stale_screen_fights_nothing(self):
         await self.start_run()
         run = await self.hurt_team()

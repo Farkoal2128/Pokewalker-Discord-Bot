@@ -954,16 +954,16 @@ class ArenaTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((result['run']['floor'], result['run']['slot'], result['run']['revision']), (1, 1, 1))
 
     async def test_chain_step_hurt_member_stops_before_fighting(self):
-        run = await self.chain_health((await self.start())['run'], [(100, 100), (49, 100), (90, 100)])
-        await self.conn.execute('UPDATE profiles SET arena_auto_order=1 WHERE profile_id=?', (self.pid,))
+        # D69: only the lead (first in line) is checked.
+        run = await self.chain_health((await self.start())['run'], [(49, 100), (100, 100), (90, 100)])
         before = await self.snapshot()
         with patch.object(battle_engine, 'simulate') as simulate:
-            self.assertEqual(await self.chain_step(run), {'status': 'hurt', 'position': 1, 'run': run})
+            self.assertEqual(await self.chain_step(run), {'status': 'hurt', 'position': 0, 'run': run})
             simulate.assert_not_called()
         self.assertEqual(await self.snapshot(), before)
 
     async def test_chain_step_stops_after_revive_or_below_threshold(self):
-        for hp, full, threshold, position in (((0, 2, 2), 2, 10, 0), ((100, 49, 100), 100, 50, 1)):
+        for hp, full, threshold, position in (((0, 2, 2), 2, 10, 0), ((49, 100, 100), 100, 50, 0)):  # D69: lead only
             with self.subTest(hp=hp):
                 await self.reset_run_fixture()
                 run = await self.chain_health(await self.at_fight(floor=5, slot=2), [(full, full)] * 3)
@@ -979,6 +979,13 @@ class ArenaTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(battle_engine, 'simulate', return_value=self.outcome(hp=(100, 100, 100))):
             result = await self.chain_step(run)
         self.assertEqual((result['stop'], result['tickets']['tier'], result['run']['floor']), ('ticket', 'bronze', 6))
+
+    async def test_chain_step_hurt_bench_does_not_stop_after_a_win(self):
+        # D69: a member at 49% behind a healthy lead does not stop the chain.
+        run = await self.chain_health(await self.at_fight(floor=1, slot=0), [(100, 100)] * 3)
+        with patch.object(battle_engine, 'simulate', return_value=self.outcome(hp=(100, 49, 1))):
+            result = await self.chain_step(run)
+        self.assertEqual((result['status'], result['stop']), ('won', None))
 
     async def test_chain_step_defeat_stale_expired_or_excluded(self):
         run = (await self.start())['run']

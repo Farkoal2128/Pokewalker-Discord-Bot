@@ -121,6 +121,12 @@ class ArenaDomainTests(unittest.TestCase):
         self.rules['tickets']['schedule']['bronze']['floors'] = [3]
         self.assertEqual(self.arena.skip_tickets(3, self.rules), {'bronze': 1})
 
+    def test_lead_is_first_slot_or_best_hp_with_auto_order(self):
+        # D69: Fight until hurt checks only this position.
+        health = [(1, 10), (10, 10), (1, 10)]
+        self.assertEqual(self.arena.lead(health, False), 0)
+        self.assertEqual(self.arena.lead(health, True), 1)
+
     def test_hurt_is_strictly_below_and_hp_order_keeps_ties(self):
         self.assertIsNone(self.arena.hurt([(50, 100), (1, 2)], 50))
         self.assertEqual(self.arena.hurt([(50, 100), (49, 100), (1, 10)], 50), 1)

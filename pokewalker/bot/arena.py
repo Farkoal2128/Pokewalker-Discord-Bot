@@ -434,7 +434,7 @@ def handlers(walker):
                         name = run['team'][result['position']]['snapshot']['combatant']['name']
                         if not history:
                             notice = f"{name} is below {current['stop_pct']}%. Heal first, or use Fight."
-                        elif result.get('revived'):
+                        elif result['position'] in result.get('revived', ()):
                             notice = f'Stopped: {name} was revived at 1 HP.'
                         else:
                             notice = f"Stopped: {name} is below {current['stop_pct']}%."

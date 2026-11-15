@@ -397,13 +397,18 @@ async def fight(conn, session, run_id, revision, now, rng, content, multipliers,
     return await with_receipt(conn, f'arena_fight:{run_id}:{floor}:{slot}', 'arena_fight', compute, profile_id=pid)
 
 
+def _hurt_lead(health, current, revived=()):
+    position = domain.lead(health, current['auto_order'])
+    return position if position in revived or domain.hurt([health[position]], current['stop_pct']) is not None else None
+
+
 async def chain_step(conn, session, run_id, revision, now, rng, content, multipliers, battle_rules, chart):
     current = await state(conn, session, now)
     run, refusal = _live_run(current, run_id, revision)
     if refusal:
         return refusal
     health = [(member['hp'], member['full_hp']) for member in run['team']]
-    position = domain.hurt(health, current['stop_pct'])
+    position = _hurt_lead(health, current)  # D69: only the lead stops the chain
     if position is not None:
         return {'status': 'hurt', 'position': position, 'run': run}
     if current['auto_order']:
@@ -416,7 +421,7 @@ async def chain_step(conn, session, run_id, revision, now, rng, content, multipl
     if result['status'] == 'defeated':
         return {**result, 'run': run}
     health = [(member['hp'], member['full_hp']) for member in run['team']]
-    position = result['revived'][0] if result['revived'] else domain.hurt(health, current['stop_pct'])
+    position = _hurt_lead(health, current, result['revived'])
     if position is not None:
         return {**result, 'run': run, 'stop': 'hurt', 'position': position}
     return {**result, 'run': run, 'stop': 'ticket' if result['tickets'] else None}

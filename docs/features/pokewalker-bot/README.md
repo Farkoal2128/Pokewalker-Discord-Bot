@@ -552,6 +552,18 @@ for that menu".
   equal CP keeps newest first. No other picker gets Lowest CP.
 - Each research row now shows its CP, so the order can be seen.
 
+### Fight until hurt checks the leader (D69, owner request 2026-11-15)
+
+The owner requested: "for the arena auto-fight until hurt, make it so it only tracks the head
+of the party, so if you have 2 pokemon at 1hp but a full hp at the head, that allows you to
+autofight."
+
+- **D69: Leader-only stop.** Fight until hurt checks only the Pokémon first in line, after
+  Auto-order has sorted the party when it is on. The chain refuses to start, or stops after a
+  fight, only when that leader is below the stop threshold; a leader revived at 1 HP counts
+  as below. Hurt or 1 HP members further back no longer stop it, though they still fight if
+  the leader faints. Ticket and defeat stops are unchanged.
+
 ## Platform constraints
 
 - Reading message text needs the privileged Message Content intent. Discord reviews

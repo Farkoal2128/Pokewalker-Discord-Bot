@@ -129,6 +129,11 @@ def hurt(health, pct):
     return next((i for i, (hp, full_hp) in enumerate(health) if hp * 100 < pct * full_hp), None)
 
 
+def lead(health, auto_order):
+    """D69: the position Fight until hurt checks, first in line after any Auto-order."""
+    return hp_order(health)[0] if auto_order else 0
+
+
 def hp_order(health):
     return sorted(range(len(health)), key=lambda i: Fraction(*health[i]), reverse=True)
 

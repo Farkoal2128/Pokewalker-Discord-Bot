@@ -1618,6 +1618,12 @@ the unchanged compact fight receipt. No berries are spent. Producers: Arena
 domain/service; consumers: later Arena screens and chain coordinator. Additive
 API with no schema change; tests: test_arena_domain and test_arena. Full G-F
 and live-platform acceptance remain separate.
+D69 (owner request 2026-11-15) supersedes the HP checks above: chain_step checks only
+the lead, position 0, or hp_order(health)[0] when auto_order is on. It returns hurt
+without fighting only when the lead is below stop_pct, and a win stops with hurt only
+when the next lead (by the same rule) is below stop_pct; a revived member at 1 HP
+stops only as that lead. Bench HP never stops the chain. domain.lead(health,
+auto_order) returns that position. Tests: test_arena_domain, test_arena.
 
 
 ## Arena monthly leaderboard schema (0027)

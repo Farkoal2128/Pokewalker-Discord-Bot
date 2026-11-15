@@ -1719,6 +1719,13 @@ Tests: test_arena_screens, test_readme, test_walker_router. Offline evidence doe
 not establish live Discord acceptance.
 
 
+## Arena Fight until hurt checks the lead (D69)
+Supersedes the ARENA-24 stop wording: the notices name the lead (first in line, after
+Auto-order when on). "<name> is below P%. Heal first, or use Fight." and "Stopped:
+<name> is below P%." appear only for the lead; "Stopped: <name> was revived at 1 HP."
+appears only when the revived member is the next lead. Hurt bench members do not stop
+the chain. Tests: test_arena_screens, test_readme.
+
 ## Arena monthly settlement on walker home (ARENA-22)
 After the enrolled profile is revalidated, Walker.home calls services.arena.settle
 once with the session guild and Walker.clock(), inside its existing writer job,
