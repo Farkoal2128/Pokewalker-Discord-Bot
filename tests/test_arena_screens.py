@@ -83,6 +83,72 @@ class ArenaScreenTests(unittest.IsolatedAsyncioTestCase):
         await test_arena.ArenaTests.x_press(self)
         return await self.click('arena_buy_' + item)
 
+    async def test_break_shows_ex_lines_for_each_flag(self):
+        await self.start_run()
+        for attack, defense in ((0, 0), (1, 0), (0, 1), (1, 1)):
+            await self.conn.execute('UPDATE arena_runs SET ex_attack=?,ex_defense=?,x_attack_left=2',
+                                    (attack, defense))
+            rendered = await self.click('arena_resume')
+            lines = rendered['embed'].description.splitlines()
+            for name, stat, flag in (('EX-Attack', 'attack', attack), ('EX-Defense', 'defense', defense)):
+                line = f'{name}: ×2 {stat} · whole run'
+                self.assertEqual(line in lines, bool(flag))
+                if flag:
+                    self.assertGreater(lines.index(line), lines.index('X-Attack: ×2 attack · 2 fights left'))
+        rules = json.loads(json.dumps(test_arena.RULES))
+        rules['x_items']['multiplier'] = 3
+        rules['ex_items']['items']['ex_attack']['stat'] = 'defense'
+        with patch.object(self.screens(), 'load_table', return_value={'rules': rules}):
+            rendered = await self.click('arena_resume')
+        self.assertIn('EX-Attack: ×3 defense · whole run', rendered['embed'].description)
+        await self.conn.execute("UPDATE arena_runs SET ended_at=1001,end_reason='loss'")
+        ended = await self.click('arena_resume')
+        self.assertEqual(ended['embed'].title, 'Arena defeat')
+        self.assertNotIn('whole run', ended['embed'].description)
+
+    async def test_matching_x_button_disabled_other_kind_free(self):
+        await self.start_run()
+        for ex, x, other in (('ex_attack', 'x_attack', 'x_defense'), ('ex_defense', 'x_defense', 'x_attack')):
+            for held in (0, 2):
+                for left in (0, 2):
+                    await self.conn.execute('UPDATE arena_runs SET ex_attack=0,ex_defense=0,'
+                                            'x_attack_left=0,x_defense_left=0')
+                    await self.conn.execute(f'UPDATE arena_runs SET {ex}=1,{x}_left=?', (left,))
+                    await self.conn.execute('DELETE FROM inventory WHERE item_id IN (?,?)', (x, other))
+                    await self.inventory(x, held)
+                    await self.inventory(other, held)
+                    rendered = await self.click('arena_resume')
+                    blocked = self.button(rendered, 'arena_use_' + x)
+                    name = ex.replace('_', '-').title().replace('Ex-', 'EX-')
+                    self.assertEqual((blocked.label, blocked.disabled, blocked.row),
+                                     (f'{self.screens().x_name(x)}: {name} active', True, 1))
+                    free = self.button(rendered, ('arena_use_' if held else 'arena_buy_') + other)
+                    self.assertFalse(free.disabled)
+                    expected = (f'Use {self.screens().x_name(other)} ({held})' if held else
+                                f'Buy {self.screens().x_name(other)} · 300')
+                    self.assertEqual(free.label, expected)
+                    self.assertEqual(sum(b.width for b in rendered['view'].children if b.row == 1), 5)
+        await self.conn.execute('UPDATE arena_runs SET ex_attack=1,ex_defense=1')
+        rendered = await self.click('arena_resume')
+        for x in ('x_attack', 'x_defense'):
+            self.assertTrue(self.button(rendered, 'arena_use_' + x).disabled)
+
+    async def test_stale_x_press_during_ex_run_spends_nothing(self):
+        await self.inventory('x_attack', 2)
+        await self.inventory('x_defense', 2)
+        await self.start_run()
+        for ex, x in (('ex_attack', 'x_attack'), ('ex_defense', 'x_defense')):
+            await self.conn.execute('UPDATE arena_runs SET ex_attack=0,ex_defense=0')
+            await self.conn.execute(f'UPDATE arena_runs SET {ex}=1')
+            before = await self.resource_snapshot()
+            rendered = await self.click('arena_use_' + x)
+            self.assertEqual(rendered['embed'].title, 'Arena break')
+            name = ex.replace('_', '-').title().replace('Ex-', 'EX-')
+            self.assertIn(f"{name} is active for this run, so {self.screens().x_name(x)} can't be used. "
+                          'Nothing was spent.', rendered['embed'].description)
+            self.assertEqual(await self.resource_snapshot(), before)
+            self.assertTrue(self.button(rendered, 'arena_use_' + x).disabled)
+
     async def test_home_stock_line_and_buy_buttons_in_every_state(self):
         current = await self.writer.run(lambda conn: service.state(conn, self.session, self.now))
         for status in ('none', 'live', 'ended'):

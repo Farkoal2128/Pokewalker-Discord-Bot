@@ -1999,3 +1999,26 @@ returns to EX-Gift with "<name>'s IVs are now 15 / 15 / 15."; from details it
 calls storage_detail. Refusals spend nothing. Existing IV screens stay compatible.
 Producer: bot.ex_gift; consumers: private Walker interactions and C3 iv_items.
 Tests: tests/test_ex_gift_screens.py.
+
+## C5: EX boost arming and break screens (EXG-15, additive)
+Producer: bot.ex_gift and bot.arena; consumers: private Walker interactions and
+services.arena.arm/use_x. EX-Gift reads profile armed flags through get_profile.
+For each held, unarmed kind it shows Use EX-Attack (<n>) (ex_arm_ex_attack) or
+Use EX-Defense (<n>) (ex_arm_ex_defense) in EX_ITEMS order on rows 1-2. An armed
+kind instead shows "EX-Attack armed for your next new Arena run." (or EX-Defense),
+even when none remain held. One press calls arena.arm and returns to EX-Gift.
+Armed says "EX-Attack armed: ×2 attack for your whole next new Arena run. A run
+in progress does not get it."; armed_already says "EX-Attack is already armed.
+Nothing was spent."; missing says "You have no EX-Attack.". Substitute EX-Defense
+and defense for that kind; multiplier comes from rules.x_items.multiplier and
+stat from rules.ex_items. Excluded uses EXCLUDED; stale and invalid use REOPEN.
+Arming during a live run leaves that run unchanged. Paused members may arm.
+After the X lines, the break screen shows "EX-Attack: ×2 attack · whole run"
+and/or "EX-Defense: ×2 defense · whole run" for the run's flags, using the same
+rule-driven multiplier and stats. The row-1 X button mapped by rules.ex_items
+is disabled and labelled "X-Attack: EX-Attack active" (or the defense names),
+including without X stock; the other kind retains its existing behavior.
+A stale matching X press returning ex_active redraws the break with "EX-Attack
+is active for this run, so X-Attack can't be used. Nothing was spent." (or the
+defense names). The defeat screen does not change. No slash-command, service
+or persisted-state changes. Tests: test_ex_gift_screens.py, test_arena_screens.py.
