@@ -519,3 +519,32 @@ Stardust sink; AR-46's figures come from an uncommitted scratch simulation.
 Only the report's manifest hash and `arena.json` version input lines change.
 Tests: `test_balance_tables`, `test_content_integrity` and report regeneration
 comparison.
+
+## Arena EX-item rules (version 5)
+
+[EX-Gift EX-14 through EX-16 and EX-26](../docs/features/ex-gift/SYNTHESIS.md)
+(owner 2026-11-15) add `rules.ex_items` after `x_items`. Repository authors
+produce `arena.json` version 5 and its manifest balance hash. This is additive:
+existing consumers select known keys; no persisted data or artifact bytes change.
+
+| Key | Payload and units |
+|---|---|
+| `voucher_floor` | 80, a positive integer count of paid floors: 1 through 80; the run starts on 81 |
+| `items.ex_attack` | `{"stat": "attack", "x_item": "x_attack"}` |
+| `items.ex_defense` | `{"stat": "defense", "x_item": "x_defense"}` |
+
+Each `items` key is an EX-item ID. `stat` names the `battle.Combatant` field
+boosted for one whole Arena run: attack and defense each occur once. `x_item`
+names an `x_items.items` key with the same stat, whose use the EX boost blocks.
+The factor is the existing `x_items.multiplier` (2); exactly one factor applies.
+The voucher floor awards a scheduled ticket and unlocks the full `skip.max`.
+Consumers are the EX boost and voucher services (EXG-14, EXG-16) and Arena
+screens (EXG-15, EXG-17, EXG-19).
+
+`source` appends `docs/features/ex-gift/SYNTHESIS.md EX-14..EX-16, EX-26 (owner 2026-11-15)`
+and retains every existing citation; `checked` stays `2026-11-14`.
+`artifact_sha256` stays unchanged. EX-items are gift-only with no Stardust price,
+so the economy report does not model them. Only its manifest hash and
+`arena.json` version input lines change. Tests: `test_balance_tables`,
+`test_content_integrity`, Arena domain/service and economy suites, and report
+regeneration comparison.
