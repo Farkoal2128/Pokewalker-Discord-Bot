@@ -1018,6 +1018,163 @@ class ArenaTests(unittest.IsolatedAsyncioTestCase):
         await self.conn.execute('DELETE FROM candy')
         await self.conn.execute('UPDATE profiles SET arena_best_floor=0')
 
+    async def voucher_start(self, best=0, quantity=1):
+        await self.conn.execute('UPDATE profiles SET arena_best_floor=? WHERE profile_id=?', (best, self.pid))
+        await self.conn.execute('INSERT INTO ex_items VALUES (?,?,?)', (self.pid, 'arena_ex_voucher', quantity))
+        return await self.start(voucher=True)
+
+    async def assert_voucher_payout(self, best, expected):
+        await self.conn.execute('INSERT INTO arena_tickets VALUES (?,?,3)', (self.pid, 'silver'))
+        result = await self.voucher_start(best)
+        self.assertEqual(set(result), {'status', 'voucher', 'tickets', 'run'})
+        self.assertEqual({k: result[k] for k in ('status', 'voucher', 'tickets')},
+                         {'status': 'started', 'voucher': True, 'tickets': expected})
+        run = result['run']
+        self.assertEqual((run['floor'], run['slot'], run['revision']), (81, 0, 0))
+        self.assertTrue(all(member['hp'] == member['full_hp'] for member in run['team']))
+        self.assertEqual(run['enemy'], json.loads(json.dumps(
+            self.service()._roll_enemy(81, 0, random.Random(7), CONTENT, MULTIPLIERS))))
+        current = await self.state()
+        self.assertEqual(current['tickets'], {**expected, 'silver': expected['silver'] + 3})
+        self.assertEqual(current['best_floor'], max(best, 80))
+        self.assertEqual(await self.scalar('SELECT quantity FROM ex_items WHERE profile_id=?', (self.pid,)), 0)
+        self.assertEqual(await self.rows('SELECT profile_id,resource,resource_id,delta,reason FROM resource_ledger '
+                                         'ORDER BY line_key'), [
+            *[dict(profile_id=self.pid, resource='arena_ticket', resource_id=tier,
+                   delta=copies, reason='arena_voucher') for tier, copies in expected.items()],
+            dict(profile_id=self.pid, resource='ex_item', resource_id='arena_ex_voucher',
+                 delta=-1, reason='arena_voucher')])
+        self.assertEqual(await self.rows('SELECT * FROM arena_month_scores'), [])
+        self.assertEqual(await self.rows('SELECT * FROM candy'), [])
+        self.assertEqual(await self.scalar('SELECT count(*) FROM arena_tickets WHERE profile_id=?', (self.other,)), 0)
+        self.assertEqual(await self.rows('SELECT key,action,profile_id FROM action_receipts'),
+                         [dict(key='arena_start:s:4', action='arena_start', profile_id=self.pid)])
+
+    async def test_voucher_from_best_0_pays_first_clears_starts_floor_81(self):
+        await self.assert_voucher_payout(0, dict(bronze=2, silver=8, gold=12, platinum=6, diamond=2))
+
+    async def test_voucher_from_best_50_pays_first_clear_only_above_it(self):
+        await self.assert_voucher_payout(50, dict(bronze=2, silver=4, gold=9, platinum=5, diamond=2))
+
+    async def test_voucher_at_max_skip_best_100_pays_base_keeps_best(self):
+        await self.assert_voucher_payout(100, dict(bronze=2, silver=4, gold=6, platinum=3, diamond=1))
+
+    async def test_voucher_raises_best_to_80_max_skip_40(self):
+        await self.voucher_start()
+        self.assertEqual((await self.state())['best_floor'], 80)
+        await self.conn.execute("UPDATE arena_runs SET ended_at=1100,end_reason='loss'")
+        await self.x_press()
+        result = await self.start(skip=40, now=1000 + RULES['cooldown_seconds'])
+        self.assertEqual((result['status'], result['run']['floor']), ('started', 41))
+
+    async def test_voucher_refusals_keep_voucher_and_write_nothing(self):
+        for refusal in ('no_voucher', 'cooldown', 'paused', 'off', 'live', 'skip', 'team'):
+            with self.subTest(refusal=refusal):
+                await self.reset_run_fixture()
+                await self.conn.execute('DELETE FROM ex_items')
+                await self.conn.execute('DELETE FROM restrictions')
+                await self.conn.execute('UPDATE guilds SET arena_enabled=1')
+                await self.conn.execute('UPDATE profiles SET ex_attack_armed=1,ex_defense_armed=1 WHERE profile_id=?',
+                                        (self.pid,))
+                quantity = 0 if refusal == 'no_voucher' else 1
+                await self.conn.execute('INSERT INTO ex_items VALUES (?,?,?)',
+                                        (self.pid, 'arena_ex_voucher', quantity))
+                if refusal in ('live', 'cooldown'):
+                    await self.start()
+                    if refusal == 'cooldown':
+                        await self.conn.execute("UPDATE arena_runs SET ended_at=1100,end_reason='loss'")
+                    await self.x_press()
+                elif refusal == 'paused':
+                    await self.conn.execute("INSERT INTO restrictions(guild_id,user_id,paused) VALUES ('g','u',1)")
+                elif refusal == 'off':
+                    await self.conn.execute('UPDATE guilds SET arena_enabled=0')
+                before = await self.snapshot()
+                expected = 'invalid' if refusal in ('skip', 'team') else refusal
+                result = await self.start(voucher=True, now=1200, skip=1 if refusal == 'skip' else 0,
+                                          team=[] if refusal == 'team' else self.team)
+                self.assertEqual(result['status'], expected)
+                self.assertEqual(await self.snapshot(), before)
+                self.assertEqual(await self.rows('SELECT * FROM ex_items'),
+                                 [dict(profile_id=self.pid, item_id='arena_ex_voucher', quantity=quantity)])
+
+    async def test_voucher_run_first_boss_win_scores_floor_81(self):
+        run = (await self.voucher_start())['run']
+        with patch.object(battle_engine, 'simulate', return_value=self.outcome()):
+            for slot in range(3):
+                self.assertEqual((run['floor'], run['slot']), (81, slot))
+                self.assertEqual(await self.rows('SELECT * FROM arena_month_scores'), [])
+                await self.fight(run)
+                run = (await self.state())['run']
+        self.assertEqual(await self.rows('SELECT * FROM arena_month_scores'), [
+            dict(guild_id='g', month='1970-01', profile_id=self.pid, floor=81, reached_at=1300)])
+        self.assertEqual((run['floor'], run['slot']), (82, 0))
+
+    async def test_voucher_replay_returns_started_after_run_is_live(self):
+        first = await self.voucher_start()
+        before = await self.snapshot()
+        self.assertEqual(await self.start(voucher=True, now=1100), first)
+        self.assertEqual(await self.snapshot(), before)
+        self.assertEqual(await self.scalar('SELECT quantity FROM ex_items WHERE profile_id=?', (self.pid,)), 0)
+        self.assertEqual(await self.scalar('SELECT count(*) FROM arena_runs'), 1)
+
+    async def test_normal_start_replay_unchanged(self):
+        first = await self.start()
+        before = await self.snapshot()
+        replay = await self.start(now=1100)
+        self.assertEqual((replay['status'], replay['run']), ('live', first['run']))
+        self.assertEqual(await self.snapshot(), before)
+
+    async def test_voucher_start_moves_armed_flags(self):
+        await self.conn.execute('UPDATE profiles SET ex_attack_armed=1,ex_defense_armed=1 WHERE profile_id=?',
+                                (self.pid,))
+        run = (await self.voucher_start())['run']
+        self.assertEqual((run['ex_attack'], run['ex_defense']), (1, 1))
+        self.assertEqual(await self.rows('SELECT ex_attack_armed,ex_defense_armed FROM profiles WHERE profile_id=?',
+                                         (self.pid,)), [dict(ex_attack_armed=0, ex_defense_armed=0)])
+
+    async def test_voucher_run_obeys_next_cooldown(self):
+        await self.voucher_start(quantity=2)
+        await self.conn.execute("UPDATE arena_runs SET ended_at=1100,end_reason='loss'")
+        await self.x_press()
+        before = await self.snapshot()
+        for voucher in (False, True):
+            self.assertEqual(await self.start(voucher=voucher, now=1200),
+                             {'status': 'cooldown', 'seconds_left': 64600})
+            self.assertEqual(await self.snapshot(), before)
+            self.assertEqual(await self.scalar('SELECT quantity FROM ex_items WHERE profile_id=?', (self.pid,)), 1)
+        result = await self.start(voucher=True, now=1000 + RULES['cooldown_seconds'])
+        self.assertEqual((result['status'], result['run']['floor']), ('started', 81))
+        self.assertEqual(result['tickets'], dict(bronze=2, silver=4, gold=6, platinum=3, diamond=1))
+        self.assertEqual(await self.scalar('SELECT quantity FROM ex_items WHERE profile_id=?', (self.pid,)), 0)
+
+    async def test_normal_skip_still_capped(self):
+        await self.conn.execute('UPDATE profiles SET arena_best_floor=200 WHERE profile_id=?', (self.pid,))
+        await self.assert_refused({'status': 'invalid'}, skip=79)
+
+    async def test_voucher_start_ledger_failure_rolls_back_all_effects(self):
+        await self.conn.execute('INSERT INTO ex_items VALUES (?,?,1)', (self.pid, 'arena_ex_voucher'))
+        await self.conn.execute('UPDATE profiles SET ex_attack_armed=1,ex_defense_armed=1 WHERE profile_id=?',
+                                (self.pid,))
+        await self.conn.execute("CREATE TRIGGER fail_voucher BEFORE INSERT ON resource_ledger "
+                                "WHEN NEW.resource='ex_item' AND NEW.reason='arena_voucher' "
+                                "BEGIN SELECT RAISE(ABORT,'voucher ledger'); END")
+        before = await self.snapshot()
+        with self.assertRaisesRegex(sqlite3.IntegrityError, 'voucher ledger'):
+            await self.start(voucher=True)
+        self.assertEqual(await self.snapshot(), before)
+        self.assertEqual(await self.scalar('SELECT quantity FROM ex_items WHERE profile_id=?', (self.pid,)), 1)
+
+    async def test_voucher_replay_authorizes_before_receipt_and_precedes_mutable_refusals(self):
+        first = await self.voucher_start()
+        await self.conn.execute("INSERT INTO restrictions(guild_id,user_id,paused,excluded) VALUES ('g','u',1,1)")
+        await self.conn.execute('UPDATE guilds SET arena_enabled=0')
+        await self.assert_refused({'status': 'stale'}, voucher=True, session={**self.session, 'profile_id': self.other})
+        await self.assert_refused({'status': 'excluded'}, voucher=True)
+        await self.conn.execute('UPDATE restrictions SET excluded=0')
+        before = await self.snapshot()
+        self.assertEqual(await self.start(voucher=True, team=[], skip=1), first)
+        self.assertEqual(await self.snapshot(), before)
+
     async def skip_start(self, skip=40):
         await self.conn.execute('UPDATE profiles SET arena_best_floor=80 WHERE profile_id=?', (self.pid,))
         return await self.start(skip=skip)

@@ -1487,6 +1487,31 @@ battle_hp (domain.enemy_hp) and special. Run starts at floor=1, slot=0, revision
 The arena_start:<session_id>:<_original_revision> receipt (session revision fallback)
 returns started with run; repeat presses cannot create another run or reroll one.
 
+EX-Voucher start (EX-16, EX-20, EX-26, R7, R12) extends start with
+skip=0, voucher=False. After state authorizes the session (stale/excluded), a
+voucher request looks up the profile-owned arena_start receipt before mutable
+refusals, returning its recorded result with the latest run attached. Thus a
+voucher replay returns started even with a live run or no voucher remaining;
+normal-start replays retain their existing live response. Paused, off, live and
+new-run cooldown refusals remain in their existing order. Then voucher starts
+refuse nonzero skip with invalid, absent EX inventory with no_voucher, and use
+the existing team validation. Refusals spend no voucher or tickets.
+
+In the same start receipt and writer transaction, the voucher rolls the entry
+enemy at rules.ex_items.voucher_floor + 1 (81) and creates the full-HP run there.
+Every scheduled ticket floor in 1..voucher_floor grants one copy plus
+first_clear_bonus(floor, old best_floor, rules); additive arena_tickets upserts
+and arena_ticket / tier / +copies / arena_voucher ledger lines record the total
+per tier. It raises arena_best_floor to MAX(old best_floor, voucher_floor),
+unlocking the floor-40 skip, takes one arena_ex_voucher through ex_gift.take and
+records ex_item / arena_ex_voucher / -1 / arena_voucher. Armed EX flags transfer
+as on any new run. The stored result is {status: started, voucher: True,
+tickets: {tier: copies}}, with run attached outside the receipt. No monthly
+score or Candy is granted at start: monthly scores begin with the floor-81 boss
+win. Normal skip limits and payouts remain unchanged. This additive service
+boundary uses the existing schema; producers: services.arena and ex_gift;
+consumers: Arena screens and fights. Tests: test_arena.
+
 set_order(conn,session,run_id,revision,order,now) takes a permutation of (0,1,2),
 saves that team order, increments revision and returns ordered with run, without
 a receipt or resource cost. heal(conn,session,run_id,revision,positions,berry,now)
