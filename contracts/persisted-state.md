@@ -1889,3 +1889,21 @@ deployments). Arena run history and the force-raid audit rows are never rewritte
 the Arena cooldown is zero when `arena_cooldown_reset_at >= ` the latest run's
 `started_at`, and the force-raid cooldown ignores a last force raid at or before
 `force_raid_reset_at`. Rollback: older code ignores both columns.
+
+## Time Gear Fragment (EXG-11, additive)
+Producer: services.cooldowns.time_gear; consumers: the private EX-Gift screen and
+the existing D67 cooldown readers. In a writer transaction, session_owner refuses
+stale or excluded members before looking up a profile-owned ex_time_gear receipt.
+The key is ex_time_gear:<session_id>:<rev>, where rev is _original_revision when
+present, otherwise revision. A matching receipt returns its stored result before
+inventory checks; a receipt owned by another profile or action returns stale.
+Without a receipt, no Time Gear Fragment returns missing and writes nothing.
+Otherwise ex_gift.take spends one, and the shared D67 clear helper resets only the
+current server profile's check-in, gym battle, live gym feeding, Arena new run,
+daily trade and trade invite ping cooldowns. It returns status used with the six
+PLAYER keys in order. The effect, profile-owned receipt and one ledger line
+(resource ex_item, resource_id time_gear_fragment, delta -1, reason ex_time_gear)
+commit atomically. No mod_audit row is written. Force-raid, last_share_at and
+message step-credit limits stay intact. Paused members may use it. Admin reset
+continues using the same updates and writing its moderation audit row unchanged.
+No migration is needed. Tests: test_ex_items.py and unchanged test_cooldown_reset.py.

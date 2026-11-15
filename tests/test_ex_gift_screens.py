@@ -42,6 +42,64 @@ class ExGiftScreenTests(unittest.IsolatedAsyncioTestCase):
     def buttons(self, rendered):
         return {button.label: button for button in rendered['view'].children}
 
+    async def test_time_gear_button_only_while_held(self):
+        session = await self.seed([['time_gear_fragment', 'time_gear_fragment']])
+        rendered, session = await self.press(session, 'ex_gift')
+        self.assertFalse(any('Use Time Gear' in label for label in self.buttons(rendered)))
+        rendered, session = await self.press(session, 'ex_claim')
+        button = self.buttons(rendered)['Use Time Gear Fragment (2)']
+        self.assertEqual(button.row, 1)
+        self.assertTrue(button.custom_id.endswith(':ex_use_time_gear_fragment'))
+        self.assertIsNotNone(re.fullmatch(self.module.CUSTOM_ID, button.custom_id))
+        await self.conn.execute('UPDATE ex_items SET quantity=0')
+        rendered, _ = await self.press(session, 'ex_gift')
+        self.assertFalse(any('Use Time Gear' in label for label in self.buttons(rendered)))
+
+    async def test_time_gear_confirm_then_notice(self):
+        from pokewalker.services.cooldowns import PLAYER
+        session = await self.seed([['time_gear_fragment']])
+        _, session = await self.press(session, 'ex_claim')
+        await self.conn.execute("INSERT INTO restrictions(guild_id,user_id,paused,paused_until) "
+                                "VALUES ('123','456',1,9999999999)")
+        preview, session = await self.press(session, 'ex_use_time_gear_fragment')
+        self.assertEqual(json.loads(session['selection']), {'phase': 'ex_time_gear'})
+        self.assertEqual(preview['embed'].title, 'Use Time Gear Fragment')
+        text = preview['embed'].description
+        for line in ('Reset your cooldowns in this server?', *PLAYER.values(),
+                     'Share and message limits stay.', 'Uses 1 Time Gear Fragment (have 1).'):
+            self.assertIn(line, text)
+        self.assertEqual({label: button.custom_id.rsplit(':', 1)[1]
+                          for label, button in self.buttons(preview).items()},
+                         {'Confirm': 'ex_time_gear_confirm', 'Back': 'ex_gift'})
+        self.assertEqual(await self.rows('SELECT quantity FROM ex_items'), [{'quantity': 1}])
+        back, session = await self.press(session, 'ex_gift')
+        self.assertEqual(back['embed'].title, 'EX-Gift')
+        self.assertEqual(await self.rows('SELECT quantity FROM ex_items'), [{'quantity': 1}])
+        _, session = await self.press(session, 'ex_use_time_gear_fragment')
+        confirmed, session = await self.press(session, 'ex_time_gear_confirm')
+        self.assertIn('Time Gear Fragment used: your cooldowns in this server are reset.',
+                      confirmed['embed'].description)
+        self.assertEqual(json.loads(session['selection']), {'phase': 'ex_gift', 'offset': 0})
+        self.assertFalse(any('Use Time Gear' in label for label in self.buttons(confirmed)))
+        missing, session = await self.press(session, 'ex_use_time_gear_fragment')
+        self.assertIn('You have no Time Gear Fragment.', missing['embed'].description)
+        # Stock can disappear after preview in another session.
+        await self.conn.execute('UPDATE ex_items SET quantity=1')
+        _, session = await self.press(session, 'ex_use_time_gear_fragment')
+        await self.conn.execute('UPDATE ex_items SET quantity=0')
+        missing, _ = await self.press(session, 'ex_time_gear_confirm')
+        self.assertIn('You have no Time Gear Fragment.', missing['embed'].description)
+        self.assertEqual(len(await self.rows("SELECT * FROM action_receipts WHERE action='ex_time_gear'")), 1)
+
+    async def test_time_gear_confirm_without_phase_refused(self):
+        session = await self.seed([['time_gear_fragment']])
+        _, session = await self.press(session, 'ex_claim')
+        refused = await self.click(session, 'ex_time_gear_confirm')
+        refused.edit_original_response.assert_not_awaited()
+        self.assertEqual(refused.followup.send.await_args.args[0], self.module.REOPEN)
+        self.assertEqual(await self.rows('SELECT quantity FROM ex_items'), [{'quantity': 1}])
+        self.assertEqual(await self.rows("SELECT * FROM action_receipts WHERE action='ex_time_gear'"), [])
+
     async def test_badge_shows_while_unclaimed_clears_after_claim(self):
         session = await self.seed([['poke_ball'], ['shiny_patch']])
         home, session = await self.press(session, 'home')
