@@ -122,7 +122,7 @@ Build rows are `seam`: at most 2 production files and 300 production lines; test
 | 19 | [EXG-17](tickets/EXG-17.md) voucher screens | build | seam | S | ✅ done · a1322e1 · GO review-seam r1 |
 | 20 | [EXG-18](tickets/EXG-18.md) Pokémon details: Shiny Patch and Golden Bottlecap buttons | build | seam | S | ✅ done · 4af7406 · GO review-seam r1 |
 | 21 | [EXG-19](tickets/EXG-19.md) Arena team screen: EX-Attack/EX-Defense buttons, armed lines; help | build | seam | M | ✅ done · 0ae9e16 · GO review-seam r1 |
-| 22 | G-F final verification and delivery decisions | 🚦 | — | — | ❌ blocked: integration NO-GO F1; final test FAIL |
+| 22 | G-F final verification and delivery decisions | 🚦 | — | — | ⏸ technical GO and PASS · owner delivery effects held |
 
 ## 5. Briefs
 
@@ -132,4 +132,6 @@ Briefs are linked in §4. §6 acceptance cases are distributed over the tickets'
 
 **G-F (coordinator; owner for effects).** Predicates: every row ✅; independent integration GO; one exact-tree full `test_cmd` PASS on the settled final tree, skips recorded. `test_cmd` does not prove live Discord behavior. Each §3.4 effect needs its own owner message: push, main integration, host deploy with 0030, admin-guild command sync, live smoke.
 
-**G-F technical attempt 2026-11-15.** Candidate `0de9d7c`, tree `e2c20411ac5858400b1347448ae41cf8e7fca033`. Uncached `test_cmd`: guard PASS; unit FAIL (2,247 tests, 1 failure, 1 skip of unidentified case); contract check not run. Independent integration review: NO-GO F1 MAJOR, `tests/test_client_lifecycle.py:678` omits approved `gift` and `gift-history` from exact command set. Four scratch mutations (EXG-3, 4, 6, 8) were detected and independently inspected. Full evidence and retained scratch path are in this status commit. Delivery remains owner-held.
+**G-F technical attempt 2026-11-15.** Candidate `0de9d7c`, tree `e2c20411ac5858400b1347448ae41cf8e7fca033`: uncached unit FAIL (2,247 tests, one failure, one unidentified skip); contract not run. Integration NO-GO F1: stale exact admin command set. Four scratch mutations detected. Full evidence and retained scratch path in `075a9d8`.
+
+**G-F technical completion 2026-11-15.** Candidate `20f9d119f764c939ef350d22b060bfb00ac21f1e`, tree `b9c28ad16d6c878c4312e7e0bb0b2e53c2d3dc82`: independent replacement integration review GO after F1 fix; prior reviewer from earlier session unavailable. F1 preserves exact command-set equality and guild isolation; no other stale admin command-set pin found. Uncached `python scripts/guard.py && python scripts/verify.py`: guard PASS; unit PASS (2,247 tests, one skip); contract PASS (6 tests). Skip: `test_prune.PruneTests.test_local_filename_with_newline_is_one_literal_path` (Windows filenames cannot contain newlines). No live Discord. Earlier full FAIL remains recorded above. This status-only successor does not change the tested source tree. Push, main integration, deploy, command sync and live smoke remain owner-held.
