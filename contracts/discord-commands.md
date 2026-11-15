@@ -732,8 +732,9 @@ admin guild, deadline, the applicable per-owner bucket shared across drafts,
 and current exclusion through the writer. After awaits it rechecks draft
 identity and permits editor changes/redraws only while editing. Refusals suppress
 mentions and change nothing. Cancel, expiry and view timeout use one discard
-operation: mark discarded, unregister only that draft, stop its view and clear
-target IDs. Cancel leaves text without controls.
+operation: while sending, mark discard pending for settlement; otherwise mark
+discarded, unregister only that draft, stop its view, clear target IDs and drop
+the stored receipt. Cancel leaves text without controls.
 
 Preview shows the send ID, scope, exact server/user target, every slot and the
 provisional targeted-server, populated-server and recipient counts. Zero recipients
@@ -746,19 +747,23 @@ discarded/unregistered refuses as expired, and a changed revision refuses with
 "The package changed. Preview it again." A valid Confirm changes editing to
 sending before queuing its writer job.
 
-The writer job checks draft identity, sending state and the absolute deadline
-both before send and after a sent result; a failed latter check raises to roll
-back every send write. The synchronous post-commit observer sets sent and stores
-the result, discards an expired draft, or restores editing for service refusals.
-A task shielded from callback cancellation owns settlement: rollback restores
-editing with the same revision/send ID only if still registered and sending;
-expiry discards. Callback cancellation never implies rollback. While sending,
-Edit, Cancel and retained picks refuse; after commit every stale control returns
-the same component-free receipt (send ID, scope, exact target, slots and committed
-counts), never an editor. Unsent results say "Nothing was sent." privately.
-Sent drafts remain registered until their deadline. On restart old controls have
-no registered handler, receive no acknowledgement and cannot send; committed
-sends remain available to gift-history (EXG-7).
+The writer job checks draft identity, sending state, no pending discard and the
+absolute deadline before and after send; a failed latter check raises to roll
+back every send write. The last check authorizes commit, which may finish after
+the deadline. A discard while sending sets pending discard: before the last check
+it prevents sending; during commit it preserves the committed send. The synchronous
+post-commit observer only sets sent and stores the aggregate result.
+A task shielded from callback cancellation owns settlement and always leaves
+sending: refusal or rollback restores editing with the same revision/send ID;
+expiry or pending discard completes discard and drops any stored receipt.
+Callback cancellation never implies rollback. While sending, Edit, Cancel and
+retained picks refuse; after commit every stale control returns the same
+component-free receipt (send ID, scope, exact target, slots and committed counts),
+never an editor, until expiry/discard. Confirm renders from its own local snapshot,
+so cleanup during commit does not erase its receipt target. Unsent results say
+"Nothing was sent." privately. Sent drafts remain registered until their deadline.
+On restart old controls have no registered handler, receive no acknowledgement
+and cannot send; committed sends remain available to gift-history (EXG-7).
 Producer: Admin and its EX-Gift view; consumers: configured owners and Discord's
 component serializer. Existing commands and persisted data remain compatible;
 tests: `test_admin_gift.py`, `test_admin.py`, `test_cooldown_reset.py`, `test_db.py`.

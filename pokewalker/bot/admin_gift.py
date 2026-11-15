@@ -23,7 +23,11 @@ def attach(admin):
 
 
 def discard(draft):
+    if draft.state == 'sending':
+        draft.discard_pending = True
+        return
     draft.state = 'discarded'
+    draft.__dict__.pop('result', None)
     if draft.admin.gift_drafts.get(draft.draft_id) is draft:
         draft.admin.gift_drafts.pop(draft.draft_id)
     draft.view.stop()
@@ -57,7 +61,7 @@ async def open(admin, interaction, scope, server_id, user_id):
     draft = SimpleNamespace(admin=admin, draft_id=uuid4().hex, owner_id=interaction.user.id,
         scope=scope, guild_id=guild, user_id=user, deadline=admin.bot.clock() + 900,
         slots=[], revision=0, send_id=uuid4().hex, category='Balls', ex=False,
-        page=0, picked=None, state='editing')
+        page=0, picked=None, state='editing', discard_pending=False)
     draft.view = GiftView(draft)
     admin.gift_drafts[draft.draft_id] = draft
     await draft.view.editor(interaction)
@@ -226,13 +230,14 @@ class GiftView(discord.ui.View):
             draft.send_id, draft.picked = uuid4().hex, None
         await self.editor(interaction)
 
-    async def receipt(self, interaction):
-        draft, result = self.draft, self.draft.result
+    async def receipt(self, interaction, snapshot=None):
+        draft = self.draft
+        result, user_id = snapshot or (draft.result, draft.user_id)
         text = f'Send ID: {result["gift_id"]}\nScope: {result["scope"]}'
         if result['guild_id'] is not None:
             text += f'\nServer ID: {result["guild_id"]}'
-        if draft.user_id is not None:
-            text += f'\nUser ID: {draft.user_id}'
+        if user_id is not None:
+            text += f'\nUser ID: {user_id}'
         text += '\n' + '\n'.join(f'{n + 1}. {ex_gift.label(key, draft.admin.bot.content)}'
                                  for n, key in enumerate(result['items']))
         text += (f'\nCounts (committed)\nTargeted servers: {result["servers"]}'
@@ -247,9 +252,11 @@ class GiftView(discord.ui.View):
         if revision != draft.revision:
             await self.refuse(interaction, 'The package changed. Preview it again.')
             return
+        snapshot = [None, draft.user_id]
         def live():
             return (draft.admin.gift_drafts.get(draft.draft_id) is draft
-                    and draft.state == 'sending' and bot.clock() < draft.deadline)
+                    and draft.state == 'sending' and not draft.discard_pending
+                    and bot.clock() < draft.deadline)
         async def job(conn):
             if not live():
                 return {'status': 'expired'}
@@ -257,28 +264,30 @@ class GiftView(discord.ui.View):
                 admin_guild_id=bot.settings.admin_guild_id, scope=draft.scope,
                 guild_id=draft.guild_id, user_id=draft.user_id, items=list(draft.slots),
                 content=bot.content, now=time.time())
-            if result['status'] == 'sent' and not live():
+            if not live():
                 raise _Expired
             return result
         def record(result):
             if result['status'] == 'sent':
-                draft.state, draft.result = 'sent', result
-            elif result['status'] == 'expired':
-                discard(draft)
-            else:
-                draft.state = 'editing'
+                draft.state, draft.result, snapshot[0] = 'sent', result, result
         async def settle():
             try:
-                await bot.writer.run(job, after_commit=record)
+                result = await bot.writer.run(job, after_commit=record)
+                if result['status'] == 'expired':
+                    draft.discard_pending = True
             except _Expired:
-                discard(draft)
+                draft.discard_pending = True
             except (Exception, asyncio.CancelledError):
-                if draft.admin.gift_drafts.get(draft.draft_id) is draft and draft.state == 'sending':
+                pass
+            finally:
+                if draft.state == 'sending':
                     draft.state = 'editing'
+                if draft.discard_pending or bot.clock() >= draft.deadline:
+                    discard(draft)
         draft.state = 'sending'
         draft.task = asyncio.create_task(settle())
         await asyncio.shield(draft.task)
-        if draft.state == 'sent':
-            await self.receipt(interaction)
+        if snapshot[0] is not None:
+            await self.receipt(interaction, snapshot)
         else:
             await self.refuse(interaction, 'Nothing was sent.')
