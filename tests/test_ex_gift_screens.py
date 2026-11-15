@@ -31,8 +31,8 @@ class ExGiftScreenTests(unittest.IsolatedAsyncioTestCase):
                                     (f'gift-{index:03}', session['profile_id']))
         return session
 
-    async def press(self, session, action):
-        interaction = await self.click(session, action)
+    async def press(self, session, action, values=None):
+        interaction = await self.click(session, action, values)
         interaction.edit_original_response.assert_awaited_once()
         interaction.followup.send.assert_not_awaited()
         saved = (await self.rows('SELECT * FROM sessions WHERE session_id=?', (session['session_id'],)))[0]
@@ -40,7 +40,133 @@ class ExGiftScreenTests(unittest.IsolatedAsyncioTestCase):
         return interaction.edit_original_response.await_args.kwargs, saved
 
     def buttons(self, rendered):
-        return {button.label: button for button in rendered['view'].children}
+        return {button.label: button for button in rendered['view'].children if hasattr(button, 'label')}
+
+    async def shiny_picker(self, count=1):
+        session = await self.seed([['shiny_patch']])
+        _, session = await self.press(session, 'ex_claim')
+        await self.conn.execute('DELETE FROM pokemon')
+        for index in range(count):
+            await self.conn.execute(
+                'INSERT INTO pokemon(pokemon_uid,profile_id,pokemon_id,level_x2,iv_attack,iv_defense,'
+                'iv_stamina,gender,shiny,origin,content_version,caught_at) '
+                "VALUES (?,?,1,20,10,10,10,'male',0,'catch','test',?)",
+                (f'p{index:02}', session['profile_id'], index))
+        return await self.press(session, 'ex_use_shiny_patch')
+
+    async def shiny_preview(self):
+        _, session = await self.shiny_picker()
+        return await self.press(session, 'ex_pick', ['p00'])
+
+    async def test_shiny_patch_button_only_while_held(self):
+        session = await self.seed([['shiny_patch', 'shiny_patch']])
+        rendered, session = await self.press(session, 'ex_gift')
+        self.assertFalse(any('Use Shiny Patch' in label for label in self.buttons(rendered)))
+        rendered, session = await self.press(session, 'ex_claim')
+        button = self.buttons(rendered)['Use Shiny Patch (2)']
+        self.assertEqual(button.row, 1)
+        self.assertTrue(button.custom_id.endswith(':ex_use_shiny_patch'))
+        await self.conn.execute('UPDATE ex_items SET quantity=0')
+        rendered, _ = await self.press(session, 'ex_gift')
+        self.assertNotIn('Use Shiny Patch (2)', self.buttons(rendered))
+
+    async def test_picker_pages_and_pick_opens_preview(self):
+        rendered, session = await self.shiny_picker(11)
+        self.assertEqual(json.loads(session['selection']),
+                         {'phase': 'ex_pick', 'ex_item': 'shiny_patch', 'offset': 0})
+        select = next(child for child in rendered['view'].children if hasattr(child, 'options'))
+        self.assertEqual([option.value for option in select.options], [f'p{i:02}' for i in range(10, 0, -1)])
+        self.assertRegex(select.options[0].label, r'Bulbasaur · CP \d+')
+        self.assertTrue(select.custom_id.endswith(':ex_pick'))
+        self.assertTrue(self.buttons(rendered)['Prev'].disabled)
+        rendered, session = await self.press(session, 'ex_pick_next')
+        select = next(child for child in rendered['view'].children if hasattr(child, 'options'))
+        self.assertEqual([option.value for option in select.options], ['p00'])
+        self.assertTrue(self.buttons(rendered)['Next'].disabled)
+        rendered, session = await self.press(session, 'ex_pick_prev')
+        preview, session = await self.press(session, 'ex_pick', ['p10'])
+        self.assertEqual(preview['embed'].title, 'Use Shiny Patch')
+        self.assertEqual(preview['embed'].description, 'Bulbasaur becomes shiny. Uses 1 Shiny Patch (have 1).')
+        self.assertEqual(json.loads(session['selection'])['ex_back'], 'ex_pick')
+        self.assertEqual(json.loads(session['selection'])['ex_preview'], 'shiny_patch')
+        back, session = await self.press(session, 'ex_pick')
+        self.assertNotIn('ex_preview', json.loads(session['selection']))
+        self.assertTrue(self.buttons(back)['Back'].custom_id.endswith(':ex_gift'))
+        for child in back['view'].children:
+            self.assertIsNotNone(re.fullmatch(self.module.CUSTOM_ID, child.custom_id))
+
+    async def test_confirm_returns_to_ex_gift_with_notice(self):
+        _, session = await self.shiny_preview()
+        rendered, session = await self.press(session, 'ex_shiny_patch_confirm')
+        self.assertEqual(rendered['embed'].title, 'EX-Gift')
+        self.assertIn('Bulbasaur is now shiny.', rendered['embed'].description)
+        self.assertEqual(await self.rows('SELECT shiny,revision FROM pokemon'), [{'shiny': 1, 'revision': 1}])
+        self.assertEqual(await self.rows('SELECT quantity FROM ex_items'), [{'quantity': 0}])
+
+    async def test_preview_refuses_shiny_target(self):
+        _, session = await self.shiny_picker()
+        await self.conn.execute('UPDATE pokemon SET shiny=1')
+        refused = await self.click(session, 'ex_pick', ['p00'])
+        self.assertEqual(refused.followup.send.await_args.args[0],
+                         'It is already shiny. No Shiny Patch was used.')
+        self.assertEqual(await self.rows('SELECT quantity FROM ex_items'), [{'quantity': 1}])
+        rendered, session = await self.press(session, 'ex_use_shiny_patch')
+        select = next(child for child in rendered['view'].children if hasattr(child, 'options'))
+        self.assertTrue(select.options[0].label.endswith(' · Shiny'))
+
+    async def test_confirm_without_or_with_other_preview_spends_nothing(self):
+        _, session = await self.shiny_picker()
+        for preview in (None, 'golden_bottlecap'):
+            selection = json.loads(session['selection'])
+            if preview:
+                selection['ex_preview'] = preview
+            await self.conn.execute('UPDATE sessions SET selection=?', (json.dumps(selection),))
+            refused = await self.click(session, 'ex_shiny_patch_confirm')
+            self.assertEqual(refused.followup.send.await_args.args[0], 'Preview the Shiny Patch before confirming.')
+            self.assertEqual(await self.rows('SELECT quantity FROM ex_items'), [{'quantity': 1}])
+            self.assertEqual(await self.rows("SELECT * FROM action_receipts WHERE action='shiny_patch'"), [])
+
+    async def test_stale_confirm_refused(self):
+        _, session = await self.shiny_preview()
+        await self.conn.execute('UPDATE pokemon SET revision=revision+1')
+        refused = await self.click(session, 'ex_shiny_patch_confirm')
+        self.assertEqual(refused.followup.send.await_args.args[0], 'That Pokémon changed. Pick it again.')
+        self.assertEqual(await self.rows('SELECT quantity FROM ex_items'), [{'quantity': 1}])
+
+    async def test_shiny_preview_missing_and_stale_and_details_return(self):
+        _, session = await self.shiny_preview()
+        await self.conn.execute('UPDATE ex_items SET quantity=0')
+        refused = await self.click(session, 'ex_preview_shiny_patch')
+        self.assertEqual(refused.followup.send.await_args.args[0], 'You have no Shiny Patch. Nothing was used.')
+        refused = await self.click(session, 'ex_shiny_patch_confirm')
+        self.assertEqual(refused.followup.send.await_args.args[0], 'You have no Shiny Patch. Nothing was used.')
+        await self.conn.execute('UPDATE ex_items SET quantity=1')
+        selection = json.loads(session['selection'])
+        selection.pop('ex_back')
+        await self.conn.execute('UPDATE sessions SET selection=?', (json.dumps(selection),))
+        rendered, session = await self.press(session, 'ex_preview_shiny_patch')
+        self.assertTrue(self.buttons(rendered)['Back'].custom_id.endswith(':storage_detail'))
+        rendered, session = await self.press(session, 'ex_shiny_patch_confirm')
+        self.assertNotEqual(rendered['embed'].title, 'EX-Gift')
+        await self.conn.execute('UPDATE pokemon SET revision=revision+1')
+        refused = await self.click(session, 'ex_preview_shiny_patch')
+        self.assertEqual(refused.followup.send.await_args.args[0], self.module.REOPEN)
+
+    async def test_shiny_picker_rejects_off_page_values_and_clamps_after_removal(self):
+        _, session = await self.shiny_picker(11)
+        for values in (['p00'], ['missing'], ['p10', 'p09']):
+            refused = await self.click(session, 'ex_pick', values)
+            self.assertEqual(refused.followup.send.await_args.args[0], self.module.REOPEN)
+            self.assertEqual(await self.rows('SELECT quantity FROM ex_items'), [{'quantity': 1}])
+        _, session = await self.press(session, 'ex_pick_next')
+        await self.conn.execute("DELETE FROM pokemon WHERE pokemon_uid='p00'")
+        rendered, session = await self.press(session, 'ex_pick_next')
+        self.assertEqual(json.loads(session['selection'])['offset'], 0)
+        self.assertTrue(self.buttons(rendered)['Next'].disabled)
+        await self.conn.execute('DELETE FROM pokemon')
+        rendered, session = await self.press(session, 'ex_use_shiny_patch')
+        self.assertFalse(any(hasattr(child, 'options') for child in rendered['view'].children))
+        self.assertEqual(await self.rows('SELECT quantity FROM ex_items'), [{'quantity': 1}])
 
     async def test_time_gear_button_only_while_held(self):
         session = await self.seed([['time_gear_fragment', 'time_gear_fragment']])
