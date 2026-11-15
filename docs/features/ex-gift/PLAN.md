@@ -1,8 +1,8 @@
 # Plan: ex-gift — owner event gifts and EX-items
 
-**Status:** awaiting plan approval
+**Status:** approved — in execution · owner approved G-A · G-P 2026-11-15 (owner pre-authorized approval in session once the audit loop reached 0 MUST)
 **Home:** feature/ex-gift · none
-**Review:** 2026-11-15 · Codex gpt-6-astra ponytail-audit r1 of c7bcc1f (7 MUST, 4 SHOULD) and r2 of 1dcf6aa (1 MUST, 1 SHOULD, 1 NIT), owner accepted all, applied by the author; independent plan review not yet run
+**Review:** 2026-11-15 · Codex gpt-6-astra ponytail-audit, read-only, fixes by Opus: r1 of c7bcc1f (7 MUST, 4 SHOULD), r2 of 1dcf6aa (1 MUST, 1 SHOULD, 1 NIT), r3 of 3b3bb74 clean (0/0/0); all fixed
 **Inputs:** [SYNTHESIS.md](SYNTHESIS.md), intake closed 2026-11-15: EX-1..EX-27 and its recorded readings are approved requirements, R1..R20 the approved design, §6 the acceptance cases · [PIPELINE.md](../../../PIPELINE.md) · `AGENTS.md` · `rules/*.md`
 
 ## 1. Outcome and non-goals
@@ -91,9 +91,9 @@ No source increment: no row group serves a separate audience. The full `test_cmd
 | Candidate | the final accepted feature candidate on Home `feature/ex-gift` |
 | Action scope and targets | Repo `Farkoal2128/Pokewalker-Discord-Bot`, remote `origin` (`git remote -v`), main branch `main`. Separate owner effects: feature-branch backup pushes of `feature/ex-gift` (never main, never force; proposed for G-A as the owner's standing drive preference); main integration and push; host deploy applying 0030 (`deploy.*: none`, by the owner's hand); admin-guild command sync for `/admin gift` and `/admin gift-history` (`deploy/deploy.sh:189-198` prints it); live smoke |
 | Predicates and workflow | independent integration GO and one exact-tree full `test_cmd` PASS per pushed or deployed candidate |
-| Owner authority | unresolved until G-A |
+| Owner authority | G-A 2026-11-15: plan approval, Home `feature/ex-gift`, docs commit on Home, feature-branch backup pushes of `feature/ex-gift` to `origin` (never main, never force). Main integration and push, host deploy, command sync and live smoke stay separate owner effects at G-F. |
 
-**G-P.** Allowlist: this `PLAN.md`, `tickets/EXG-1.md`..`EXG-20.md` (`SYNTHESIS.md` is in `8c5fa33`). A push to `main` or a pull request runs `.github/workflows/verify.yml` (PIPELINE.md:26). Proposed: no publication to main; the docs stay on `feature/ex-gift`, pushed with it if G-A authorizes backup pushes. Local-only makes G-P inapplicable. The plan author never pushes.
+**G-P.** Allowlist: this `PLAN.md`, `tickets/EXG-1.md`..`EXG-20.md` (`SYNTHESIS.md` is in `8c5fa33`). A push to `main` or a pull request runs `.github/workflows/verify.yml` (PIPELINE.md:26). **Decided at G-A: no publication to main**; the docs stay on `feature/ex-gift`, pushed with it if G-A authorizes backup pushes. Local-only makes G-P inapplicable. The plan author never pushes.
 
 ### 3.5 Gate record
 
@@ -108,7 +108,7 @@ Every build row is `seam` (PIPELINE.md:13: slash commands and interactions, pers
 
 | Step | Ticket(s) | Kind | Tier | Effort | Status |
 |---|---|---|---|---|---|
-| 1 | G-A · G-P plan approval, Home, delivery scope | 🚦 | — | — | pending |
+| 1 | G-A · G-P plan approval, Home, delivery scope | 🚦 | — | — | ✅ owner approved 2026-11-15 |
 | 2 | [EXG-1](tickets/EXG-1.md) balance: `arena.json` `rules.ex_items` and the manifest hash | build | seam | S | pending |
 | 3 | [EXG-2](tickets/EXG-2.md) migration 0030: gifts, recipients, EX inventory, flags, inbox `arena_ticket` | build | seam | M | pending |
 | 4 | [EXG-3](tickets/EXG-3.md) reward inbox: ticket rows claim into `arena_tickets`; EX-Gift labels | build | seam | S | pending |
