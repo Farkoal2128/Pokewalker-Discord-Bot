@@ -128,7 +128,7 @@ Build rows are `seam`: at most 2 production files and 300 production lines; test
 | 18 | [EXG-16](tickets/EXG-16.md) service: Arena EX-Voucher start | build | seam | M | ✅ done · 7a73d01 · GO review-seam r1 |
 | 19 | [EXG-17](tickets/EXG-17.md) voucher screens | build | seam | S | ✅ done · a1322e1 · GO review-seam r1 |
 | 20 | [EXG-18](tickets/EXG-18.md) Pokémon details: Shiny Patch and Golden Bottlecap buttons | build | seam | S | ✅ done · 4af7406 · GO review-seam r1 |
-| 21 | [EXG-19](tickets/EXG-19.md) Arena team screen: EX-Attack/EX-Defense buttons, armed lines; help | build | seam | M | pending |
+| 21 | [EXG-19](tickets/EXG-19.md) Arena team screen: EX-Attack/EX-Defense buttons, armed lines; help | build | seam | M | ✅ done · 0ae9e16 · GO review-seam r1 |
 | 22 | G-F final verification and delivery decisions | 🚦 | — | — | pending |
 
 ## 5. Briefs
