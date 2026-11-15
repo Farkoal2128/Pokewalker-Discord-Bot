@@ -5,6 +5,7 @@ import json
 import logging
 import sqlite3
 import time
+import weakref
 from pathlib import Path
 from uuid import uuid4
 
@@ -14,6 +15,11 @@ from pokewalker.services import marker_log
 
 
 LOG = logging.getLogger(__name__)
+_listeners = weakref.WeakValueDictionary()
+
+
+def listen(obj):
+    _listeners[id(obj)] = obj
 
 
 def _objects(value):
@@ -129,6 +135,8 @@ async def apply(conn, states, *, replay=False):
         for profile_id in state.delete_ids:
             await _redact_gym_battles(conn, guild_id, profile_id)
             await conn.execute("DELETE FROM profiles WHERE profile_id=? AND guild_id=?", (profile_id, guild_id))
+            for obj in list(_listeners.values()):
+                obj.profile_deleted(guild_id, user_id)
         if state.opted_out is True:
             await conn.execute("INSERT OR IGNORE INTO opt_outs(guild_id,user_id,created_at) VALUES (?,?,?)",
                                (guild_id, user_id, time.time()))
