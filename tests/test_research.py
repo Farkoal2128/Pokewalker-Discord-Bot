@@ -329,15 +329,37 @@ class ResearchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved["offset"], 0)
         self.assertEqual(saved["toggles"]["a"][0], "p-002")
         self.assertEqual([pick[0] for pick in saved["picks"]], [first_pick])
-        self.assertIn("Newest first", self.buttons(rendered))
+        self.assertIn("Lowest CP", self.buttons(rendered))  # D68 adds Lowest CP to this cycle
         _, session = await self.act(session, "research_page")
         self.assertEqual(json.loads(session["selection"])["sort"], "cp")
         _, session = await self.act(session, "research_prev")
         _, session = await self.act(session, "research_toggle_a")
         self.assertIn("p-002", [pick[0] for pick in json.loads(session["selection"])["picks"]])
         rendered, session = await self.act(session, "research_sort")
+        self.assertEqual(json.loads(session["selection"])["sort"], "cp_low")
+        self.assertIn("Newest first", self.buttons(rendered))
+        rendered, session = await self.act(session, "research_sort")
         self.assertNotIn("sort", json.loads(session["selection"]))
         self.assertIn("Highest CP", self.buttons(rendered))
+
+    async def test_sort_lowest_cp_puts_weakest_first_and_rows_show_cp(self):
+        # D68 (owner request 2026-11-15): Lowest CP exists only in the research picker.
+        session = await self.setup_research(8)
+        await self.writer.run(lambda conn: conn.execute(
+            "UPDATE pokemon SET level_x2=CASE pokemon_uid WHEN 'p-005' THEN 2 WHEN 'p-002' THEN 80 ELSE 40 END"))
+        rendered, session = await self.act(session, "research")
+        self.assertIn(" · CP ", rendered["embed"].description)
+        _, session = await self.act(session, "research_sort")
+        rendered, session = await self.act(session, "research_sort")
+        saved = json.loads(session["selection"])
+        self.assertEqual((saved["sort"], saved["offset"]), ("cp_low", 0))
+        self.assertEqual(saved["toggles"]["a"][0], "p-005")
+        self.assertNotEqual(saved["toggles"]["e"][0], "p-002")
+        lines = rendered["embed"].description.splitlines()[1:]
+        cps = [int(line.split(" · CP ")[1].split(" · ")[0]) for line in lines]
+        self.assertEqual(cps, sorted(cps))
+        _, session = await self.act(session, "research_page")
+        self.assertEqual(json.loads(session["selection"])["sort"], "cp_low")
 
     async def test_page_size_5_and_batch_cap_20(self):
         session = await self.setup_research(26)

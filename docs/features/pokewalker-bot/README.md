@@ -542,6 +542,16 @@ chose that the commands take a server ID and cover the player cooldowns plus for
   and are not included.
 - Every reset is written to that server's moderation audit log with the owner's ID.
 
+### Lowest CP in research (D68, owner request 2026-11-15)
+
+The owner requested: "make a sort by lowest CP when mass sending pokemon to research but only
+for that menu".
+
+- **D68: Lowest CP in research.** The Send for research picker's sort button cycles Newest
+  first → Highest CP → Lowest CP → Newest first. Lowest CP puts the weakest Pokémon first;
+  equal CP keeps newest first. No other picker gets Lowest CP.
+- Each research row now shows its CP, so the order can be seen.
+
 ## Platform constraints
 
 - Reading message text needs the privileged Message Content intent. Discord reviews

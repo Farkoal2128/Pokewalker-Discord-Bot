@@ -340,6 +340,23 @@ class StorageTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([row["pokemon_uid"] for row in first[2:5]],
                          [row["pokemon_uid"] for row in newest if row["pokemon_uid"] not in ("p-003", "p-007")][:3])
 
+    async def test_service_lowest_cp_order_is_research_only(self):
+        # D68: cp_low ranks weakest first, ties newest first; only research's choices accept it.
+        await self.prepared(6)
+        await self.writer.run(lambda conn: conn.execute(
+            "UPDATE pokemon SET level_x2=CASE pokemon_uid WHEN 'p-004' THEN 2 WHEN 'p-001' THEN 80 ELSE 40 END"))
+        service, pid = self.service(), self.profile["profile_id"]
+        rows = await service.ordered(self.conn, "profile_id=? AND state='owned'", (pid,), 0, 10, "cp_low",
+                                     self.bot.content, self.walker.multipliers)
+        self.assertEqual(rows[0]["pokemon_uid"], "p-004")
+        self.assertEqual(rows[-1]["pokemon_uid"], "p-001")
+        newest = [row["pokemon_uid"] for row in (await service.page(self.conn, pid, 0))[0]]
+        self.assertEqual([row["pokemon_uid"] for row in rows[1:-1]],
+                         [uid for uid in newest if uid not in ("p-004", "p-001")])
+        self.assertEqual(service.sort_of({"sort": "cp_low"}), "newest")
+        self.assertEqual(service.sort_of({"sort": "cp_low"}, ("newest", "cp", "cp_low")), "cp_low")
+        self.assertNotIn("cp_low", service.SORTS)
+
     async def test_sort_cycles_newest_favorites_highest_cp_and_survives_details(self):
         session = await self.prepared(12)
         await self.writer.run(lambda conn: conn.execute(

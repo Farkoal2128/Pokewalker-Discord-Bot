@@ -33,13 +33,14 @@ async def owned_count(conn, profile_id):
 
 
 SORTS = ("newest", "favorites", "cp")
-SORT_LABELS = {"newest": "Newest first", "favorites": "Favorites first", "cp": "Highest CP"}
+SORT_LABELS = {"newest": "Newest first", "favorites": "Favorites first", "cp": "Highest CP",
+               "cp_low": "Lowest CP"}  # cp_low: research picker only (D68)
 
 
-def sort_of(selection):
+def sort_of(selection, choices=SORTS):
     """The picker order saved in a screen selection; a pre-CP selection used favorites_first."""
     sort = selection.get("sort")
-    if sort in SORTS:
+    if sort in choices:
         return sort
     return "favorites" if selection.get("favorites_first") else "newest"
 
@@ -55,16 +56,18 @@ def sort_label(sort, choices=SORTS):
 
 async def ordered(conn, where, args, offset, limit, sort="newest", content=None, multipliers=None):
     """One page of pokemon rows matching where: newest first, favorites then newest, or highest CP
-    then newest. CP is computed, not stored, so the CP order ranks every matching row in Python."""
+    then newest, or lowest CP then newest (cp_low, D68). CP is computed, not stored, so the CP
+    orders rank every matching row in Python."""
     newest = "caught_at DESC,pokemon_uid"
-    if sort != "cp":
+    if sort not in ("cp", "cp_low"):
         order = ("favorite DESC," if sort == "favorites" else "") + newest
         async with conn.execute(f"SELECT * FROM pokemon WHERE {where} ORDER BY {order} "
                                 f"LIMIT {int(limit)} OFFSET {int(offset)}", args) as cursor:
             return [dict(row) for row in await cursor.fetchall()]
     async with conn.execute(f"SELECT * FROM pokemon WHERE {where} ORDER BY {newest}", args) as cursor:
         rows = [dict(row) for row in await cursor.fetchall()]
-    rows.sort(key=lambda row: -stats(content, row, multipliers)["cp"])  # stable: ties stay newest first
+    sign = -1 if sort == "cp" else 1
+    rows.sort(key=lambda row: sign * stats(content, row, multipliers)["cp"])  # stable: ties stay newest first
     return rows[int(offset):int(offset) + int(limit)]
 
 

@@ -12,7 +12,7 @@ from pokewalker.bot.milestones import _reward_name
 from pokewalker.domain.cp import appraisal
 from pokewalker.services import profiles, research as service, storage
 
-SORTS = ("newest", "cp")  # favorites cannot be sent, so the picker has no favorites order
+SORTS = ("newest", "cp", "cp_low")  # no favorites (they cannot be sent); Lowest CP is research-only (D68)
 
 
 def _candy_text(candy, content):
@@ -59,8 +59,7 @@ def handlers(walker):
             raise _Refused(REOPEN)
         previous = json.loads(session["selection"])
         selection = {"picks": [], "offset": 0} if reset else previous
-        sort = storage.sort_of(selection)
-        sort = sort if sort in SORTS else "newest"
+        sort = storage.sort_of(selection, SORTS)
         if resort:
             sort, selection["offset"] = storage.next_sort(sort, SORTS), 0
         offset = max(0, selection.get("offset", 0) + delta)
@@ -93,7 +92,8 @@ def handlers(walker):
             selected = pokemon["pokemon_uid"] in picks
             reason = {"in_arena": "on your Arena team", "deployed": "deployed at a gym"}.get(
                 item["reason"], item["reason"] or "available")
-            text.append(f"{identity['name_en']} · {pokemon['pokemon_uid']} · {reason}")
+            cp = storage.stats(walker.bot.content, pokemon, walker.multipliers)["cp"]
+            text.append(f"{identity['name_en']} · CP {cp} · {pokemon['pokemon_uid']} · {reason}")
             buttons.append((f"{'✓ ' if selected else ''}{identity['name_en']}", "research_toggle_" + letter,
                             item["reason"] is not None or len(picks) >= 20 and not selected, 0))
         buttons += [("Prev", "research_prev", offset == 0, 1), ("Next", "research_page", offset + 5 >= total, 1),

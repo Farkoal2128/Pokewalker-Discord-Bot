@@ -987,6 +987,15 @@ switches to; a press re-pages from page 1 and keeps picks.
   tests/test_gym_screens.py, tests/test_gym_battle.py, tests/test_arena_screens.py,
   tests/test_trade_screens.py, tests/test_research.py.
 
+## C5: D68 Lowest CP in the research picker
+Supersedes the research half of the D65 trade/research bullet. `research_sort` cycles
+Newest first → Highest CP → Lowest CP → Newest first; labels read "Highest CP",
+"Lowest CP" and "Newest first" in that cycle. Lowest CP (`sort` = `cp_low`) orders by
+displayed CP, lowest first; equal CP keeps newest first. `cp_low` is valid only in the
+research selection (`storage.sort_of(selection, choices)`); storage, gym, Arena and trade
+keep their D65 cycles and read an unknown order as newest. Each research row reads
+"name · CP n · uid · reason". Tests: tests/test_research.py, tests/test_storage.py.
+
 ## C5: D64 Shiny Charm in Bag
 Only a player who owns the charm sees the Bag line "Shiny Charm: On · 4× shiny odds on every
 encounter" (or "Shiny Charm: Off") and a **Turn Shiny Charm off|on** button
