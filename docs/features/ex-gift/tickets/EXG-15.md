@@ -7,8 +7,8 @@
 **Goal.** Players arm EX-Attack and EX-Defense from EX-Gift and see a run's EX boost on the break screen, where the matching X-item is blocked. The team-screen buttons come in EXG-19. C5 first.
 
 - **`bot/ex_gift.py`:**
-  - `Use EX-Attack (<n>)` (`ex_arm_ex_attack`) and `Use EX-Defense (<n>)` (`ex_arm_ex_defense`) while held and not armed; an armed kind shows `EX-Attack armed for your next Arena run.` instead of its button. Armed flags come from `profiles.get_profile`.
-  - The handler calls `arena_service.arm`: `armed` → `EX-Attack armed: ×2 attack for your whole next Arena run. A run in progress does not get it.`; `armed_already` → `EX-Attack is already armed. Nothing was spent.`; `missing` → `You have no EX-Attack.`; `excluded` → `EXCLUDED`; `stale`, `invalid` → `REOPEN`. The multiplier text comes from `rules.x_items.multiplier`, the stat from `rules.ex_items`.
+  - `Use EX-Attack (<n>)` (`ex_arm_ex_attack`) and `Use EX-Defense (<n>)` (`ex_arm_ex_defense`) while held and not armed; an armed kind shows `EX-Attack armed for your next new Arena run.` instead of its button. Armed flags come from `profiles.get_profile`.
+  - The handler calls `arena_service.arm`: `armed` → `EX-Attack armed: ×2 attack for your whole next new Arena run. A run in progress does not get it.`; `armed_already` → `EX-Attack is already armed. Nothing was spent.`; `missing` → `You have no EX-Attack.`; `excluded` → `EXCLUDED`; `stale`, `invalid` → `REOPEN`. The multiplier text comes from `rules.x_items.multiplier`, the stat from `rules.ex_items`.
 - **`bot/arena.py`:**
   - `render_break`: after the X lines, `EX-Attack: ×2 attack · whole run` for each EX flag set on the run.
   - The row-1 X button whose X-item an EX flag blocks is disabled with label `X-Attack: EX-Attack active`; the other kind is unchanged.

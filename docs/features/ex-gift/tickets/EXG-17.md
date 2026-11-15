@@ -10,7 +10,7 @@
   - `team_state` adds the EX inventory (`ex_gift_service.held`) and `voucher_floor` from `rules.ex_items`.
   - `render_team` row 2, after Start: `Start on floor 81 · EX-Voucher` (`arena_voucher_start`, floor from `voucher_floor + 1`), only while a voucher is held, disabled exactly when Start is (three eligible members needed). Row 2 never exceeds five buttons; rows 3-4 stay the skip selects.
   - Dispatch `arena_voucher_start` in the `arena_team` phase: `service.start(…, skip=0, voucher=True)`; the selected skip is ignored. `started` → `open_break` with `EX-Voucher used: floors 1-80 paid +2 Bronze, +8 Silver, … Tickets. Your run starts on floor 81.` (from the result's `tickets`); `no_voucher` → `You have no Arena EX-Voucher.`; every other status as `arena_start`. Register the action.
-- **`bot/ex_gift.py`:** `Use Arena EX-Voucher (<n>)` (`ex_use_arena_ex_voucher`) while held → `walker.handlers['arena_team']` (the team picker; nothing is spent until a start commits).
+- **`bot/ex_gift.py`:** `Use Arena EX-Voucher (<n>)` (`ex_use_arena_ex_voucher`) while held → `walker.handlers['arena_team']` (the team picker; nothing is spent until a start commits). A live-run player reaches it too: Start and the voucher then return `live`, open the break as `arena_start` does, and spend nothing.
 - **C5:** the team-screen voucher button, its notices and the EX-Gift entry.
 
 **Files.** Production: `pokewalker/bot/arena.py`, `pokewalker/bot/ex_gift.py`. Tests: `tests/test_arena_screens.py`, `tests/test_ex_gift_screens.py`. Contract: `contracts/discord-commands.md`.
@@ -24,7 +24,7 @@
 - `test_no_voucher_notice_spends_nothing`
 - `test_voucher_cooldown_and_paused_notices`
 
-In `tests/test_ex_gift_screens.py`: `test_use_voucher_opens_team_picker_spends_nothing`.
+In `tests/test_ex_gift_screens.py`: `test_use_voucher_opens_team_picker_spends_nothing`, `test_use_voucher_during_live_run_spends_nothing`.
 
 Pin moves only by the new action: `test_action_names_match_router_pattern`.
 

@@ -8,8 +8,8 @@
 
 - **`bot/arena.py`:**
   - `team_state` adds both armed flags (`profiles.get_profile`).
-  - `render_team` row 2, after the voucher button: `EX-Attack` (`arena_arm_ex_attack`) and `EX-Defense` (`arena_arm_ex_defense`), each only while held and not armed. An armed kind shows the line `EX-Attack armed: ×2 attack for this whole run.` instead (R10). Row 2 holds at most Clear, Start, voucher, EX-Attack, EX-Defense; rows 3-4 stay the skip selects.
-  - Dispatch both actions in the `arena_team` phase: `service.arm`, the EXG-15 notices, then redraw the team screen with the same team and skip. Register them. Resume never shows the team screen (`:496-498`), so a live run never offers them.
+  - `render_team` row 2, after the voucher button: `EX-Attack` (`arena_arm_ex_attack`) and `EX-Defense` (`arena_arm_ex_defense`), each only while held and not armed. An armed kind shows the line `EX-Attack armed for your next new Arena run.` instead (R10). Row 2 holds at most Clear, Start, voucher, EX-Attack, EX-Defense; rows 3-4 stay the skip selects.
+  - Dispatch both actions in the `arena_team` phase: `service.arm`, the EXG-15 notices, then redraw the team screen with the same team and skip. Register them. EX-Gift's voucher Use opens this screen even during a live run (EXG-17); arming there still waits for the next new run (EXG-14).
 - **Help** (`content/help.md`, a player page before the admin page; counted as docs): EX-Gift receives owner event gifts, shows (!) while a gift waits, never expires; Claim sends ordinary items and Arena Tickets to the Inbox and keeps EX-items with no limit; EX-items cannot be traded; one line per EX-item with where it is used (EX-Gift; details for Shiny Patch and Golden Bottlecap; the team screen for EX-Attack, EX-Defense and the voucher); EX boosts arm for the next new run only; the voucher pays floors 1-80 and starts on 81. If the page passes 4096 units, add a page before the admin page, keeping the gym sentence on page 3.
 - **C5:** team-screen EX buttons and armed lines; help text.
 
@@ -21,6 +21,7 @@
 - `test_team_arm_keeps_team_and_skip_and_notices`
 - `test_full_team_screen_with_every_ex_button` (serialized: row 2 five buttons, max-skip rows 3-4)
 - `test_armed_from_team_screen_applies_to_started_run`
+- `test_team_arm_during_live_run_waits_for_next_new_run` (team screen opened from EX-Gift's voucher Use; the live run keeps no EX flag)
 
 In `tests/test_readme.py`: `test_help_describes_ex_gift` (phrases: `EX-Gift`, `(!)`, `Inbox`, `no limit`, `cannot be traded`, each EX-item name, `next new run`, `floor 81`).
 
