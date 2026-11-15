@@ -1,7 +1,7 @@
 {
-  "source": "docs/features/arena/REQUIREMENTS.md sections 5-6, AR-14a and AR-34 (owner approval 2026-11-13); section 6.3 (owner ruling 2026-11-14); section 6.4 (owner ruling 2026-11-14); Ultra Beast Sub-Legendary list: https://www.serebii.net/pokemon/ultrabeasts.shtml; Paradox past/future lists: https://www.serebii.net/scarletviolet/paradoxpokemon.shtml; AR-12a party heal (owner ruling 2026-11-14)",
+  "source": "docs/features/arena/REQUIREMENTS.md sections 5-6, AR-14a and AR-34 (owner approval 2026-11-13); section 6.3 (owner ruling 2026-11-14); section 6.4 (owner ruling 2026-11-14); Ultra Beast Sub-Legendary list: https://www.serebii.net/pokemon/ultrabeasts.shtml; Paradox past/future lists: https://www.serebii.net/scarletviolet/paradoxpokemon.shtml; AR-12a party heal (owner ruling 2026-11-14); docs/features/ex-gift/SYNTHESIS.md EX-14..EX-16, EX-26 (owner 2026-11-15)",
   "checked": "2026-11-14",
-  "version": 4,
+  "version": 5,
   "rules": {
     "run_seconds": 64800,
     "cooldown_seconds": 64800,
@@ -194,6 +194,19 @@
         "x_defense": {
           "stat": "defense",
           "stardust": 300
+        }
+      }
+    },
+    "ex_items": {
+      "voucher_floor": 80,
+      "items": {
+        "ex_attack": {
+          "stat": "attack",
+          "x_item": "x_attack"
+        },
+        "ex_defense": {
+          "stat": "defense",
+          "x_item": "x_defense"
         }
       }
     }
