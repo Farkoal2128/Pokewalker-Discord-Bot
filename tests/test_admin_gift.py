@@ -840,3 +840,210 @@ class GiftTests(unittest.IsolatedAsyncioTestCase):
                         self.assertIsNone(reply.edit_original_response.await_args.kwargs['view'])
                     else:
                         self.assertEqual(self.reply_text(reply), 'Nothing was sent.')
+
+
+    async def seed_history(self, count=1, *, scope='all', slots=None):
+        from pokewalker.services import ex_gift
+        rows = []
+        for n in range(count):
+            result = await self.bot.writer.run(lambda conn, n=n: ex_gift.send(
+                conn, send_id=f'{n + 1:032x}', owner_id=456 + n % 2, admin_guild_id=123,
+                scope=scope, guild_id=None if scope == 'all' else 123,
+                user_id=456 if scope == 'user' else None, items=slots or ['poke_ball'],
+                content=self.bot.content, now=1000 + n))
+            self.assertEqual(result['status'], 'sent')
+            rows.append(result)
+        return rows
+
+    async def history_command(self, send_id=None, *, interaction=None, group=None):
+        interaction = interaction or self.interaction()
+        group = group or self.group
+        command = group.get_command('gift-history')
+        self.assertIsNotNone(command, '/admin gift-history is absent')
+        await command.callback(group, interaction, send_id)
+        interaction.response.defer.assert_awaited_once_with(ephemeral=True)
+        args = interaction.edit_original_response.await_args.kwargs
+        self.assertEqual(args['allowed_mentions'].to_dict()['parse'], [])
+        return interaction
+
+    def history_text(self, interaction):
+        args = interaction.edit_original_response.await_args.kwargs
+        return args['embed'].description if args.get('embed') else args['content']
+
+    async def history_click(self, view, label, *, interaction=None):
+        interaction = interaction or self.interaction()
+        item = next(item for item in view.children if item.label == label)
+        interaction.data = {'custom_id': item.custom_id}
+        if await view.interaction_check(interaction):
+            await item.callback(interaction)
+        interaction.response.defer.assert_awaited_once_with(ephemeral=True)
+        args = (interaction.followup.send.await_args or
+                interaction.edit_original_response.await_args).kwargs
+        self.assertEqual(args['allowed_mentions'].to_dict()['parse'], [])
+        if interaction.followup.send.await_args:
+            self.assertTrue(args['ephemeral'])
+        return interaction
+
+    async def test_history_parameter_optional_admin_guild_only(self):
+        command = self.group.get_command('gift-history')
+        self.assertIsNotNone(command, '/admin gift-history is absent')
+        self.assertEqual(len(command.parameters), 1)
+        parameter = command.parameters[0]
+        self.assertEqual(parameter.name, 'send_id')
+        self.assertFalse(parameter.required)
+        self.assertEqual(parameter.type, discord.AppCommandOptionType.string)
+        self.assertIsNone(self.bot.tree.get_command('admin'))
+        for owner, guild in ((999, 123), (456, 999), (456, None)):
+            reply = await self.history_command(interaction=self.interaction(owner=owner, guild=guild))
+            self.assertIn('Only configured owners', self.history_text(reply))
+        reply = await self.history_command()
+        self.assertIn('No sends', self.history_text(reply))
+        await self.bot.db.execute("INSERT INTO restrictions(guild_id,user_id,excluded) VALUES ('123','456',1)")
+        reply = await self.history_command()
+        self.assertIn('Excluded', self.history_text(reply))
+
+    async def test_history_newest_first_ten_per_page_with_counts(self):
+        rows = await self.seed_history(12)
+        before = await self.snapshot()
+        reply = await self.history_command()
+        view = reply.edit_original_response.await_args.kwargs['view']
+        self.assertEqual(view.timeout, 900)
+        text = self.history_text(reply)
+        self.assertEqual(text.count('Send ID:'), 10)
+        self.assertEqual([text.index(row['gift_id']) for row in reversed(rows[2:])],
+                         sorted(text.index(row['gift_id']) for row in rows[2:]))
+        for value in ('1970-01-01', 'UTC', 'all servers', 'Pok\u00e9 Ball',
+                      'Targeted servers: 2', 'Servers with recipients: 2', 'Recipients: 2'):
+            self.assertIn(value, text)
+        self.assertTrue(next(item for item in view.children if item.label == 'Prev').disabled)
+        reply = await self.history_click(view, 'Next')
+        text = self.history_text(reply)
+        self.assertEqual(text.count('Send ID:'), 2)
+        self.assertLess(text.index(rows[1]['gift_id']), text.index(rows[0]['gift_id']))
+        self.assertTrue(next(item for item in view.children if item.label == 'Next').disabled)
+        reply = await self.history_click(view, 'Prev')
+        self.assertEqual(self.history_text(reply).count('Send ID:'), 10)
+        self.assertEqual(await self.snapshot(), before)
+
+    async def test_history_never_shows_recipient_or_user_ids(self):
+        rows = await self.seed_history(scope='user')
+        for send_id in (None, rows[0]['gift_id']):
+            reply = await self.history_command(send_id)
+            text = self.history_text(reply)
+            self.assertIn('one user in server 123', text)
+            for private in ('456', '789', 'profile_id', 'User ID:', 'owner_id'):
+                self.assertNotIn(private, text)
+        await self.seed_history(2, scope='server')
+        reply = await self.history_command()
+        self.assertIn('server 123', self.history_text(reply))
+
+    async def test_lookup_by_send_id_found_missing_and_malformed(self):
+        from pokewalker.services import ex_gift
+        row, = await self.seed_history()
+        with patch.object(ex_gift, 'lookup', wraps=ex_gift.lookup) as lookup:
+            reply = await self.history_command(row['gift_id'])
+            self.assertIn(row['gift_id'], self.history_text(reply))
+            self.assertEqual(self.history_text(reply).count('Send ID:'), 1)
+            self.assertIsNone(reply.edit_original_response.await_args.kwargs.get('view'))
+            missing = 'f' * 32
+            reply = await self.history_command(missing)
+            self.assertEqual(self.history_text(reply), f'No send with ID {missing} was committed.')
+            self.assertEqual(lookup.await_count, 2)
+            for malformed in ('not-an-id', 'A' * 32, 'a' * 31):
+                reply = await self.history_command(malformed, interaction=self.interaction(owner=457))
+                self.assertEqual(self.history_text(reply), f'No send with ID {malformed} was committed.')
+            self.assertEqual(lookup.await_count, 2)
+
+    async def test_send_recovered_by_id_after_draft_is_gone(self):
+        from pokewalker.bot.admin_gift import discard
+        draft, confirm = await self.preview()
+        send_id = draft.send_id
+        await self.click('Confirm', draft=draft, control=confirm)
+        discard(draft)
+        self.assertEqual(self.group.gift_drafts, {})
+        before = await self.snapshot()
+        reply = await self.history_command(send_id)
+        self.assertIn(send_id, self.history_text(reply))
+        self.assertIn('Recipients: 2', self.history_text(reply))
+        self.assertEqual(await self.snapshot(), before)
+
+    async def test_send_recovered_by_id_after_restart(self):
+        from pokewalker.bot.client import WalkerBot
+        from pokewalker.db import Writer, open_db
+        draft, confirm = await self.preview()
+        send_id = draft.send_id
+        await self.click('Confirm', draft=draft, control=confirm)
+        self.bot._connection.store_view(draft.view, 111)
+        await self.bot.drain()
+        restarted = WalkerBot(self.settings, clock=lambda: self.clock)
+        self.addAsyncCleanup(restarted.drain)
+        restarted.content = self.bot.content
+        restarted.db = await open_db(self.settings.db_path, allow_unpatched=True)
+        restarted.writer = Writer(restarted.db)
+        fresh = restarted.tree.get_command('admin', guild=discord.Object(id=123))
+        interaction = self.interaction()
+        interaction.message = SimpleNamespace(id=111, interaction_metadata=None)
+        restarted._connection._view_store.dispatch_view(2, confirm.custom_id, interaction)
+        await asyncio.sleep(0)
+        interaction.response.defer.assert_not_awaited()
+        interaction.followup.send.assert_not_awaited()
+        self.assertEqual(fresh.gift_drafts, {})
+        reply = await self.history_command(send_id, group=fresh)
+        self.assertIn(send_id, self.history_text(reply))
+        self.assertIn('Recipients: 2', self.history_text(reply))
+        async with restarted.db.execute('SELECT count(*) FROM ex_gifts') as cursor:
+            self.assertEqual((await cursor.fetchone())[0], 1)
+
+    async def test_history_command_uses_authorize_bucket_paging_uses_callback_bucket(self):
+        await self.seed_history(11)
+        await self.open()
+        reply = await self.history_command()
+        view = reply.edit_original_response.await_args.kwargs['view']
+        for _ in range(3):
+            await self.history_command()
+        refused = await self.history_command()
+        self.assertIn('Slow down', self.history_text(refused))
+        self.assertEqual(len(self.group.requests[456]), 5)
+        for _ in range(29):
+            await self.click('Berries')
+        await self.history_click(view, 'Next')
+        refused = await self.history_click(view, 'Prev')
+        self.assertIn('Slow down', self.reply_text(refused))
+        self.assertEqual(len(self.group.gift_callbacks[456]), 30)
+        refused = await self.click('Balls')
+        self.assertIn('Slow down', self.reply_text(refused))
+        self.clock += 60
+        reply = await self.history_click(view, 'Prev')
+        self.assertEqual(self.history_text(reply).count('Send ID:'), 10)
+
+    async def test_paging_refuses_other_owner_and_excluded_owner(self):
+        await self.seed_history(11)
+        reply = await self.history_command()
+        view = reply.edit_original_response.await_args.kwargs['view']
+        initial = view.to_components()
+        for owner, guild in ((457, 123), (999, 123), (456, 999), (456, None)):
+            refused = await self.history_click(view, 'Next',
+                interaction=self.interaction(owner=owner, guild=guild))
+            refused.edit_original_response.assert_not_awaited()
+            self.assertEqual(view.to_components(), initial)
+        await self.bot.db.execute("INSERT INTO restrictions(guild_id,user_id,excluded) VALUES ('123','456',1)")
+        refused = await self.history_click(view, 'Next')
+        self.assertIn('Excluded', self.reply_text(refused))
+        self.assertEqual(view.to_components(), initial)
+        await self.bot.db.execute('DELETE FROM restrictions')
+        self.clock += 900
+        refused = await self.history_click(view, 'Next')
+        self.assertIn('expired', self.reply_text(refused))
+        self.assertEqual(view.to_components(), initial)
+        self.assertTrue(view.is_finished())
+
+    async def test_long_page_fits_4096(self):
+        await self.seed_history(10, scope='user', slots=['world_legendary_ticket'] * 10)
+        reply = await self.history_command()
+        text = self.history_text(reply)
+        self.assertLessEqual(len(text), 4096)
+        self.assertEqual(text.count('Send ID:'), 10)
+        self.assertEqual(text.count('10 slots'), 10)
+        self.assertIn('Targeted servers: 1', text)
+        self.assertIn('Recipients: 1', text)
+        self.assertNotIn('World Legendary Ticket', text)
