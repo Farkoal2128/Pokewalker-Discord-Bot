@@ -17,14 +17,7 @@ One milestone, every row briefed. Order: balance, schema, inbox and send service
 
 `8c5fa33` only adds `SYNTHESIS.md` to base `5a68d79` (`git diff --stat 5a68d79 8c5fa33`).
 
-**Grep and command evidence**
-- `git grep -n -i "ex_gift\|ex_items\|ex_attack\|ex_defense\|shiny_patch\|golden_bottlecap\|time_gear\|voucher\|EX-Gift" -- pokewalker scripts tests contracts content` → none: names free, no sibling work owns this.
-- `ls pokewalker/db/migrations` → last is `0029_cooldown_resets.sql`; the new one is `0030`.
-- `git grep -n "inbox_items" -- pokewalker` → writers `services/milestones.py:106`, `services/arena.py:48, :480`, `services/gyms.py:114, :126`; readers `services/milestones.py:111-178`, `bot/milestones.py`; no FK references the table.
-- `git grep -n "run_marker(" -- pokewalker` → `bot/account.py:66, :91`, `bot/admin_channels.py:227, :304`; all reach `deletion.apply` (`services/deletion.py:125-131`).
-- `git grep -n "cooldowns\." -- pokewalker` → only `bot/admin.py:166, :174, :185, :194`.
-- Python over `conversion_rates.json`, `capacities.json`, `arena.json`, `content/artifact/content.json`: 14 rate items (no `evolution_item`) + `world_legendary_ticket` + 50 evolution items + 2 X-items = 67 ids, + 5 ticket tiers = **72**; every item in `find_table`, `checkin_table`, `milestones`, `gym_income_table`, `survivor_table`, `arena` is among them.
-- `domain.skip_tickets(80, rules)` → bronze 2, silver 4, gold 6, platinum 3, diamond 1; 14 of floors 1-80 earn a first-clear copy from best floor 0; `max_skip(80)` = 40.
+Historical code-map command evidence is preserved in Git at `0de9d7c`.
 
 | Anchor | Fact | Tickets (EXG-n) |
 |---|---|---|
@@ -129,7 +122,7 @@ Build rows are `seam`: at most 2 production files and 300 production lines; test
 | 19 | [EXG-17](tickets/EXG-17.md) voucher screens | build | seam | S | ✅ done · a1322e1 · GO review-seam r1 |
 | 20 | [EXG-18](tickets/EXG-18.md) Pokémon details: Shiny Patch and Golden Bottlecap buttons | build | seam | S | ✅ done · 4af7406 · GO review-seam r1 |
 | 21 | [EXG-19](tickets/EXG-19.md) Arena team screen: EX-Attack/EX-Defense buttons, armed lines; help | build | seam | M | ✅ done · 0ae9e16 · GO review-seam r1 |
-| 22 | G-F final verification and delivery decisions | 🚦 | — | — | pending |
+| 22 | G-F final verification and delivery decisions | 🚦 | — | — | ❌ blocked: integration NO-GO F1; final test FAIL |
 
 ## 5. Briefs
 
@@ -138,3 +131,5 @@ Briefs are linked in §4. §6 acceptance cases are distributed over the tickets'
 **G-A · G-P (owner).** Asks: approve this plan; confirm Home `feature/ex-gift` (current checkout, cut from `main` at `5a68d79`); choose the delivery and push scope of §3.4. Stop if: the Home lacks `8c5fa33` (`git merge-base --is-ancestor 8c5fa33 feature/ex-gift`).
 
 **G-F (coordinator; owner for effects).** Predicates: every row ✅; independent integration GO; one exact-tree full `test_cmd` PASS on the settled final tree, skips recorded. `test_cmd` does not prove live Discord behavior. Each §3.4 effect needs its own owner message: push, main integration, host deploy with 0030, admin-guild command sync, live smoke.
+
+**G-F technical attempt 2026-11-15.** Candidate `0de9d7c`, tree `e2c20411ac5858400b1347448ae41cf8e7fca033`. Uncached `test_cmd`: guard PASS; unit FAIL (2,247 tests, 1 failure, 1 skip of unidentified case); contract check not run. Independent integration review: NO-GO F1 MAJOR, `tests/test_client_lifecycle.py:678` omits approved `gift` and `gift-history` from exact command set. Four scratch mutations (EXG-3, 4, 6, 8) were detected and independently inspected. Full evidence and retained scratch path are in this status commit. Delivery remains owner-held.
