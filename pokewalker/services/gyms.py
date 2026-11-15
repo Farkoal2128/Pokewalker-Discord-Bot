@@ -250,6 +250,14 @@ async def feed(conn, session, gym_id, expected_deployment_id, now, rules):
     return await with_receipt(conn, key, 'gym_feed', compute, profile_id=pid)
 
 
+DITTO_POKEMON_ID = 132
+
+
+def transforms(pokemon):
+    """D66: Ditto transforms into its opponent the moment it enters a battle."""
+    return pokemon['pokemon_id'] == DITTO_POKEMON_ID
+
+
 def _battle_snapshot(pokemon, content, multipliers):
     identity, _ = storage.identify(content, pokemon)
     base = [identity[key] for key in ('base_attack', 'base_defense', 'base_stamina')]
@@ -257,7 +265,8 @@ def _battle_snapshot(pokemon, content, multipliers):
     attack, defense, hp = battle_engine.combat_stats(base, ivs, pokemon['level_x2'], multipliers)
     first_type = identity['types'][0]
     combatant = battle_engine.Combatant(identity['name_en'], tuple(identity['types']),
-                                        attack, defense, hp, first_type, first_type)
+                                        attack, defense, hp, first_type, first_type,
+                                        transforms=transforms(pokemon))
     snapshot = {key: pokemon[key] for key in ('pokemon_uid', 'pokemon_id', 'form_id', 'revision', 'content_version',
                                              'level_x2', 'iv_attack', 'iv_defense', 'iv_stamina', 'gender', 'shiny')}
     snapshot.update(combatant=asdict(combatant), cp=cp(base, ivs, pokemon['level_x2'], multipliers=multipliers))

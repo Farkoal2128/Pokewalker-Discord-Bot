@@ -96,7 +96,7 @@ class BattleTests(unittest.TestCase):
                 self.assertEqual((result.outcome, result.reason, result.ticks,
                                   result.survivors, result.events, result.engine_version),
                                  ("win", "defender_fainted", 1, (0,), ("event",),
-                                  version[0] if version else "1"))
+                                  version[0] if version else "2"))
                 self.assertEqual(result.party_hp, ())
                 self.assertIsNone(result.finisher)
 
@@ -112,7 +112,7 @@ class BattleTests(unittest.TestCase):
         self.assertEqual(len(hits), 6)
         self.assertEqual(sum(int(line.split(" for ")[1].rstrip(".")) for line in hits), 57)
         self.assertTrue(any(line.startswith("7:") and "A charged" in line for line in hits))
-        self.assertEqual(result.engine_version, "1")
+        self.assertEqual(result.engine_version, "2")
 
     def test_stab_only_when_move_type_in_user_types(self):
         attacker = self.fighter(types=("water",), fast_type="normal", charged_type="water")
@@ -273,6 +273,51 @@ class BattleTests(unittest.TestCase):
                 self.battle.damage(*args)
         with self.assertRaises(ValueError):
             self.battle.defender_hp(10, 1.5)
+
+
+    # D66 Ditto Transform: a transforming combatant copies its current opponent on entry.
+    def test_transforming_attacker_copies_defender_but_keeps_hp(self):
+        defender = self.fighter("D", types=("fire", "flying"), attack=180, defense=140,
+                                fast_type="fire", charged_type="flying")
+        ditto = self.fighter("Ditto", attack=50, defense=50, hp=300, transforms=True)
+        clone = self.fighter("Ditto", types=("fire", "flying"), attack=180, defense=140, hp=300,
+                             fast_type="fire", charged_type="flying")
+        transformed = self.run_battle([ditto], defender, hp=400)
+        expected = self.run_battle([clone], defender, hp=400)
+        self.assertEqual((transformed.outcome, transformed.ticks, transformed.party_hp),
+                         (expected.outcome, expected.ticks, expected.party_hp))
+        self.assertEqual(transformed.events[1], "0: Ditto transforms into D.")
+        self.assertEqual(transformed.events[2:20], expected.events[1:19])
+
+    def test_transform_costs_no_time(self):
+        ditto = self.fighter("Ditto", attack=50, transforms=True)
+        result = self.run_battle([ditto], self.fighter("D", attack=150), tick_limit=1)
+        self.assertIn("1: Ditto fast hits D for 6.", result.events)
+        self.assertIn("1: D fast hits Ditto for 6.", result.events)
+
+    def test_transforming_defender_recopies_each_new_attacker(self):
+        party = [self.fighter("A", types=("water",), fast_type="water", charged_type="water", hp=5),
+                 self.fighter("B", types=("grass",), attack=200, fast_type="grass",
+                              charged_type="grass")]
+        ditto = self.fighter("Ditto", attack=10, defense=10, transforms=True)
+        result = self.run_battle(party, ditto, tick_limit=4)
+        self.assertEqual(result.events[1], "0: Ditto transforms into A.")
+        entered = result.events.index("2: B enters with 0 energy.")
+        self.assertEqual(result.events[entered + 1], "2: Ditto transforms into B.")
+        self.assertIn("3: Ditto fast hits B for 5.", result.events)
+
+    def test_two_dittos_copy_each_others_original_stats(self):
+        first = self.fighter("A", attack=200, transforms=True)
+        second = self.fighter("D", attack=100, transforms=True)
+        result = self.run_battle([first], second, tick_limit=1)
+        self.assertIn("1: A fast hits D for 4.", result.events)
+        self.assertIn("1: D fast hits A for 8.", result.events)
+
+    def test_transforms_defaults_off_and_must_be_bool(self):
+        self.assertFalse(self.fighter().transforms)
+        with self.assertRaises(ValueError):
+            self.fighter(transforms=1)
+        self.assertEqual(self.battle.ENGINE_VERSION, "2")
 
 
 if __name__ == "__main__":

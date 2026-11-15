@@ -332,13 +332,16 @@ async def fight(conn, session, run_id, revision, now, rng, content, multipliers,
     rules = load_table('arena')['rules']
     pid = session['profile_id']
 
+    def fighter(snapshot):  # D66: derive Transform from the species so pre-D66 run snapshots still transform
+        return battle_engine.Combatant(**{**snapshot['combatant'], 'transforms': gyms.transforms(snapshot)})
+
     async def compute(conn):
         x_rules = rules['x_items']
         boosted_stats = [rule['stat'] for item, rule in x_rules['items'].items() if run[f'{item}_left'] > 0]
-        party = [replace(battle_engine.Combatant(**member['snapshot']['combatant']), hp=member['hp'],
+        party = [replace(fighter(member['snapshot']), hp=member['hp'],
                          **{stat: member['snapshot']['combatant'][stat] * x_rules['multiplier']
                             for stat in boosted_stats}) for member in run['team']]
-        enemy = battle_engine.Combatant(**run['enemy']['snapshot']['combatant'])
+        enemy = fighter(run['enemy']['snapshot'])
         battle = battle_engine.simulate(party, enemy, run['enemy']['battle_hp'], rules=battle_rules, chart=chart)
         won = battle.outcome == 'win'
         health = domain.revive(battle.party_hp) if won else battle.party_hp

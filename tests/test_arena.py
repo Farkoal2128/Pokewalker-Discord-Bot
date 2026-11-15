@@ -1,5 +1,6 @@
 """C3 Arena lifecycle: real SQLite transactions, frozen snapshots and berry debits."""
 
+import copy
 import asyncio
 from dataclasses import replace
 import importlib
@@ -723,6 +724,23 @@ class ArenaTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([m['snapshot'] for m in after['team']], [m['snapshot'] for m in run['team']])
         self.assertEqual(after['enemy'], json.loads(json.dumps(self.service()._roll_enemy(
             5, 1, random.Random(11), CONTENT, MULTIPLIERS))))
+
+    async def test_ditto_transforms_even_from_snapshots_saved_before_d66(self):
+        await self.conn.execute("UPDATE pokemon SET pokemon_id=132,form_id=NULL WHERE pokemon_uid='m0'")
+        run = await self.at_fight(floor=5)
+        self.assertTrue(run['team'][0]['snapshot']['combatant']['transforms'])
+        team, enemy = copy.deepcopy(run['team']), copy.deepcopy(run['enemy'])
+        for snapshot in (team[0]['snapshot'], enemy['snapshot']):
+            snapshot['combatant'].pop('transforms')
+        enemy['snapshot']['pokemon_id'] = 132
+        await self.conn.execute('UPDATE arena_runs SET team=?,enemy=? WHERE run_id=?',
+                                (json.dumps(team), json.dumps(enemy), run['run_id']))
+        run = (await self.state())['run']
+        with patch.object(battle_engine, 'simulate', wraps=battle_engine.simulate) as simulate:
+            await self.fight(run)
+        party, foe = simulate.call_args.args[:2]
+        self.assertEqual([member.transforms for member in party], [True, False, False])
+        self.assertTrue(foe.transforms)
 
     async def test_three_fights_boosted_fourth_not_both_counters_drop_each_fight(self):
         run = await self.x_fight_run(3, 3)

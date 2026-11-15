@@ -66,7 +66,7 @@ These are playtest values. Changing one later is a deliberate requirements chang
 | D34 | **Starter choice (D16).** On their first `/walker` in a server, the player picks one starter from the base forms of every main-series generation's starter trio: Generations 1–9, 27 species. They get exactly one starter per server profile. The starter's species and evolution family count as part of the launch roster. |
 | D35 | **Release split:** see the table below. |
 | D36 | **CP only, no visible levels.** Players see Combat Power, never a Pokémon level. Level stays an internal value (`level_x2`) because CP, power-up cost and catch difficulty are calculated from it. The power-up screen shows CP before → after and the cost. The details view shows CP, HP and the IV appraisal, but no level. |
-| D37 | **Full roster.** Every main-series species in the pinned PokéAPI snapshot can be caught, including species Pokémon GO has not released. Each species' default form and its **regional forms** (Alolan, Galarian, Hisuian, Paldean) are separate encounters. **Legendary and Mythical** Pokémon can be caught as very rare walking encounters. **No special battle mechanics or transformations:** no Mega Evolution, Primal Reversion, Dynamax/Gigantamax, Z-Moves, Terastallization or other battle-only forms and moves. These forms are never encounters, items or gym options. Other cosmetic forms (Unown letters, Vivillon patterns and similar) use the default form for now. |
+| D37 | **Full roster.** Every main-series species in the pinned PokéAPI snapshot can be caught, including species Pokémon GO has not released. Each species' default form and its **regional forms** (Alolan, Galarian, Hisuian, Paldean) are separate encounters. **Legendary and Mythical** Pokémon can be caught as very rare walking encounters. **No special battle mechanics or transformations:** no Mega Evolution, Primal Reversion, Dynamax/Gigantamax, Z-Moves, Terastallization or other battle-only forms and moves. These forms are never encounters, items or gym options. Other cosmetic forms (Unown letters, Vivillon patterns and similar) use the default form for now. One exception: Ditto transforms (D66). |
 
 #### D35: Release split
 
@@ -502,6 +502,25 @@ pokemon storage? Like in the gym, the storage, arena, etc."
   offer and research pickers switch between Newest first and Highest CP, since favorites can't
   be traded or sent. Highest CP puts the strongest Pokémon first; ties keep newest first. The
   chosen order survives paging, picking and Back.
+
+### Ditto Transform (D66, owner request 2026-11-14)
+
+The owner requested: "Can you make an exception for Ditto? Have it so it transforms in to the
+enemy, copying their type, attack, and defense, but keeping the hp", and "the moment it appears
+in combat it's immediately transformed into the enemy? Kind of like the imposter ability in
+game". This is the only exception to D37's no-transformations rule.
+
+- **D66: Ditto Transform.** In gym and Arena battles, Ditto becomes a copy of the Pokémon it is
+  facing the moment it enters, at no cost in time. It takes its opponent's types, attack,
+  defense and move types (so it also gets STAB on them), and keeps its own HP and name.
+- As a defender or Arena enemy it copies each new attacker as that attacker comes in. Energy and
+  any move in progress carry over.
+- It copies the opponent's stats for that fight, including X-Attack/X-Defense boosts, as in the
+  games. Its own X-item boosts are replaced by what it copies. Two Dittos copy each other's
+  original stats.
+- The battle log shows "Ditto transforms into …". The battle engine version becomes 2. Saved
+  battles keep the version they were fought with, and Arena runs started before this change
+  transform too.
 
 ## Platform constraints
 

@@ -41,7 +41,7 @@ class ReadmeTests(IsolatedAsyncioTestCase):
     def test_approved_text_verbatim(self):
         content = Path('content/help.md').read_bytes()
         self.assertEqual(hashlib.sha256(content).hexdigest(),
-                         '8f6b2a198ad8c2eac172209583d09841b965a3e8816fd925238fbf675c2c3fa6')
+                         'f671cefae0632180b796aee543d3964bd959199c8f47d0912b03c5ffdcaca969')
 
     def test_help_describes_x_items(self):
         player = next(page for page in self.pages() if '**Arena.**' in page)

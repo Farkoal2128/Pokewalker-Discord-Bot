@@ -2,12 +2,12 @@
 
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from .cp import cpm, hp
 
 
-ENGINE_VERSION = "1"
+ENGINE_VERSION = "2"  # 2: D66 Ditto Transform
 
 
 def _positive(value, label, *, integer=False):
@@ -27,6 +27,7 @@ class Combatant:
     hp: int
     fast_type: str
     charged_type: str
+    transforms: bool = False  # D66: copies its current opponent on entry
 
     def __post_init__(self):
         if (not isinstance(self.name, str) or not self.name.strip() or
@@ -38,6 +39,8 @@ class Combatant:
             raise ValueError("types must contain one or two distinct type names")
         if any(not isinstance(t, str) or not t for t in (self.fast_type, self.charged_type)):
             raise ValueError("move types must be nonempty type names")
+        if not isinstance(self.transforms, bool):
+            raise ValueError("transforms must be a bool")
         object.__setattr__(self, "types", tuple(self.types))
         _positive(self.attack, "attack")
         _positive(self.defense, "defense")
@@ -95,6 +98,13 @@ def damage(power: float, attack: float, defense: float, stab: float, eff: float)
     return math.floor(0.5 * power * attack / defense * stab * eff) + 1
 
 
+def _facing(user: Combatant, opponent: Combatant) -> Combatant:
+    """D66: a transforming combatant becomes its opponent as entered, keeping its own name and HP."""
+    if not user.transforms:
+        return user
+    return replace(opponent, name=user.name, hp=user.hp, transforms=False)
+
+
 def simulate(party: Sequence[Combatant], defender: Combatant, defender_battle_hp: int,
              *, rules: Mapping, chart: Mapping) -> Result:
     if not 1 <= len(party) <= 3:  # the engine fights 1..3; the gym service applies rules["party_max"]
@@ -117,9 +127,16 @@ def simulate(party: Sequence[Combatant], defender: Combatant, defender_battle_hp
         if len(events) < 39:
             events.append(line)
 
+    def enter(tick):
+        pair = (party[active], defender)
+        for side in (0, 1):
+            if pair[side].transforms:
+                log(f"{tick}: {pair[side].name} transforms into {pair[1 - side].name}.")
+        return _facing(pair[0], pair[1]), _facing(pair[1], pair[0])
+
     log(f"0: {party[0].name} faces {defender.name}.")
+    users = enter(0)
     while True:
-        users = (party[active], defender)
         for side in (0, 1):
             if pending[side] is None:
                 move = "charged" if energy[side] >= rules["charged"]["energy_cost"] else "fast"
@@ -163,6 +180,7 @@ def simulate(party: Sequence[Combatant], defender: Combatant, defender_battle_hp
             energy[0] = 0
             pending[0] = None
             log(f"{tick}: {party[active].name} enters with 0 energy.")
+            users = enter(tick)
         if tick == rules["tick_limit"]:
             outcome, reason = "draw", "tick_limit"
             break

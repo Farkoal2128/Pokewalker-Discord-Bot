@@ -42,6 +42,8 @@ Buy evolution items in Bag for 500 Stardust each, or use Buy & evolve on a missi
 
 **Gym battles.** Pick one attacker, choose Clear only or claiming the gym with it, then Start; results and Battle log are private. You can battle again 5 minutes after your last battle.
 
+**Ditto.** In gym and Arena battles, Ditto instantly transforms into the Pokémon it faces, copying its types, attack and defense but keeping its own HP.
+
 **Defender time.** Gym defenders return automatically after 8 hours.
 
 **World Legendary Ticket.** Use one from Bag and confirm to spawn a World Legendary here for 60 minutes; the ticket cannot be refunded.

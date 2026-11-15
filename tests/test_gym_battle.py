@@ -221,6 +221,21 @@ class GymBattleTests(unittest.IsolatedAsyncioTestCase):
                                                   ('%' + result['battle_id'] + '%',)))
             self.assertEqual(saved['snapshot'], result['snapshot'])
 
+    async def test_ditto_defender_transforms_into_the_attacker(self):
+        await self.writer.run(lambda conn: self.gyms().end_deployment(
+            conn, 'g', self.dep['deployment_id'], 'recalled', self.now, self.rng, self.content))
+        await self.conn.execute("UPDATE pokemon SET pokemon_id=132,form_id=NULL WHERE pokemon_uid='defender'")
+        revision = await self.scalar("SELECT revision FROM pokemon WHERE pokemon_uid='defender'")
+        self.dep = (await self.deploy(self.gym, 'defender', rev=revision,
+                                      now=self.now, session=self.holder))['deployment']
+        attacker = await self.scalar("SELECT pokemon_id FROM pokemon WHERE pokemon_uid='mon'")
+        name = next(i['name_en'] for i in self.content['identities'] if i['pokemon_id'] == attacker)
+        result = await self.fight()
+        self.assertTrue(result['snapshot']['defender']['combatant']['transforms'])
+        self.assertFalse(result['snapshot']['party'][0]['combatant']['transforms'])
+        events = json.loads(await self.scalar('SELECT events FROM gym_battles'))
+        self.assertEqual(events[1], f'0: Ditto transforms into {name}.')
+
     async def test_distinct_start_revisions_are_distinct_intentions(self):
         first = await self.fight()
         second = await self.fight(session={**self.session, 'revision': 8}, now=self.now + 600)

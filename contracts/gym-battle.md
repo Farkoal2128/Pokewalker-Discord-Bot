@@ -12,11 +12,13 @@ service; this engine never mutates stored Pokemon or injected data.
 
 ## Inputs and outputs
 
-- Frozen `Combatant(name, types, attack, defense, hp, fast_type, charged_type)`:
+- Frozen `Combatant(name, types, attack, defense, hp, fast_type, charged_type,
+  transforms=False)`:
   nonempty single-line name, one or two distinct type names, finite positive combat
   Attack/Defense, positive integer starting HP for this fight (not necessarily
   canonical full HP). Types are copied to a tuple. Gyms keep passing canonical HP
-  from `gyms._battle_snapshot`, preserving their existing behavior.
+  from `gyms._battle_snapshot`, preserving their existing behavior. `transforms` is a
+  bool (D66); the services set it for Ditto (`gyms.transforms`, pokemon_id 132).
 - `combat_stats(base, ivs, level_x2, multipliers)` reuses CP validation and returns
   unrounded `(base_attack + iv_attack) * cpm`, similarly Defense, and canonical
   `max(10, floor((base_stamina + iv_stamina) * cpm))` HP.
@@ -43,8 +45,19 @@ service; this engine never mutates stored Pokemon or injected data.
   is the zero-based party position whose hit took the defender to 0 HP, including
   a double-knockout draw, or `None` if the defender did not faint. Both fields
   follow `engine_version` and have defaults, preserving positional constructors.
-  Result carries `engine_version == ENGINE_VERSION == "1"`; arithmetic, timing
-  and outcomes are unchanged.
+  Result carries `engine_version == ENGINE_VERSION == "2"` (version 2 adds D66
+  Transform; fights without a transforming combatant are unchanged from version 1).
+
+## D66 Transform
+
+When a pairing begins (tick 0, and each party substitution), a combatant with
+`transforms` fights as `replace(opponent, name=own name, hp=own hp, transforms=False)`,
+using the opponent as passed in (so stat boosts given to the engine are copied, and two
+transforming combatants copy each other's original stats). It takes no tick and
+keeps its energy and pending action; types, Attack, Defense and both move types come
+from the copy, and STAB uses the copied types. Each transformation logs
+`"<tick>: <name> transforms into <opponent>."` right after the opening or
+substitution line. A transforming defender re-copies every new party member.
 
 ## Tick and energy invariants
 
@@ -78,7 +91,8 @@ RNG calls, and repeated equal inputs produce equal results without modifying inp
 Tests: `tests/test_battle.py` covers arithmetic, determinism, STAB/type products,
 D32, simultaneous KO, cancellation, immediate substitution, slot targeting,
 120-tick boundary, survivor eligibility, immutable inputs, bounded text events,
-starting/end HP, finisher attribution and positional-constructor compatibility.
+starting/end HP, finisher attribution, positional-constructor compatibility and D66
+Transform (copy on entry, zero ticks, re-copy on substitution, Ditto versus Ditto).
 Changes to arithmetic order, timing, result meanings or deterministic outcomes
 require a deliberate requirement/contract review and a new engine version. The
 gym service persists ordered events and engine version with its snapshot. The

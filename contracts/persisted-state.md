@@ -897,6 +897,9 @@ Combatant snapshots use C7 combat_stats, first-type fast and charged templates,
 canonical CP/HP and frozen full hours held and feed total (heal_x10, D62b) at Start for defender_hp. The receipt
 retains ordered Pokemon IDs/form_id/revisions/content versions, combatants, deployment,
 nominee, frozen HP and hashes of configured content, multipliers, rules and chart.
+D66: each snapshot combatant also stores `transforms` (true for Ditto). It is JSON
+inside existing receipt/run columns, so no migration. Arena fights derive it from the
+snapshot's pokemon_id, so runs saved before D66 transform too.
 PLAN Q15 snapshots carry nullable form_id for each attacker and defender so result
 names and sprites resolve the exact form. Legacy snapshots without form_id keep
 the default form; receipt replay retains the saved snapshot after Pokemon changes.
