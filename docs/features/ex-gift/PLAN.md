@@ -79,7 +79,7 @@ One milestone, every row briefed. Order: balance, schema, inbox and send service
 
 ### 3.3 Verification decision (Decide before dispatch)
 
-No owner/repo conflict: AGENTS.md asks for RED → GREEN and the applicable checks; PIPELINE.md:10 is the full `test_cmd`. Rows run **focused** checks only: the modules their ticket names (`python -m unittest discover -s tests -p "test_<module>.py"`) and `git -c core.whitespace=cr-at-eol diff --cached --check` (several files are committed with CRLF or mixed line ends, `git ls-files --eol`; keep them). RED evidence goes in each commit body. Ticket line: `Verification: phase=implementation; scope=focused; coverage=<ticket tests>; receipt=Tests-Focused on staged tree; boundary=final feature (G-F)`.
+No owner/repo conflict: AGENTS.md asks for RED → GREEN and the applicable checks; PIPELINE.md:10 is the full `test_cmd`. Rows run **focused** checks only: the modules their ticket names (`python -m unittest discover -s tests -p "test_<module>.py"`) and `git -c core.whitespace=cr-at-eol diff --cached --check` (preserve existing line endings). RED evidence goes in each commit body. Ticket line: `Verification: phase=implementation; scope=focused; coverage=<ticket tests>; receipt=Tests-Focused on staged tree; boundary=final feature (G-F)`.
 
 No source increment: no row group serves a separate audience. The full `test_cmd` runs once, uncached (`FP_RESULT_CACHE=0`), on the settled tree at G-F. The owner's review loop (global CLAUDE.md) runs before G-F, by the supervising session.
 
@@ -127,7 +127,7 @@ Build rows are `seam`: at most 2 production files and 300 production lines; test
 | 17 | [EXG-15](tickets/EXG-15.md) screens: EX-Gift arm; EX lines and X block on break | build | seam | S | ✅ done · 185d047 · GO review-seam r1 |
 | 18 | [EXG-16](tickets/EXG-16.md) service: Arena EX-Voucher start | build | seam | M | ✅ done · 7a73d01 · GO review-seam r1 |
 | 19 | [EXG-17](tickets/EXG-17.md) voucher screens | build | seam | S | ✅ done · a1322e1 · GO review-seam r1 |
-| 20 | [EXG-18](tickets/EXG-18.md) Pokémon details: Shiny Patch and Golden Bottlecap buttons | build | seam | S | pending |
+| 20 | [EXG-18](tickets/EXG-18.md) Pokémon details: Shiny Patch and Golden Bottlecap buttons | build | seam | S | ✅ done · 4af7406 · GO review-seam r1 |
 | 21 | [EXG-19](tickets/EXG-19.md) Arena team screen: EX-Attack/EX-Defense buttons, armed lines; help | build | seam | M | pending |
 | 22 | G-F final verification and delivery decisions | 🚦 | — | — | pending |
 
