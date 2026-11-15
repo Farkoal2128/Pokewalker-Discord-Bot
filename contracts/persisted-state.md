@@ -1940,3 +1940,35 @@ stock change. Authorization still precedes replay; foreign receipts are stale.
 Ordinary Bottlecap and Vitamin retain their lowest-IV effect and existing order.
 Producers: services.iv_items; consumers: EX-Gift previews and confirmations.
 Tests: tests/test_ex_items.py; tests/test_iv_items.py unchanged.
+
+## Arena EX boosts
+
+`services.arena.arm(conn, session, item, now)` accepts only the EX boost IDs in
+`rules.ex_items.items`. Invalid IDs return `invalid`. Session ownership and
+exclusion are checked before the profile-owned `ex_arm:<session_id>:<rev>`
+receipt, action `ex_arm`; rev is `_original_revision` when present, otherwise
+`revision`. Replay returns the recorded result before inspecting mutable flags
+or stock; mismatched receipt ownership/action returns `stale`. Already armed
+returns `armed_already`, absent stock returns `missing`, and neither writes.
+Paused members, a live run and Arena off may arm. Success takes one EX-item,
+sets its profile armed flag and records `ex_item / <item> / -1 / ex_arm` with
+`{status: armed, item}` in one writer transaction.
+
+A successful new run reads both profile armed flags inside its receipt compute,
+stores them as `arena_runs.ex_attack` and `ex_defense`, then clears both profile
+flags atomically. Refused starts leave them armed; resuming a live run never
+reads them. Armed flags survive restart. Start result and receipt shapes stay
+unchanged. Ended runs never refund their flags or inventory.
+
+Every fight (including chain steps and heal-and-fight) uses the union of active
+X-counter stats and the EX run flags' `rules.ex_items.items` stats. Each stat is
+multiplied once by `rules.x_items.multiplier`, for the whole run regardless of
+floor changes. Stored snapshots and enemies stay unboosted. X counters, fight
+results and receipts keep their existing behavior. After stale/invalid checks,
+`use_x` returns `{status: ex_active}` without writes when an active run EX flag
+names that X-item in its `x_item` rule; the other X kind and `buy_x` remain allowed.
+
+This additive service contract consumes schema 0030's existing columns and
+the EX inventory helpers; no migration or domain/engine change is needed.
+Producers: services.arena and services.ex_gift; consumers: Arena combat and later
+EX-Gift/Arena screens. Tests: tests/test_ex_items.py and tests/test_arena.py.
