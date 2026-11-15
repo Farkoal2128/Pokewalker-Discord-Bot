@@ -9,7 +9,7 @@
 
 Owners build packages of 1-10 slots (quantity 1 each) in the admin server and send them to every server, one server, or one enrolled user of a server. Players enrolled at send open them from a new `/walker` **EX-Gift** screen. Claim moves ordinary items and Arena Tickets to the reward inbox and keeps the six EX-items in an uncapped EX inventory. EX-items are used from EX-Gift and, per EX-24, from Pokémon details and the Arena team screen.
 
-One milestone, every row briefed. Order: balance, schema, inbox and send service (steps 2-5); admin manager, deletion of drafts and history (6-9); claim, EX-Gift screen and home button (10-12); one row per EX-item, services before screens (13-19); cross-menu buttons and help (20-21).
+One milestone, every row briefed. Order: balance, schema, inbox and send service (steps 2-5); admin manager, deletion of drafts and history (6-9); claim, EX-Gift screen and home button (10-12); one row per item, services before screens (13-19); cross-menu buttons and help (20-21).
 
 **Non-goals:** revoking a sent gift (R19); notifications (EX-23); Stardust or candy in gifts (EX-17); expiry (EX-18); a player gift history; Time Gear on share or step limits (EX-25); trading EX-items needs no block (EX-22: `services/trading.py:15-16` trades Pokémon rows only); any push, deploy, command sync or live Discord action (§3.4).
 
@@ -121,7 +121,7 @@ Every build row is `seam` (PIPELINE.md:13: slash commands and interactions, pers
 | 11 | [EXG-9](tickets/EXG-9.md) EX-Gift screen with Claim | build | seam | M | ✅ done · e64f122 · GO review-seam r1 |
 | 12 | [EXG-10](tickets/EXG-10.md) `/walker` home EX-Gift button and (!) | build | seam | S | ✅ done · 1e0cdd1 · GO review-seam r1 |
 | 13 | [EXG-11](tickets/EXG-11.md) Time Gear Fragment | build | seam | S | ✅ done · b664503 · GO review-seam r1 |
-| 14 | [EXG-12](tickets/EXG-12.md) Shiny Patch: EX-Gift picker, preview, confirm | build | seam | M | ? done ? e5d1f40 ? GO review-seam r1 |
+| 14 | [EXG-12](tickets/EXG-12.md) Shiny Patch: EX-Gift picker, preview, confirm | build | seam | M | ✅ done · e5d1f40 · GO review-seam r1 |
 | 15 | [EXG-13](tickets/EXG-13.md) Golden Bottlecap | build | seam | S | pending |
 | 16 | [EXG-14](tickets/EXG-14.md) service: EX-Attack/EX-Defense arming, run flags, boosted fights, X block | build | seam | M | pending |
 | 17 | [EXG-15](tickets/EXG-15.md) screens: arm from EX-Gift; EX lines and X block on the break screen | build | seam | S | pending |
