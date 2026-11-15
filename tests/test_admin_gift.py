@@ -1,5 +1,6 @@
-"""EXG-5 manager payloads and synthetic callbacks over real SQLite."""
+"""EXG-5/EXG-6 manager payloads and synthetic callbacks over real SQLite."""
 
+import asyncio
 import json
 from pathlib import Path
 import unittest
@@ -51,6 +52,7 @@ class GiftTests(unittest.IsolatedAsyncioTestCase):
         draft = draft or self.draft()
         item = control or self.control(label, draft)
         interaction = interaction or self.interaction()
+        interaction.data = {'custom_id': item.custom_id}
         if value is not None:
             item._values = [value]
         if await draft.view.interaction_check(interaction):
@@ -257,7 +259,7 @@ class GiftTests(unittest.IsolatedAsyncioTestCase):
             if user:
                 self.assertIn(f'User ID: {user}', text)
             self.assertEqual('No enrolled recipients: nothing can be sent.' in text, counts[-1] == 0)
-            self.assertEqual([c['label'] for r in self.payload() for c in r['components']], ['Edit', 'Cancel'])
+            self.assertEqual([c['label'] for r in self.payload() for c in r['components']], ['Confirm', 'Edit', 'Cancel'])
             await self.click('Edit')
             self.assertEqual((draft.revision, draft.send_id), previous)
             self.assertEqual(len(self.payload()), 5)
@@ -286,6 +288,8 @@ class GiftTests(unittest.IsolatedAsyncioTestCase):
                     await self.click('Choose item', 'poke_ball', draft=draft, control=item)
                 if ending == 'awaited_sending':
                     self.assertEqual(draft.slots, [])
+                    # This synthetic sending state has no settlement task.
+                    draft.state = 'editing'
                     admin_gift.discard(draft)
             before = (draft.revision, draft.send_id, list(draft.slots))
             await self.click('Choose item', 'poke_ball', draft=draft, control=item)
@@ -294,3 +298,385 @@ class GiftTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(draft.user_id)
             self.assertNotIn(draft.draft_id, self.group.gift_drafts)
             self.assertTrue(draft.view.is_finished())
+
+
+    async def preview(self, **kwargs):
+        await self.open(**kwargs)
+        await self.pick()
+        await self.click('Preview')
+        self.assertIn('Confirm', [getattr(item, 'label', None) for item in self.draft().view.children])
+        return self.draft(), self.control('Confirm')
+
+    async def gifts(self):
+        async with self.bot.db.execute('SELECT gift_id,recipients FROM ex_gifts') as cursor:
+            return [tuple(row) for row in await cursor.fetchall()]
+
+    async def queued_confirm(self, draft, control, *, before_queue=False):
+        entered, release = asyncio.Event(), asyncio.Event()
+        original = self.bot.writer.run
+        async def blocker(conn):
+            entered.set()
+            await release.wait()
+        async def run(fn, **kwargs):
+            if kwargs.get('after_commit') is not None and before_queue:
+                entered.set()
+                await release.wait()
+            elif kwargs.get('after_commit') is not None:
+                holding = asyncio.create_task(original(blocker))
+                async def finish_blocker():
+                    await holding
+                self.addAsyncCleanup(finish_blocker)
+                await entered.wait()
+            return await original(fn, **kwargs)
+        patched = patch.object(self.bot.writer, 'run', side_effect=run)
+        patched.start()
+        self.addCleanup(patched.stop)
+        self.addCleanup(release.set)
+        task = asyncio.create_task(self.click('Confirm', draft=draft, control=control))
+        await entered.wait()
+        await asyncio.sleep(0)
+        return task, release
+
+    async def test_confirm_sends_once_receipt_has_counts_no_components(self):
+        draft, confirm = await self.preview(scope='server', server_id='123', user_id='456')
+        reply = await self.click('Confirm')
+        text = self.reply_text(reply)
+        for value in (draft.send_id, 'Scope: user', 'Server ID: 123', 'User ID: 456',
+                      '1. Pok\u00e9 Ball', 'Counts (committed)', 'Targeted servers: 1',
+                      'Servers with recipients: 1', 'Recipients: 1'):
+            self.assertIn(value, text)
+        self.assertIsNone(reply.edit_original_response.await_args.kwargs['view'])
+        self.assertEqual(draft.state, 'sent')
+        self.assertIs(self.group.gift_drafts[draft.draft_id], draft)
+        await self.click('Confirm', control=confirm)
+        self.assertEqual(await self.gifts(), [(draft.send_id, 1)])
+
+    async def test_confirm_takes_authorize_bucket_token(self):
+        draft, confirm = await self.preview()
+        for _ in range(4):
+            self.group.throttled(self.group.requests, 456, 5)
+        reply = await self.click('Confirm')
+        self.assertIn('Slow down', self.reply_text(reply))
+        self.assertEqual(await self.gifts(), [])
+        self.assertEqual(draft.state, 'editing')
+        self.clock += 60
+        for _ in range(30):
+            self.group.throttled(self.group.gift_callbacks, 456, 30)
+        await self.click('Confirm', control=confirm)
+        self.assertEqual(len(self.group.requests[456]), 1)
+        self.assertEqual(draft.state, 'sent')
+
+    async def test_lost_response_retry_and_stale_click_return_same_send(self):
+        draft, confirm = await self.preview()
+        await self.click('Edit')
+        pick = self.control('Choose item')
+        await self.click('Preview')
+        lost = self.interaction()
+        lost.edit_original_response.side_effect = RuntimeError('lost response')
+        with self.assertRaisesRegex(RuntimeError, 'lost response'):
+            await self.click('Confirm', interaction=lost)
+        receipt = draft.result
+        for item in (confirm, pick):
+            reply = await self.click('retained', draft=draft, control=item)
+            self.assertIn(draft.send_id, self.reply_text(reply))
+            self.assertIsNone(reply.edit_original_response.await_args.kwargs['view'])
+            self.assertIs(draft.result, receipt)
+        self.assertEqual(await self.gifts(), [(draft.send_id, 2)])
+
+    async def test_stale_preview_revision_refused(self):
+        draft, old = await self.preview()
+        await self.click('Edit')
+        await self.pick()
+        reply = await self.click('Confirm', control=old)
+        self.assertEqual(self.reply_text(reply), 'The package changed. Preview it again.')
+        self.assertEqual(draft.state, 'editing')
+        self.assertEqual(await self.gifts(), [])
+        await self.click('Preview')
+        await self.click('Confirm')
+        reply = await self.click('Confirm', control=old)
+        self.assertIn(draft.send_id, self.reply_text(reply))
+        self.assertEqual(await self.gifts(), [(draft.send_id, 2)])
+
+    async def test_edit_cancel_and_picks_refused_while_sending(self):
+        draft, confirm = await self.preview()
+        await self.click('Edit')
+        controls = [self.control(label) for label in ('Choose item', 'Choose slot', 'Clear')]
+        await self.click('Preview')
+        controls += [self.control(label) for label in ('Edit', 'Cancel')]
+        task, release = await self.queued_confirm(draft, confirm, before_queue=True)
+        before = (draft.revision, draft.send_id, list(draft.slots))
+        for control in controls + [confirm]:
+            reply = await self.click('retained', control=control)
+            self.assertEqual(self.reply_text(reply), 'This gift is being sent.')
+        self.assertEqual((draft.revision, draft.send_id, draft.slots), before)
+        release.set()
+        await task
+        for control in controls:
+            reply = await self.click('retained', control=control)
+            self.assertIn(draft.send_id, self.reply_text(reply))
+            self.assertEqual(draft.state, 'sent')
+
+    async def test_delayed_pick_racing_confirm_keeps_package_and_receipt(self):
+        draft, confirm = await self.preview()
+        await self.click('Edit')
+        pick = self.control('Choose item')
+        await self.click('Preview')
+        original = draft.view.editable
+        entered, release = asyncio.Event(), asyncio.Event()
+        async def delayed(interaction):
+            if interaction is slow:
+                entered.set()
+                await release.wait()
+            return await original(interaction)
+        slow = self.interaction()
+        pick._values = ['poke_ball']
+        with patch.object(draft.view, 'editable', side_effect=delayed):
+            task = asyncio.create_task(self.click('retained', interaction=slow, control=pick))
+            await entered.wait()
+            sent = await self.click('Confirm', control=confirm)
+            release.set()
+            await task
+        self.assertEqual(draft.slots, ['poke_ball'])
+        self.assertEqual(self.reply_text(slow), self.reply_text(sent))
+        self.assertEqual(await self.gifts(), [(draft.send_id, 2)])
+
+    async def test_confirm_queued_past_deadline_sends_nothing(self):
+        draft, confirm = await self.preview()
+        task, release = await self.queued_confirm(draft, confirm)
+        self.clock = draft.deadline
+        release.set()
+        reply = await task
+        self.assertIn('Nothing was sent.', self.reply_text(reply))
+        self.assertEqual(draft.state, 'discarded')
+        self.assertEqual(await self.gifts(), [])
+
+    async def test_expiry_during_send_rolls_back(self):
+        from pokewalker.services import ex_gift
+        draft, confirm = await self.preview()
+        original = ex_gift.send
+        async def send(conn, **kwargs):
+            result = await original(conn, **kwargs)
+            self.clock = draft.deadline
+            return result
+        with patch.object(ex_gift, 'send', side_effect=send):
+            reply = await self.click('Confirm')
+        self.assertIn('Nothing was sent.', self.reply_text(reply))
+        self.assertEqual(draft.state, 'discarded')
+        self.assertEqual(await self.gifts(), [])
+        async with self.bot.db.execute('SELECT count(*) FROM ex_gift_recipients') as cursor:
+            self.assertEqual((await cursor.fetchone())[0], 0)
+
+    async def test_cancel_while_job_queued_sends_nothing(self):
+        from pokewalker.bot.admin_gift import discard
+        draft, confirm = await self.preview()
+        task, release = await self.queued_confirm(draft, confirm)
+        discard(draft)
+        release.set()
+        await task
+        self.assertEqual(draft.state, 'discarded')
+        self.assertEqual(await self.gifts(), [])
+
+    async def test_rollback_keeps_revision_and_send_id(self):
+        from pokewalker.services import ex_gift
+        draft, confirm = await self.preview()
+        before = (draft.revision, draft.send_id)
+        original = ex_gift.send
+        async def broken(conn, **kwargs):
+            await original(conn, **kwargs)
+            raise RuntimeError('rollback')
+        with patch.object(ex_gift, 'send', side_effect=broken):
+            reply = await self.click('Confirm')
+        self.assertIn('Nothing was sent.', self.reply_text(reply))
+        self.assertEqual((draft.state, draft.revision, draft.send_id), ('editing', *before))
+        self.assertEqual(await self.gifts(), [])
+        await self.click('Confirm', control=confirm)
+        self.assertEqual(await self.gifts(), [(before[1], 2)])
+
+    async def test_cancelled_callback_then_commit_then_retry_returns_receipt(self):
+        draft, confirm = await self.preview()
+        task, release = await self.queued_confirm(draft, confirm)
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertEqual(draft.state, 'sending')
+        release.set()
+        await draft.task
+        reply = await self.click('Confirm', control=confirm)
+        self.assertEqual(draft.state, 'sent')
+        self.assertIn(draft.send_id, self.reply_text(reply))
+        self.assertEqual(await self.gifts(), [(draft.send_id, 2)])
+
+    async def test_cancelled_callback_then_rollback_restores_editing(self):
+        from pokewalker.bot.admin_gift import discard
+        from pokewalker.services import ex_gift
+        original = ex_gift.send
+        for discarded in (False, True):
+            self.group.requests.clear()
+            draft, confirm = await self.preview()
+            entered, release = asyncio.Event(), asyncio.Event()
+            async def broken(conn, **kwargs):
+                await original(conn, **kwargs)
+                entered.set()
+                await release.wait()
+                raise RuntimeError('rollback')
+            with patch.object(ex_gift, 'send', side_effect=broken):
+                task = asyncio.create_task(self.click('Confirm'))
+                await entered.wait()
+                task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+                if discarded:
+                    discard(draft)
+                release.set()
+                await draft.task
+            self.assertEqual(draft.state, 'discarded' if discarded else 'editing')
+            self.assertEqual(await self.gifts(), [])
+
+    async def test_exclusion_after_preview_refused(self):
+        draft, confirm = await self.preview()
+        await self.bot.db.execute("INSERT INTO restrictions(guild_id,user_id,excluded) VALUES ('123','456',1)")
+        reply = await self.click('Confirm')
+        self.assertIn('Excluded', self.reply_text(reply))
+        self.assertEqual(draft.state, 'editing')
+        self.assertEqual(await self.gifts(), [])
+        await self.bot.db.execute('DELETE FROM restrictions')
+        original = self.group.excluded
+        async def exclude_after_check(conn, interaction):
+            result = await original(conn, interaction)
+            await conn.execute("INSERT INTO restrictions(guild_id,user_id,excluded) VALUES ('123','456',1)")
+            return result
+        with patch.object(self.group, 'excluded', side_effect=exclude_after_check):
+            reply = await self.click('Confirm')
+        self.assertIn('Nothing was sent.', self.reply_text(reply))
+        self.assertEqual(draft.state, 'editing')
+        self.assertEqual(await self.gifts(), [])
+
+    async def test_zero_recipients_refused_at_commit(self):
+        draft, confirm = await self.preview(scope='server', server_id='123')
+        await self.bot.db.execute("DELETE FROM profiles WHERE guild_id='123'")
+        reply = await self.click('Confirm')
+        self.assertIn('Nothing was sent.', self.reply_text(reply))
+        self.assertEqual(draft.state, 'editing')
+        self.assertEqual(await self.gifts(), [])
+
+    async def test_two_identical_one_user_drafts_one_commits(self):
+        first, confirm = await self.preview(scope='server', server_id='123', user_id='456')
+        second, _ = await self.preview(scope='server', server_id='123', user_id='456')
+        await self.click('Confirm', draft=first, control=confirm)
+        self.assertEqual(await self.gifts(), [(first.send_id, 1)])
+        self.assertEqual(second.state, 'editing')
+        self.assertEqual(second.slots, first.slots)
+
+    async def test_old_control_after_restart_cannot_send(self):
+        from pokewalker.bot.client import WalkerBot
+        from pokewalker.db import Writer, open_db
+        draft, confirm = await self.preview()
+        message_id = 111
+        self.bot._connection.store_view(draft.view, message_id)
+        self.assertTrue(self.bot._connection._view_store._views)
+        await self.bot.drain()
+        restarted = WalkerBot(self.settings, clock=lambda: self.clock)
+        self.addAsyncCleanup(restarted.drain)
+        restarted.db = await open_db(self.settings.db_path, allow_unpatched=True)
+        restarted.writer = Writer(restarted.db)
+        fresh = restarted.tree.get_command('admin', guild=discord.Object(id=123))
+        interaction = self.interaction()
+        interaction.message = SimpleNamespace(id=message_id, interaction_metadata=None)
+        restarted._connection._view_store.dispatch_view(2, confirm.custom_id, interaction)
+        await asyncio.sleep(0)
+        interaction.response.defer.assert_not_awaited()
+        interaction.followup.send.assert_not_awaited()
+        self.assertEqual(fresh.gift_drafts, {})
+        async with restarted.db.execute('SELECT count(*) FROM ex_gifts') as cursor:
+            self.assertEqual((await cursor.fetchone())[0], 0)
+
+
+    async def test_writer_cancellation_rollback_restores_editing(self):
+        from pokewalker.services import ex_gift
+        draft, confirm = await self.preview()
+        original = ex_gift.send
+        async def cancelled(conn, **kwargs):
+            await original(conn, **kwargs)
+            raise asyncio.CancelledError
+        with patch.object(ex_gift, 'send', side_effect=cancelled):
+            reply = await self.click('Confirm')
+        self.assertEqual(draft.state, 'editing')
+        self.assertIn('Nothing was sent.', self.reply_text(reply))
+        self.assertEqual(await self.gifts(), [])
+
+
+    async def test_timeout_during_commit_keeps_send_and_receipt_target(self):
+        draft, confirm = await self.preview(scope='server', server_id='123', user_id='456')
+        original = self.bot.db.commit
+        async def expire_before_commit():
+            if draft.state == 'sending':
+                self.clock = draft.deadline
+                await draft.view.on_timeout()
+            await original()
+        with patch.object(self.bot.db, 'commit', side_effect=expire_before_commit):
+            reply = await self.click('Confirm', control=confirm)
+        self.assertEqual(await self.gifts(), [(draft.send_id, 1)])
+        text = self.reply_text(reply)
+        for value in (draft.send_id, 'Scope: user', 'Server ID: 123', 'User ID: 456',
+                      '1. Pok\u00e9 Ball', 'Counts (committed)', 'Recipients: 1'):
+            self.assertIn(value, text)
+        self.assertIsNone(reply.edit_original_response.await_args.kwargs['view'])
+        self.assertEqual(draft.state, 'discarded')
+        self.assertNotIn(draft.draft_id, self.group.gift_drafts)
+        self.assertTrue(draft.view.is_finished())
+        self.assertIsNone(draft.guild_id)
+        self.assertIsNone(draft.user_id)
+        self.assertFalse(hasattr(draft, 'result'))
+
+    async def test_pending_discard_or_expiry_cleans_up_any_outcome(self):
+        from pokewalker.bot.admin_gift import discard
+        from pokewalker.services import ex_gift
+        send, commit = ex_gift.send, self.bot.db.commit
+        for ending in ('discard', 'expiry'):
+            for outcome in ('refusal', 'rollback', 'expired', 'sent'):
+                with self.subTest(ending=ending, outcome=outcome):
+                    self.group.requests.clear()
+                    self.group.gift_callbacks.clear()
+                    draft, confirm = await self.preview(scope='server', server_id='123', user_id='456')
+                    before = (draft.revision, draft.send_id)
+                    pending = []
+                    async def end():
+                        if ending == 'discard':
+                            discard(draft)
+                            pending.append((getattr(draft, 'discard_pending', False), draft.state,
+                                self.group.gift_drafts.get(draft.draft_id) is draft,
+                                draft.guild_id, draft.user_id))
+                        else:
+                            self.clock = draft.deadline
+                    async def result(conn, **kwargs):
+                        if outcome == 'refusal':
+                            return {'status': 'no_recipients'}
+                        result = await send(conn, **kwargs)
+                        if outcome != 'sent':
+                            await end()
+                            if outcome == 'rollback':
+                                raise RuntimeError('rollback')
+                        return result
+                    async def finish_commit():
+                        if draft.state == 'sending' and outcome in ('sent', 'refusal'):
+                            await end()
+                        await commit()
+                    with patch.object(ex_gift, 'send', side_effect=result), patch.object(
+                            self.bot.db, 'commit', side_effect=finish_commit):
+                        reply = await self.click('Confirm', control=confirm)
+                    if ending == 'discard':
+                        self.assertEqual(pending, [(True, 'sending', True, 123, 456)])
+                    self.assertEqual((draft.revision, draft.send_id), before)
+                    self.assertEqual(draft.state, 'discarded')
+                    self.assertNotIn(draft.draft_id, self.group.gift_drafts)
+                    self.assertTrue(draft.view.is_finished())
+                    self.assertIsNone(draft.guild_id)
+                    self.assertIsNone(draft.user_id)
+                    self.assertFalse(hasattr(draft, 'result'))
+                    gifts = await self.gifts()
+                    self.assertEqual((draft.send_id, 1) in gifts, outcome == 'sent')
+                    if outcome == 'sent':
+                        self.assertIn('User ID: 456', self.reply_text(reply))
+                        self.assertIsNone(reply.edit_original_response.await_args.kwargs['view'])
+                    else:
+                        self.assertEqual(self.reply_text(reply), 'Nothing was sent.')
