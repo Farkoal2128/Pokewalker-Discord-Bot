@@ -1757,3 +1757,14 @@ writer job before the run's first marker, so a deletion replayed after a crash a
 its audit; the row may exist for a run whose first deletion never committed. Restrictions,
 opt-outs and prior audit of pruned users remain. Producer: WalkerAdmin. Consumers:
 `/walker-mod log`, startup replay. Tests: tests/test_admin_prune.py.
+
+## D67 cooldown resets (migration 0029)
+Migration 0029 adds nullable REAL `profiles.arena_cooldown_reset_at` and
+`guilds.force_raid_reset_at`; existing rows read NULL, so nothing changes until an owner
+resets. Resets clear the stored timestamp to NULL for checkin (`last_checkin_at`), gym
+battle (`last_battle_at`), daily trade (`last_trade_at`), trade ping
+(`last_trade_ping_at`) and feeding (`gym_deployments.last_fed_at` on the player's live
+deployments). Arena run history and the force-raid audit rows are never rewritten:
+the Arena cooldown is zero when `arena_cooldown_reset_at >= ` the latest run's
+`started_at`, and the force-raid cooldown ignores a last force raid at or before
+`force_raid_reset_at`. Rollback: older code ignores both columns.

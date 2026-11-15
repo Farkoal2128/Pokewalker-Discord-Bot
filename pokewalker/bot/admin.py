@@ -9,7 +9,9 @@ import time
 import discord
 from discord import app_commands
 
+from pokewalker.config import snowflake
 from pokewalker.db import open_reader, with_receipt
+from pokewalker.services import cooldowns
 from pokewalker.services.profiles import restrictions
 
 LOG = logging.getLogger(__name__)
@@ -28,6 +30,11 @@ class ErrorBuffer(logging.Handler):
             if record.name.split('.')[0] in {'pokewalker', 'discord'} else 'application',
             'level': 'CRITICAL' if record.levelno >= logging.CRITICAL else 'ERROR',
             'exception': kind if record.exc_info else 'none'})
+
+
+def _choices(names):
+    return [app_commands.Choice(name='All', value='all'),
+            *(app_commands.Choice(name=label, value=key) for key, label in names.items())]
 
 
 class Admin(app_commands.Group):
@@ -149,6 +156,47 @@ class Admin(app_commands.Group):
             return
         await self.reply(interaction, 'Restarting; draining accepted work.')
         await self.bot.restart()
+
+    async def reset_cooldowns(self, interaction, server_id, user_id, cooldown):
+        try:
+            guild, user = snowflake(server_id), None if user_id is None else snowflake(user_id)
+        except ValueError:
+            await self.reply(interaction, 'Server and user IDs must be Discord IDs.')
+            return
+        result = await self.bot.writer.run(lambda conn: cooldowns.reset(
+            conn, guild, user, cooldown.value, interaction.user.id, time.time()))
+        if result['status'] == 'unknown_server':
+            await self.reply(interaction, f'The bot has no data for server {guild}.')
+            return
+        if result['status'] == 'no_profile':
+            await self.reply(interaction, f'User {user} has no profile in server {guild}.')
+            return
+        what = 'all cooldowns' if cooldown.value == 'all' else cooldowns.SERVER[cooldown.value]
+        if user is not None:
+            await self.reply(interaction, f'Reset {what} for user {user} in server {guild}.')
+            return
+        known = getattr(self.bot, 'get_guild', lambda _: None)(guild)
+        where = f'{known.name} ({guild})' if known is not None else f'server {guild}'
+        players = result['players']
+        await self.reply(interaction, f'Reset {what} for {players} player{"" if players == 1 else "s"} in {where}.')
+
+    @app_commands.command(name='cooldown-user', description="Reset one player's cooldowns in any server")
+    @app_commands.describe(server_id='Server ID', user_id='User ID', cooldown='Which cooldown to reset')
+    @app_commands.choices(cooldown=_choices(cooldowns.PLAYER))
+    async def cooldown_user(self, interaction: discord.Interaction, server_id: str, user_id: str,
+                            cooldown: app_commands.Choice[str]):
+        """D67 owner reset of one player's cooldowns."""
+        if await self.authorize(interaction):
+            await self.reset_cooldowns(interaction, server_id, user_id, cooldown)
+
+    @app_commands.command(name='cooldown-server', description="Reset every player's cooldowns in a server")
+    @app_commands.describe(server_id='Server ID', cooldown='Which cooldown to reset')
+    @app_commands.choices(cooldown=_choices(cooldowns.SERVER))
+    async def cooldown_server(self, interaction: discord.Interaction, server_id: str,
+                              cooldown: app_commands.Choice[str]):
+        """D67 owner reset of a whole server's cooldowns."""
+        if await self.authorize(interaction):
+            await self.reset_cooldowns(interaction, server_id, None, cooldown)
 
 
 def register(bot):

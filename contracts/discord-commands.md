@@ -1786,3 +1786,17 @@ in that server resumes after the last checked user (in memory; a restart starts 
 A finished confirmed run replies "Deleted the game data of {d} of {m} profiles whose users
 left this server." The command manifest changes, so `sync-commands --global --yes` follows
 delivery. Tests: tests/test_admin_prune.py, tests/test_readme.py.
+
+## Owner amendment: D67 cooldown resets (2026-11-14)
+`/admin cooldown-user server_id user_id cooldown` and `/admin cooldown-server server_id
+cooldown` join the M4.5a `/admin` group: registered only in the admin guild, same
+authorize() gate (admin guild, configured owner, 5 per minute, not excluded there),
+ephemeral deferral, no mentions, replies within 2000 characters. IDs are text options
+validated as positive 64-bit snowflakes; an invalid ID writes nothing. `cooldown` is a
+choice: all, checkin, gym_battle, gym_feed, arena_run, trade, trade_ping; the server
+command adds force_raid. The writer runs `services.cooldowns.reset`, which replies
+unknown server (no guilds row), no profile (user command only) or the number of
+players and cooldowns reset. One mod_audit row per call records target guild, owner
+actor, target kind user|guild, action cooldown_reset and the choice as reason.
+Adding these commands changes the admin guild's command manifest, so that guild must
+be re-synced. Tests: tests/test_cooldown_reset.py.

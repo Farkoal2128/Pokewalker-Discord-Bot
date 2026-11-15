@@ -170,6 +170,10 @@ async def force_spawn(conn, guild_id, actor_user_id, reason, now, rng, content, 
     async with conn.execute("SELECT max(created_at) FROM mod_audit WHERE guild_id=? AND action='force_raid'",
                             (guild_id,)) as cursor:
         last = (await cursor.fetchone())[0]
+    async with conn.execute("SELECT force_raid_reset_at FROM guilds WHERE guild_id=?", (guild_id,)) as cursor:
+        cleared = await cursor.fetchone()
+    if cleared is not None and cleared[0] is not None and last is not None and last <= cleared[0]:
+        last = None  # D67 owner reset
     if last is not None and now < last + FORCE_COOLDOWN:
         return {'status': 'cooldown', 'remaining': last + FORCE_COOLDOWN - now}
     refusal = await _refusal(conn, guild_id, now, checked_channel_id)

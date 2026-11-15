@@ -522,6 +522,26 @@ game". This is the only exception to D37's no-transformations rule.
   battles keep the version they were fought with, and Arena runs started before this change
   transform too.
 
+### Owner cooldown resets (D67, owner request 2026-11-14)
+
+The owner requested: "for specifically the admin server and only the admin server, create
+commands that can reset either an individual user's cooldown with forms for each cooldown in
+the game right now, or a global reset for all players in the server with the same forms", and
+chose that the commands take a server ID and cover the player cooldowns plus force-raid.
+
+- **D67: Cooldown resets.** `/admin cooldown-user` and `/admin cooldown-server` exist only in
+  the admin server and only for configured owners, like the other `/admin` commands. Both take
+  a server ID; `cooldown-user` also takes a user ID.
+- Each has a pick list: All, Check-in, Gym battle, Razz Berry feeding, Arena new run, Daily
+  trade, Trade invite ping. `cooldown-server` adds Force-raid, which is per server, not per
+  player.
+- A reset makes that action available now; it does not refund or replay anything. Feeding
+  resets the player's current gym defenders. Resetting the Arena cooldown during a live run
+  lets the player start a new run as soon as that run ends.
+- Step spam limits (15 seconds between counted messages, 30 words a minute) are not cooldowns
+  and are not included.
+- Every reset is written to that server's moderation audit log with the owner's ID.
+
 ## Platform constraints
 
 - Reading message text needs the privileged Message Content intent. Discord reviews

@@ -111,7 +111,8 @@ async def state(conn, session, now):
                             (profile['profile_id'],)) as cursor:
         held = {row['item_id']: row['quantity'] for row in await cursor.fetchall()}
     x_items = {item: held.get(item, 0) for item in rules['x_items']['items']}
-    cooldown = max(0, math.ceil(run['started_at'] + rules['cooldown_seconds'] - now)) if run else 0
+    cleared = run and profile['arena_cooldown_reset_at'] is not None and profile['arena_cooldown_reset_at'] >= run['started_at']
+    cooldown = max(0, math.ceil(run['started_at'] + rules['cooldown_seconds'] - now)) if run and not cleared else 0  # D67
     return {'status': 'none' if run is None else 'live' if run['ended_at'] is None else 'ended',
             'run': run, 'cooldown_left': cooldown, 'enabled': enabled,
             'best_floor': profile['arena_best_floor'], 'tickets': tickets,
