@@ -601,3 +601,21 @@ class GiftTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(draft.state, 'editing')
         self.assertIn('Nothing was sent.', self.reply_text(reply))
         self.assertEqual(await self.gifts(), [])
+
+
+    async def test_timeout_during_commit_cannot_send_or_resurrect_draft(self):
+        draft, confirm = await self.preview(scope='server', server_id='123', user_id='456')
+        original = self.bot.db.commit
+        async def expire_before_commit():
+            if draft.state == 'sending':
+                self.clock = draft.deadline
+                await draft.view.on_timeout()
+            await original()
+        with patch.object(self.bot.db, 'commit', side_effect=expire_before_commit):
+            reply = await self.click('Confirm', control=confirm)
+        gifts = await self.gifts()
+        self.assertEqual(gifts, [],
+            f'state={draft.state}, registered={draft.draft_id in self.group.gift_drafts}, '
+            f'user_id={draft.user_id}, receipt={self.reply_text(reply)!r}')
+        self.assertEqual(draft.state, 'discarded')
+        self.assertNotIn(draft.draft_id, self.group.gift_drafts)
