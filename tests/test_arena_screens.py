@@ -87,6 +87,117 @@ class ArenaScreenTests(unittest.IsolatedAsyncioTestCase):
         await self.conn.execute('INSERT INTO ex_items VALUES (?,?,?) ON CONFLICT(profile_id,item_id) '
                                 'DO UPDATE SET quantity=excluded.quantity', (self.pid, 'arena_ex_voucher', quantity))
 
+    async def hold_boost(self, item, quantity=1):
+        await self.conn.execute('INSERT INTO ex_items VALUES (?,?,?) ON CONFLICT(profile_id,item_id) '
+                                'DO UPDATE SET quantity=excluded.quantity', (self.pid, item, quantity))
+
+    async def test_team_arm_buttons_only_while_held_and_unarmed(self):
+        for item, name in (('ex_attack', 'EX-Attack'), ('ex_defense', 'EX-Defense')):
+            for quantity, armed in ((0, 0), (1, 0), (2, 0), (1, 1), (0, 1)):
+                with self.subTest(item=item, quantity=quantity, armed=armed):
+                    await self.hold_boost(item, quantity)
+                    await self.conn.execute(f'UPDATE profiles SET {item}_armed=? WHERE profile_id=?',
+                                            (armed, self.pid))
+                    rendered = await self.click('arena_team')
+                    actions = [b.custom_id.rsplit(':', 1)[-1] for b in rendered['view'].children]
+                    self.assertEqual(f'arena_arm_{item}' in actions, bool(quantity and not armed))
+                    if quantity and not armed:
+                        button = self.button(rendered, f'arena_arm_{item}')
+                        self.assertEqual((button.label, button.row, button.disabled), (name, 2, False))
+
+    async def test_team_armed_line_replaces_button(self):
+        for item, name in (('ex_attack', 'EX-Attack'), ('ex_defense', 'EX-Defense')):
+            await self.conn.execute(f'UPDATE profiles SET {item}_armed=1 WHERE profile_id=?', (self.pid,))
+            for quantity in (0, 1):
+                await self.hold_boost(item, quantity)
+                rendered = await self.click('arena_team')
+                self.assertIn(f'{name} armed for your next new Arena run.', rendered['embed'].description)
+                self.assertFalse(any(b.custom_id.endswith(f':arena_arm_{item}')
+                                     for b in rendered['view'].children))
+
+    async def test_team_arm_keeps_team_and_skip_and_notices(self):
+        await self.conn.execute('UPDATE profiles SET arena_best_floor=80 WHERE profile_id=?', (self.pid,))
+        await self.picked()
+        await self.click('arena_skip_more', ['40'])
+        selection = self.selection()
+        for item, name, stat in (('ex_attack', 'EX-Attack', 'attack'), ('ex_defense', 'EX-Defense', 'defense')):
+            await self.hold_boost(item, 2)
+            await test_arena.ArenaTests.x_press(self)
+            rendered = await self.click(f'arena_arm_{item}')
+            self.assertIn(f'{name} armed: ×2 {stat} for your whole next new Arena run. '
+                          'A run in progress does not get it.', rendered['embed'].description)
+            self.assertEqual(rendered['embed'].title, 'Arena team')
+            self.assertEqual(self.selection(), selection)
+            self.assertEqual(await self.scalar('SELECT quantity FROM ex_items WHERE profile_id=? AND item_id=?',
+                                              (self.pid, item)), 1)
+            await test_arena.ArenaTests.x_press(self)
+            rendered = await self.click(f'arena_arm_{item}')
+            self.assertIn(f'{name} is already armed. Nothing was spent.', rendered['embed'].description)
+            await self.conn.execute(f'UPDATE profiles SET {item}_armed=0 WHERE profile_id=?', (self.pid,))
+            await self.hold_boost(item, 0)
+            await test_arena.ArenaTests.x_press(self)
+            before = await self.rows('SELECT * FROM resource_ledger')
+            rendered = await self.click(f'arena_arm_{item}')
+            self.assertIn(f'You have no {name}.', rendered['embed'].description)
+            self.assertEqual(await self.rows('SELECT * FROM resource_ledger'), before)
+            self.assertEqual(self.selection(), selection)
+
+    async def test_full_team_screen_with_every_ex_button(self):
+        await self.hold_voucher()
+        for item in ('ex_attack', 'ex_defense'):
+            await self.hold_boost(item)
+        await self.conn.execute('UPDATE profiles SET arena_best_floor=100 WHERE profile_id=?', (self.pid,))
+        rendered = await self.picked()
+        payload = rendered['view'].to_components()
+        self.assertEqual([len(row['components']) for row in payload], [4, 1, 5, 1, 1])
+        self.assertEqual([b['custom_id'].rsplit(':', 1)[-1] for b in payload[2]['components']],
+                         ['arena_team_clear', 'arena_start', 'arena_voucher_start',
+                          'arena_arm_ex_attack', 'arena_arm_ex_defense'])
+        for row, count in ((3, 25), (4, 16)):
+            self.assertEqual(payload[row]['components'][0]['type'], 3)
+            self.assertEqual(len(payload[row]['components'][0]['options']), count)
+
+    async def test_armed_from_team_screen_applies_to_started_run(self):
+        await self.picked()
+        for item in ('ex_attack', 'ex_defense'):
+            await self.hold_boost(item)
+            await test_arena.ArenaTests.x_press(self)
+            await self.click(f'arena_arm_{item}')
+        await test_arena.ArenaTests.x_press(self)
+        rendered = await self.click('arena_start')
+        run = await self.run_state()
+        self.assertEqual((run['ex_attack'], run['ex_defense']), (1, 1))
+        self.assertIn('EX-Attack: ×2 attack · whole run', rendered['embed'].description)
+        self.assertIn('EX-Defense: ×2 defense · whole run', rendered['embed'].description)
+        self.assertEqual(await self.rows('SELECT ex_attack_armed,ex_defense_armed FROM profiles WHERE profile_id=?',
+                                        (self.pid,)), [{'ex_attack_armed': 0, 'ex_defense_armed': 0}])
+
+    async def test_team_arm_during_live_run_waits_for_next_new_run(self):
+        await self.start_run()
+        before = await self.rows('SELECT * FROM arena_runs')
+        await self.hold_voucher()
+        self.walker.handlers = self.screens().handlers(self.walker)
+        gift_handlers = importlib.import_module('pokewalker.bot.ex_gift').handlers(self.walker)
+        rendered = await self.writer.run(lambda conn: gift_handlers['ex_use_arena_ex_voucher'](
+            conn, self.session, SimpleNamespace(data={})))
+        self.assertEqual(rendered['embed'].title, 'Arena team')
+        for item in ('ex_attack', 'ex_defense'):
+            await self.hold_boost(item)
+            await test_arena.ArenaTests.x_press(self)
+            rendered = await self.click(f'arena_arm_{item}')
+            self.assertIn('A run in progress does not get it.', rendered['embed'].description)
+        self.assertEqual(await self.rows('SELECT * FROM arena_runs'), before)
+        rendered = await self.click('arena_resume')
+        self.assertNotIn('whole run', rendered['embed'].description)
+        self.assertFalse(any('arena_arm_' in b.custom_id for b in rendered['view'].children))
+        await self.conn.execute("UPDATE arena_runs SET ended_at=1001,end_reason='loss'")
+        self.now += test_arena.RULES['cooldown_seconds'] + 1
+        await self.picked()
+        await test_arena.ArenaTests.x_press(self)
+        await self.click('arena_start')
+        run = await self.run_state()
+        self.assertEqual((run['ex_attack'], run['ex_defense']), (1, 1))
+
     async def test_voucher_button_only_while_held(self):
         for quantity in (0, 1, 2, 0):
             await self.hold_voucher(quantity)
@@ -862,6 +973,7 @@ class ArenaScreenTests(unittest.IsolatedAsyncioTestCase):
         mapping = self.screens().handlers(self.walker)
         expected = {'arena', 'arena_leaderboard', 'arena_resume', 'arena_team', 'arena_team_prev', 'arena_team_next',
                     'arena_team_sort', 'arena_team_pick', 'arena_team_clear', 'arena_start', 'arena_voucher_start',
+                    'arena_arm_ex_attack', 'arena_arm_ex_defense',
                     'arena_skip', 'arena_skip_more', 'arena_auto_order', 'arena_stop_pct', 'arena_until_hurt',
                     'arena_fight', 'arena_heal_fight', 'arena_heal_one', 'arena_heal_two',
                     'arena_heal_three', 'arena_berry', 'arena_order', 'arena_tickets',

@@ -76,6 +76,19 @@ A live Arena team member cannot defend or attack a gym, enter a trade, or be sen
 
 <!-- page -->
 
+**EX-Gift.** Open EX-Gift from `/walker` to receive owner event gifts. Its button shows (!) while a gift waits; gifts never expire. Claim sends ordinary items and Arena Tickets to your Inbox. EX-items stay in EX-Gift with no limit and cannot be traded.
+
+- **Time Gear Fragment:** use from EX-Gift to reset your gameplay cooldowns in this server, except force-raid.
+- **Shiny Patch:** use from EX-Gift or a Pokémon's details to make a chosen Pokémon shiny.
+- **Golden Bottlecap:** use from EX-Gift or a Pokémon's details to max all three IVs.
+- **EX-Attack:** use from EX-Gift or the Arena team screen to arm double attack for the whole next new run; it does not stack with X-Attack.
+- **EX-Defense:** use from EX-Gift or the Arena team screen to arm double defense for the whole next new run; it does not stack with X-Defense.
+- **Arena EX-Voucher:** use from EX-Gift to open the Arena team screen, then start there to pay ticket rewards for floors 1-80 and start on floor 81.
+
+EX boosts arm for your next new run only. A run already in progress does not get them; resuming it leaves them armed for the next new Arena run.
+
+<!-- page -->
+
 # Server setup (admins and moderators)
 
 **Server gyms.** Members with Manage Server can create, remove and list gyms with `/walker-admin gyms`.
