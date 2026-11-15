@@ -18,6 +18,7 @@ from pokewalker.bot import research, powerup, pokedex
 from pokewalker.bot import evolve, gyms, iv_items, arena, ex_gift
 from pokewalker.bot import milestones, bag, route, share, trade
 from pokewalker.services import arena as arena_service
+from pokewalker.services import ex_gift as ex_gift_service
 from pokewalker.services.milestones import pending_count
 from pokewalker.services.items import recent_finds
 from pokewalker.db import with_receipt
@@ -257,6 +258,7 @@ class Walker:
         return screens.home({"session": session, "companion": companion, "available": set(self.handlers),
                              'finds': await recent_finds(conn, profile['profile_id']),
                              'rewards_waiting': await pending_count(conn, profile['profile_id']),
+                             'ex_gift_new': await ex_gift_service.has_unclaimed(conn, profile['profile_id']),
                              "queue_size": await profiles.queue_size(conn, profile["profile_id"]),
                              "encounter_meter_c": profile["encounter_meter_c"],
                              "restrictions": await profiles.restrictions(conn, session["guild_id"], session["user_id"])})

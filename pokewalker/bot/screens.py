@@ -36,6 +36,9 @@ def home(state):
     waiting = state.get('rewards_waiting', 0)
     view.add_item(discord.ui.Button(label=f"Inbox ({waiting})", custom_id=custom_id(state, "inbox"),
                                     disabled=not waiting or "inbox" not in state.get("available", ())))
+    view.add_item(discord.ui.Button(label="EX-Gift (!)" if state.get("ex_gift_new", False) else "EX-Gift",
+                                    custom_id=custom_id(state, "ex_gift"),
+                                    disabled="ex_gift" not in state.get("available", ())))
     return {"embed": embed, "view": view}
 
 
