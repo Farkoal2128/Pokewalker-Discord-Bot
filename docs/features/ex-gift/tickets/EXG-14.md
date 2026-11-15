@@ -2,11 +2,11 @@
 
 **Tier:** seam (persisted player state; progression rules)
 
-**Read:** PLAN D1, D4, D8; SYNTHESIS EX-14, EX-15, EX-19, R9; EXG-1 (`rules.ex_items`), EXG-2, EXG-8 (`held`, `take`); `services/arena.py` `start` (:139-193, insert :178-180), `use_x` (:253-279), `fight` (:339-344), `chain_step` (:405); `tests/test_arena.py` X-item tests (:688-825).
+**Read:** PLAN D1, D4, D8; SYNTHESIS EX-14, EX-15, EX-19, R9; EXG-1 (`rules.ex_items`), EXG-2, EXG-8 (`held`, `take`, `recorded`); `services/arena.py` `start` (:139-193, insert :178-180), `use_x` (:253-279), `fight` (:339-344), `chain_step` (:405); `tests/test_arena.py` X-item tests (:688-825).
 
 **Goal.** Arming spends one EX boost; the next new run carries it for every fight; the matching X-item cannot stack on it. Screens come in EXG-15 and EXG-19. C3 first.
 
-- **`arm(conn, session, item, now)`**: `item` not in `rules.ex_items.items` → `invalid`; `profiles.session_owner` refusal; `profile['<item>_armed']` → `armed_already`; none held → `missing`; neither writes. Else `with_receipt(conn, f"ex_arm:{session_id}:{rev}", 'ex_arm', compute, profile_id=…)` (`rev` per D4): `ex_gift.take`, `UPDATE profiles SET <item>_armed=1`, ledger `ex_item / <item> / -1 / ex_arm` → `{'status': 'armed', 'item'}`. Paused members, a live run and Arena off do not block arming.
+- **`arm(conn, session, item, now)`**, key `ex_arm:{session_id}:{rev}` (`rev` per D4): `item` not in `rules.ex_items.items` → `invalid`; `profiles.session_owner` refusal; `ex_gift.recorded(conn, key, 'ex_arm', pid)` returned as is when found (D4); then `profile['<item>_armed']` → `armed_already`; none held → `missing`; neither writes. Else `with_receipt(conn, key, 'ex_arm', compute, profile_id=…)`: `ex_gift.take`, `UPDATE profiles SET <item>_armed=1`, ledger `ex_item / <item> / -1 / ex_arm` → `{'status': 'armed', 'item'}`. Paused members, a live run and Arena off do not block arming.
 - **`start`** (inside `compute`): read both armed flags, insert the run with `ex_attack` and `ex_defense` set from them, then clear both flags. Any refusal before `compute` leaves them armed; resuming a live run never reads them (EX-19); a restart keeps them (persisted). The result shape does not change.
 - **`fight`**: `boosted_stats` becomes a set: the X-item stats with a counter above 0, plus `rules.ex_items.items[i].stat` for each `i` with `run[i]` set, so exactly one ×2 (`x_items.multiplier`) applies per stat. Counters, receipt and result do not change; an ended run's flags are never refunded.
 - **`use_x`**: after the stale and invalid checks, a run whose EX flag names this item as `x_item` → `{'status': 'ex_active'}`, nothing spent. `buy_x` stays allowed (R9).
@@ -18,7 +18,7 @@
 - `test_arm_spends_one_sets_flag_with_ledger`
 - `test_arm_twice_refused_other_kind_independent`
 - `test_arm_missing_or_excluded_refused_paused_allowed`
-- `test_same_arm_press_once`
+- `test_arm_replay_returns_armed_after_flag_set` (result equal to the first, nothing spent twice)
 - `test_restart_while_armed_keeps_flag` (reopen the DB)
 
 In `tests/test_arena.py`:

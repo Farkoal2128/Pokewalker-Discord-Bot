@@ -6,7 +6,7 @@
 
 **Goal.** A player holding a Shiny Patch or Golden Bottlecap uses it straight from Pokémon details; the buttons are hidden when none is held (EX-24). C5 first.
 
-- **`show_detail`:** the state adds `'ex_items': await ex_gift_service.held(conn, session['profile_id'])`; the selection drops `ex_back` and `ex_item`, so the preview's Back and the confirm return to details.
+- **`show_detail`:** the state adds `'ex_items': await ex_gift_service.held(conn, session['profile_id'])`; the selection drops `ex_back`, `ex_item` and `ex_preview` (as it drops `iv_item`, :176), so Back and confirm return to details and a confirm needs a fresh preview (EXG-12).
 - **`render_detail`** row 2, after Use Bottlecap and Use Vitamin: `Use Shiny Patch` (`ex_preview_shiny_patch`) and `Use Golden Bottlecap` (`ex_preview_golden_bottlecap`), each only while held ≥1. They stay enabled for shiny, perfect or deployed targets, so the preview gives the EX-21 or gym refusal as a message. Row 2 holds at most four buttons.
 - The EXG-12 and EXG-13 handlers already serve this path; this row adds no handler.
 - **C5:** amend "Bottlecap and Vitamin" (details) with the two EX buttons and their visibility rule.
@@ -23,6 +23,7 @@ In `tests/test_ex_gift_screens.py`:
 - `test_details_golden_bottlecap_confirm_redraws_perfect_ivs`
 - `test_details_refusals_shiny_perfect_and_deployed_with_messages`
 - `test_details_stale_preview_after_trade_refused`
+- `test_details_confirm_without_preview_spends_nothing` (a crafted `ex_shiny_patch_confirm` press from details)
 
 Existing `tests/test_storage.py` and `tests/test_iv_items.py` pass unchanged (with no EX item held the view is as today).
 

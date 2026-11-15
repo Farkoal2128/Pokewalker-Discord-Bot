@@ -20,6 +20,7 @@
 - `test_history_never_shows_recipient_or_user_ids`
 - `test_lookup_by_send_id_found_missing_and_malformed`
 - `test_send_recovered_by_id_after_draft_is_gone` (commit, drop the draft, look up the preview's send ID)
+- `test_send_recovered_by_id_after_restart` (commit, then a new bot on the same DB finds the send; the old control has no handler, EXG-6)
 - `test_history_command_uses_authorize_bucket_paging_uses_callback_bucket` (shared with an open draft)
 - `test_paging_refuses_other_owner_and_excluded_owner`
 - `test_long_page_fits_4096`

@@ -2,11 +2,11 @@
 
 **Tier:** seam (persisted player state; progression rules)
 
-**Read:** PLAN D4, D8; SYNTHESIS EX-16, EX-20, EX-26 and its recorded reading, the Q4 reading, R7, R12; EXG-1 (`voucher_floor`), EXG-8, EXG-14 (flag hand-over in `start`); `services/arena.py` `start` (:139-193), boss win (:366-383); `domain/arena.py` `ticket_for` (:103), `first_clear_bonus` (:141).
+**Read:** PLAN D4, D8; SYNTHESIS EX-16, EX-20, EX-26 and its recorded reading, the Q4 reading, R7, R12; EXG-1 (`voucher_floor`), EXG-8 (`recorded`), EXG-14 (flag hand-over in `start`); `services/arena.py` `start` (:139-193), boss win (:366-383); `domain/arena.py` `ticket_for` (:103), `first_clear_bonus` (:141).
 
 **Goal.** The voucher starts a run on floor 81 and pays floors 1-80 as real first clears, in the run-start transaction. Normal skips stay validated as today. C3 first.
 
-- **`start(…, skip=0, voucher=False)`**: the existing refusals run first and unchanged (stale, excluded, paused, off, live, cooldown: the voucher obeys the new-run cooldown). Then with `voucher`: `skip != 0` → `invalid`; none held (`ex_gift.held`) → `no_voucher`; then the team checks. Without `voucher` nothing changes, so `start(skip=79)` stays `invalid` (`:153`).
+- **`start(…, skip=0, voucher=False)`**: with `voucher`, right after the `stale`/`excluded` check, `ex_gift.recorded(conn, <start key>, 'arena_start', pid)` is returned when found, with `run` attached as `start` does (D4): a replay reports `started`, not `live`. The existing refusals then run unchanged (paused, off, live, cooldown: the voucher obeys the new-run cooldown). Then with `voucher`: `skip != 0` → `invalid`; none held (`ex_gift.held`) → `no_voucher`; then the team checks. Without `voucher` nothing changes: a normal replay still returns `live`, and `start(skip=79)` stays `invalid` (`:153`).
 - **Voucher `compute`** (same receipt key `arena_start:<session>:<rev>`):
   - the run starts on `voucher_floor + 1` (81), its entry enemy rolled for that floor;
   - for each floor 1..`voucher_floor` with a ticket: 1 + `first_clear_bonus(floor, current['best_floor'], rules)` copies, upserted into `arena_tickets` as `start` does, ledger `arena_ticket / <tier> / +n / arena_voucher`;
@@ -26,7 +26,8 @@
 - `test_voucher_raises_best_to_80_max_skip_40`
 - `test_voucher_refusals_keep_voucher_and_write_nothing` (none held, cooldown, paused, off, live run, skip 1, invalid team)
 - `test_voucher_run_first_boss_win_scores_floor_81`
-- `test_same_voucher_press_spends_once`
+- `test_voucher_replay_returns_started_after_run_is_live` (equal result, spent once)
+- `test_normal_start_replay_unchanged`
 - `test_voucher_start_moves_armed_flags`
 - `test_voucher_run_obeys_next_cooldown`
 - `test_normal_skip_still_capped` (`skip=79` → `invalid`)
