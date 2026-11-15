@@ -156,6 +156,10 @@ def render_team(state):
     view.add_item(discord.ui.Button(label='Clear', custom_id=custom_id(state, 'arena_team_clear'), row=2))
     view.add_item(discord.ui.Button(label='Start', custom_id=custom_id(state, 'arena_start'), row=2,
                                    disabled=len(state['members']) != 3 or any(not item or item['reason'] for item in state['members'])))
+    if state['held']['arena_ex_voucher']:
+        view.add_item(discord.ui.Button(label=f"Start on floor {state['voucher_floor'] + 1} · EX-Voucher",
+                                       custom_id=custom_id(state, 'arena_voucher_start'), row=2,
+                                       disabled=view.children[-1].disabled))
     skip = selection.get('skip', 0)
     if skip:
         paid = ', '.join(f'{copies} {tier.title()}' for tier, copies in state['skip_tickets'].items()) or 'nothing'
@@ -338,7 +342,8 @@ def handlers(walker):
             members.append(item)
         return {'session': session, 'selection': selection, 'rows': [pokemon_state(row) for row in rows],
                 'members': members, 'total': total, 'notice': notice, 'max_skip': domain.max_skip(best_floor, rules),
-                'skip_tickets': domain.skip_tickets(selection.get('skip', 0), rules)}
+                'skip_tickets': domain.skip_tickets(selection.get('skip', 0), rules),
+                'held': await ex_gift.held(conn, session['profile_id']), 'voucher_floor': rules['ex_items']['voucher_floor']}
 
     async def open_break(conn, session, run, current, result=None, notice=None, fights=None):
         async with conn.execute(f"SELECT item_id,quantity FROM inventory WHERE profile_id=? AND item_id IN ({','.join('?' * len(BERRIES))})",
@@ -541,19 +546,26 @@ def handlers(walker):
                     or any(uid == values[0] for uid, _ in selection['team'])):
                 raise _Refused('Choose a distinct eligible Pokémon on this page.')
             selection['team'].append([values[0], item['pokemon']['revision']])
-        if action == 'arena_start':
+        if action in ('arena_start', 'arena_voucher_start'):
+            voucher = action == 'arena_voucher_start'
             result = await service.start(conn, session, selection['team'], now, walker.rng, walker.bot.content,
-                                         walker.multipliers, skip=selection['skip'])
+                                         walker.multipliers, skip=0 if voucher else selection['skip'], voucher=voucher)
             status = result['status']
             if status in ('started', 'live'):
-                if status == 'started' and selection['skip']:
+                if status == 'started' and voucher:
+                    floor = rules['ex_items']['voucher_floor']
+                    paid = ', '.join(f'+{copies} {tier.title()}' for tier, copies in result['tickets'].items())
+                    notice = (f'EX-Voucher used: floors 1-{floor} paid {paid} Tickets. '
+                              f'Your run starts on floor {floor + 1}.')
+                elif status == 'started' and selection['skip']:
                     paid = ', '.join(f'+{copies} {tier.title()}' for tier, copies in domain.skip_tickets(selection['skip'], rules).items())
                     notice = f"Skipped {selection['skip']} floors: " + (f'{paid} Tickets.' if paid else 'no Tickets.')
                 return await open_break(conn, session, result['run'], current, notice=notice)
             if status == 'excluded':
                 raise _Refused(EXCLUDED)
             notice = {'stale': CHANGED, 'deployed': "A gym defender can't join an Arena team.",
-                      'off': OFF, 'invalid': 'Choose three distinct eligible Pokémon.'}.get(status)
+                      'off': OFF, 'invalid': 'Choose three distinct eligible Pokémon.',
+                      'no_voucher': 'You have no Arena EX-Voucher.'}.get(status)
             if status == 'cooldown':
                 notice = wait(result['seconds_left'])
             elif status == 'paused':
@@ -567,5 +579,6 @@ def handlers(walker):
 
     return {name: partial(dispatch, name) for name in
             ('arena', 'arena_leaderboard', 'arena_resume', 'arena_team', 'arena_team_prev', 'arena_team_next',
-             'arena_team_sort', 'arena_team_pick', 'arena_team_clear', 'arena_start', 'arena_skip', 'arena_skip_more', *BREAK_ACTIONS,
+             'arena_team_sort', 'arena_team_pick', 'arena_team_clear', 'arena_start', 'arena_voucher_start',
+             'arena_skip', 'arena_skip_more', *BREAK_ACTIONS,
              'arena_tickets', *REDEEM, 'arena_redeem_confirm', *BUY_X)}

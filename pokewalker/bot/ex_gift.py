@@ -28,7 +28,7 @@ def render(state):
             ('Next', 'ex_gift_next', offset + 10 >= total), ('Back', 'home', False)):
         view.add_item(discord.ui.Button(label=label, custom_id=custom_id(state, action),
                                         disabled=disabled, row=0))
-    for item in ('time_gear_fragment', *iv_items.EX_ITEMS, 'ex_attack', 'ex_defense'):
+    for item in ('time_gear_fragment', *iv_items.EX_ITEMS, 'ex_attack', 'ex_defense', 'arena_ex_voucher'):
         if state.get('profile', {}).get(f'{item}_armed'):
             lines.append(f'{service.EX_ITEMS[item]} armed for your next new Arena run.')
             continue
@@ -36,7 +36,7 @@ def render(state):
         if quantity > 0:
             action = f'ex_arm_{item}' if item in ('ex_attack', 'ex_defense') else f'ex_use_{item}'
             view.add_item(discord.ui.Button(label=f'Use {service.EX_ITEMS[item]} ({quantity})',
-                                            custom_id=custom_id(state, action), row=1))
+                                            custom_id=custom_id(state, action), row=2 if item == 'arena_ex_voucher' else 1))
     if state.get('notice'):
         lines.append(state['notice'])
     return {'embed': discord.Embed(title='EX-Gift', description='\n'.join(lines)), 'view': view}
@@ -239,6 +239,7 @@ def handlers(walker):
 
     return {'ex_gift': open_gifts, 'ex_gift_prev': previous, 'ex_gift_next': next_page, 'ex_claim': claim,
             'ex_use_time_gear_fragment': time_gear_preview, 'ex_time_gear_confirm': time_gear_confirm,
+            'ex_use_arena_ex_voucher': walker.handlers['arena_team'],
             **{f'ex_arm_{item}': partial(arm, item=item) for item in ('ex_attack', 'ex_defense')},
             'ex_pick': pick, 'ex_pick_prev': pick_previous, 'ex_pick_next': pick_next,
             **{action: partial(handler, item=item) for item in iv_items.EX_ITEMS for action, handler in
