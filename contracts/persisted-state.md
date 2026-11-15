@@ -1799,6 +1799,40 @@ guard. Rollback requires a compatible backup, never lowering `user_version`.
 Verification: `tests/test_ex_gift_schema.py` and the ticket-named schema/deletion
 regressions; no EX-Gift service behavior is introduced by this migration alone.
 
+## EX-Gift send
+
+`services.ex_gift.send` runs inside the caller's active writer transaction. Its
+producers are owner-confirmed gift drafts; consumers are history and subsequent
+player claims. This additive service uses schema 0030 without changing it.
+Checks run in order: sending owner's exclusion in the admin guild, send-ID
+lookup, package validation, target resolution, then the zero-recipient refusal.
+An excluded owner gets `excluded` even for a replay. A committed send ID returns
+its stored package, target, timestamp and counts with `status: sent` and
+`replayed: true`, before checking mutable inputs; another owner's ID is `invalid`.
+
+Packages contain 1-10 known ordinary, Arena-ticket or EX keys, one unit per slot;
+duplicates remain separate slots. Invalid packages or scope/ID combinations are
+`invalid`. Unknown guilds are `unknown_server`; a user without a profile in that
+guild is `no_profile`; an empty valid population is `no_recipients`. Refusals
+write nothing. Draft identity, authorization and deadline checks belong to the
+caller in the same writer job.
+
+`target` reports `servers`, `servers_with_recipients` and `recipients`: `all`
+counts every persisted guild (including empty ones) and every profile; `server`
+counts that guild and its profiles; `user` counts that guild and its one matching
+profile. Restrictions and opt-out do not filter the snapshot, and an owner may
+receive their own send. Success inserts one aggregate `ex_gifts` receipt and one
+set-based `INSERT INTO ex_gift_recipients ... SELECT ... FROM profiles` in the
+same transaction, returning `status: sent`, `replayed: false` and stored fields.
+No action receipt, moderation audit, recipient ID in the send receipt, or ID log
+is created. Later enrollment (including deletion/re-enrollment) gains no old gift.
+
+`lookup(send_id)` returns the stored row (decoded package) or None. `history`
+returns ten newest rows and total count, across sending owners, using a row
+offset; equal timestamps sort by descending gift ID. Rollback of the caller's
+job rolls back the aggregate and snapshot together. Verification:
+`tests/test_ex_gift.py` on real SQLite via `Writer.run`.
+
 ## D67 cooldown resets (migration 0029)
 Migration 0029 adds nullable REAL `profiles.arena_cooldown_reset_at` and
 `guilds.force_raid_reset_at`; existing rows read NULL, so nothing changes until an owner

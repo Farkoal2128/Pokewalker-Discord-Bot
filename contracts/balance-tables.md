@@ -520,6 +520,30 @@ Only the report's manifest hash and `arena.json` version input lines change.
 Tests: `test_balance_tables`, `test_content_integrity` and report regeneration
 comparison.
 
+## EX-Gift giftable catalog
+
+`services.ex_gift.catalog(content)` builds a deduplicated catalog on every call
+from conversion-rate `stardust_per_unit` keys except `evolution_item`, capacity
+rare-pocket keys, concrete `content.evolution_items` IDs, Arena
+`rules.x_items.items`, and `arena_ticket:<tier>` for each `rules.tickets.tiers`
+key. Table/artifact authors produce these inputs; the gift manager and send
+validation consume this additive catalog. No balance table is edited. Currencies
+and the evolution placeholder are not slots. Coverage tests scan weighted rows
+of every balance table, milestone bundles, leaderboard rewards, starter kit and
+purchase items, expanding `evolution_item`, so an omitted grantable item fails.
+
+Categories are Balls (`*_ball` except rare pockets), Berries (`*_berry`), IV items
+(`bottlecap`, `vitamin`, pinned to `iv_items.ITEMS`), Arena (X-items and tickets),
+Evolution (concrete evolution IDs), and Rare (remaining keys, including rare
+pockets). The current category counts are 3, 4, 2, 7, 50 and 6 (72 total).
+Each category sorts by display label and key and pages at 25 options. Page
+numbers are zero-based; out-of-range pages are empty. The EX toggle pages the
+six `EX_ITEMS` keys instead, disjoint from ordinary IDs and matching schema 0030:
+Time Gear Fragment, Shiny Patch, Golden Bottlecap, EX-Attack, EX-Defense and
+Arena EX-Voucher. Labels use those names, `<Tier> Arena Ticket`, the evolution
+`name_en`, `Poké Ball`, or the title-cased underscored ID. Services do not import
+bot renderers. Verification: `tests/test_ex_gift.py` and `test_balance_tables.py`.
+
 ## Arena EX-item rules (version 5)
 
 [EX-Gift EX-14 through EX-16 and EX-26](../docs/features/ex-gift/SYNTHESIS.md)
