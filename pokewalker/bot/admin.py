@@ -10,6 +10,7 @@ import discord
 from discord import app_commands
 
 from pokewalker.config import snowflake
+from pokewalker.bot import admin_gift
 from pokewalker.db import open_reader, with_receipt
 from pokewalker.services import cooldowns
 from pokewalker.services.profiles import restrictions
@@ -43,6 +44,7 @@ class Admin(app_commands.Group):
         self.bot, self.pending = bot, None
         self.error_handler = ErrorBuffer()
         self.requests = {}
+        admin_gift.attach(self)
 
     def attach_errors(self):
         root = logging.getLogger()
@@ -57,20 +59,26 @@ class Admin(app_commands.Group):
         await interaction.edit_original_response(content=text[:2000],
             allowed_mentions=discord.AllowedMentions.none())
 
+    def throttled(self, bucket, user_id, limit):
+        now = self.bot.clock()
+        requests = bucket.setdefault(user_id, deque())
+        while requests and requests[0] <= now - 60:
+            requests.popleft()
+        if len(requests) >= limit:
+            return math.ceil(requests[0] + 60 - now)
+        requests.append(now)
+        return None
+
     async def authorize(self, interaction, *, status=False):
         await interaction.response.defer(ephemeral=True)
         if (interaction.guild_id != self.bot.settings.admin_guild_id
                 or interaction.user.id not in self.bot.settings.owner_ids):
             await self.reply(interaction, 'Only configured owners in the admin guild may use this command.')
             return False
-        now = self.bot.clock()
-        requests = self.requests.setdefault(interaction.user.id, deque())
-        while requests and requests[0] <= now - 60:
-            requests.popleft()
-        if len(requests) >= 5:
-            await self.reply(interaction, f'Slow down, try again in {math.ceil(requests[0] + 60 - now)} s.')
+        wait = self.throttled(self.requests, interaction.user.id, 5)
+        if wait is not None:
+            await self.reply(interaction, f'Slow down, try again in {wait} s.')
             return False
-        requests.append(now)
         if status:
             return True
         excluded = await self.bot.writer.run(lambda conn: self.excluded(conn, interaction))
@@ -81,6 +89,14 @@ class Admin(app_commands.Group):
 
     async def excluded(self, conn, interaction):
         return (await restrictions(conn, interaction.guild_id, interaction.user.id)).excluded
+
+    @app_commands.command(name='gift', description='Build and preview an EX-Gift package')
+    @app_commands.choices(scope=[app_commands.Choice(name='All', value='all'),
+                                app_commands.Choice(name='Server', value='server')])
+    async def gift(self, interaction: discord.Interaction, scope: app_commands.Choice[str],
+                   server_id: str | None = None, user_id: str | None = None):
+        if await self.authorize(interaction):
+            await admin_gift.open(self, interaction, scope.value, server_id, user_id)
 
     @app_commands.command(name='status', description='Show bounded process health')
     async def status(self, interaction: discord.Interaction):
