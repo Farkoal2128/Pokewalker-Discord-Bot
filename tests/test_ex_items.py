@@ -147,6 +147,122 @@ class ShinyPatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.use(session={**self.session, 'profile_id': 'q'}))['status'], 'stale')
 
 
+class GoldenBottlecapTests(unittest.IsolatedAsyncioTestCase):
+    _base = test_iv_items.IVItemTests
+    asyncSetUp, connect, close = _base.asyncSetUp, _base.connect, _base.close
+    rows, pokemon, current, mon = _base.rows, _base.pokemon, _base.current, _base.mon
+    deploy, shown = _base.deploy, _base.shown
+    snapshot = ShinyPatchTests.snapshot
+
+    async def stock(self):
+        self.session = await self.current()
+        await self.conn.execute("INSERT INTO ex_items VALUES ('p','golden_bottlecap',1)")
+
+    async def use(self, revision=0, uid='mon', session=None):
+        from pokewalker.services import iv_items
+        return await self.writer.run(lambda conn: iv_items.use(
+            conn, session or self.session, uid, revision, 'golden_bottlecap',
+            self.bot.content, self.walker.multipliers))
+
+    async def test_golden_bottlecap_maxes_all_three_ivs_bumps_revision(self):
+        await self.stock()
+        before = await self.mon()
+        result = await self.use()
+        self.assertEqual(result, {'status': 'used', 'pokemon': {
+            **before, 'iv_attack': 15, 'iv_defense': 15, 'iv_stamina': 15, 'revision': 1}})
+        self.assertEqual(await self.rows('SELECT quantity FROM ex_items'), [{'quantity': 0}])
+        self.assertEqual(await self.rows('SELECT key,action,profile_id FROM action_receipts'),
+                         [{'key': 'golden_bottlecap:mon:0', 'action': 'golden_bottlecap', 'profile_id': 'p'}])
+        self.assertEqual(await self.rows('SELECT resource,resource_id,delta,reason FROM resource_ledger'),
+                         [{'resource': 'ex_item', 'resource_id': 'golden_bottlecap', 'delta': -1,
+                           'reason': 'golden_bottlecap'}])
+        self.assertEqual(await self.rows('SELECT * FROM inventory'),
+                         [{'profile_id': 'p', 'item_id': 'bottlecap', 'quantity': 2},
+                          {'profile_id': 'p', 'item_id': 'vitamin', 'quantity': 3},
+                          {'profile_id': 'q', 'item_id': 'vitamin', 'quantity': 1}])
+
+    async def test_golden_bottlecap_quote_cp_and_appraisal_after(self):
+        from pokewalker.services import iv_items
+        await self.stock()
+        pokemon = await self.mon()
+        before, after = self.shown(pokemon), self.shown({**pokemon, **dict.fromkeys(iv_items.IVS, 15)})
+        self.assertEqual(await iv_items.quote(self.conn, 'p', 'mon', 'golden_bottlecap',
+                                              self.bot.content, self.walker.multipliers),
+                         {'cp_before': before[0], 'cp_after': after[0], 'stars_before': before[1],
+                          'stars_after': after[1], 'have': 1, 'perfect': False, 'deployed': False})
+        self.assertGreater(after[0], before[0])
+        self.assertEqual(after[1], 4)
+
+    async def test_perfect_target_refused_item_kept(self):
+        await self.stock()
+        await self.conn.execute('UPDATE pokemon SET iv_attack=15,iv_defense=15,iv_stamina=15')
+        before = await self.snapshot()
+        self.assertEqual((await self.use())['status'], 'perfect')
+        self.assertEqual(await self.snapshot(), before)
+
+    async def test_gym_deployed_target_refused(self):
+        await self.stock()
+        await self.deploy()
+        # Deployed wins over stale, perfect and missing, just as the ordinary Bottlecap.
+        await self.conn.execute('UPDATE pokemon SET iv_attack=15,iv_defense=15,iv_stamina=15')
+        await self.conn.execute('DELETE FROM ex_items')
+        before = await self.snapshot()
+        self.assertEqual((await self.use())['status'], 'deployed')
+        self.assertEqual(await self.snapshot(), before)
+
+    async def test_golden_stale_and_missing_spend_nothing(self):
+        await self.stock()
+        for sql, uid, expected in (
+                ('UPDATE pokemon SET revision=1,iv_attack=15,iv_defense=15,iv_stamina=15', 'mon', 'stale'),
+                ("UPDATE pokemon SET profile_id='q'", 'mon', 'stale'),
+                ("UPDATE pokemon SET profile_id='p',revision=0,iv_attack=1", 'absent', 'stale'),
+                ("UPDATE pokemon SET state='sent'", 'mon', 'stale'),
+                ("UPDATE pokemon SET state='owned'", 'absent', 'stale'),
+                ('DELETE FROM ex_items', 'mon', 'missing')):
+            with self.subTest(sql=sql, uid=uid):
+                await self.conn.execute(sql)
+                before = await self.snapshot()
+                self.assertEqual((await self.use(uid=uid))['status'], expected)
+                self.assertEqual(await self.snapshot(), before)
+        await self.conn.execute('UPDATE pokemon SET iv_attack=15')
+        self.assertEqual((await self.use())['status'], 'perfect')
+
+    async def test_golden_replay_returns_used_after_ivs_and_stock_change(self):
+        await self.stock()
+        result = await self.use()
+        for change in ('UPDATE pokemon SET iv_attack=1,revision=revision+1',
+                       "UPDATE pokemon SET profile_id='q'", "UPDATE pokemon SET state='sent'",
+                       'DELETE FROM ex_items'):
+            await self.conn.execute(change)
+            before = await self.snapshot()
+            self.assertEqual(await self.use(), result)
+            self.assertEqual(await self.snapshot(), before)
+        for column, value in (('profile_id', 'q'), ('action', 'ex_claim')):
+            await self.conn.execute("UPDATE action_receipts SET profile_id='p',action='golden_bottlecap'")
+            await self.conn.execute(f'UPDATE action_receipts SET {column}=?', (value,))
+            before = await self.snapshot()
+            self.assertEqual((await self.use())['status'], 'stale')
+            self.assertEqual(await self.snapshot(), before)
+
+    async def test_golden_authorization_and_ledger_failure_are_atomic(self):
+        await self.stock()
+        await self.conn.execute("CREATE TRIGGER fail_golden BEFORE INSERT ON resource_ledger "
+                                "WHEN NEW.resource='ex_item' BEGIN SELECT RAISE(ABORT,'golden ledger'); END")
+        before = await self.snapshot()
+        with self.assertRaisesRegex(sqlite3.IntegrityError, 'golden ledger'):
+            await self.use()
+        self.assertEqual(await self.snapshot(), before)
+        await self.conn.execute('DROP TRIGGER fail_golden')
+        await self.conn.execute("INSERT INTO restrictions(guild_id,user_id,paused,paused_until) "
+                                "VALUES ('123','456',1,9999999999)")
+        self.assertEqual((await self.use())['status'], 'used')
+        await self.conn.execute('UPDATE restrictions SET excluded=1')
+        before = await self.snapshot()
+        self.assertEqual((await self.use())['status'], 'excluded')
+        self.assertEqual((await self.use(session={**self.session, 'profile_id': 'q'}))['status'], 'stale')
+        self.assertEqual(await self.snapshot(), before)
+
+
 class TimeGearTests(unittest.IsolatedAsyncioTestCase):
     _base = test_arena.ArenaTests
     profile, scalar, rows = _base.profile, _base.scalar, _base.rows

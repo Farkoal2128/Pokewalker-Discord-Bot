@@ -1,6 +1,7 @@
 """Private EX-Gift inventory, paged deliveries and claim-all screen."""
 
 from datetime import datetime, timezone
+from functools import partial
 import json
 
 import discord
@@ -28,7 +29,7 @@ def render(state):
             ('Next', 'ex_gift_next', offset + 10 >= total), ('Back', 'home', False)):
         view.add_item(discord.ui.Button(label=label, custom_id=custom_id(state, action),
                                         disabled=disabled, row=0))
-    for item in ('time_gear_fragment', 'shiny_patch'):
+    for item in ('time_gear_fragment', *iv_items.EX_ITEMS):
         quantity = state['held'].get(item, 0)
         if quantity > 0:
             view.add_item(discord.ui.Button(label=f'Use {service.EX_ITEMS[item]} ({quantity})',
@@ -57,17 +58,21 @@ def render_picker(state):
         view.add_item(discord.ui.Select(custom_id=custom_id(state, 'ex_pick'), row=1,
                                        options=[discord.SelectOption(label=row['label'], value=row['pokemon_uid'])
                                                 for row in state['rows']]))
-    return {'embed': discord.Embed(title='Use Shiny Patch', description='Pick a Pokémon.' if total else
+    return {'embed': discord.Embed(title=f"Use {service.EX_ITEMS[state['selection']['ex_item']]}", description='Pick a Pokémon.' if total else
                                    'You have no Pokémon to pick.'), 'view': view}
 
 
-def render_shiny_preview(state):
+def render_item_preview(state):
+    item, quote = state['item'], state['quote']
+    name = service.EX_ITEMS[item]
+    text = (f"{state['name']} becomes shiny. Uses 1 Shiny Patch (have {quote['have']})."
+            if item == 'shiny_patch' else
+            f"CP {quote['cp_before']} → {quote['cp_after']} · Appraisal {quote['stars_before']} → "
+            f"{quote['stars_after']} stars · uses 1 {name} (have {quote['have']})")
     view = discord.ui.View(timeout=None)
-    for label, action in (('Confirm', 'ex_shiny_patch_confirm'), ('Back', state['back'])):
+    for label, action in (('Confirm', f'ex_{item}_confirm'), ('Back', state['back'])):
         view.add_item(discord.ui.Button(label=label, custom_id=custom_id(state, action)))
-    return {'embed': discord.Embed(title='Use Shiny Patch', description=
-                                   f"{state['name']} becomes shiny. Uses 1 Shiny Patch (have {state['have']})."),
-            'view': view}
+    return {'embed': discord.Embed(title=f'Use {name}', description=text), 'view': view}
 
 
 def handlers(walker):
@@ -142,12 +147,12 @@ def handlers(walker):
                                         f"CP {storage.stats(walker.bot.content, row, walker.multipliers)['cp']}"
                                         + (' · Shiny' if row['shiny'] else '')} for row in rows]})
 
-    async def shiny_picker(conn, session, interaction):
-        return await pick_page(conn, session, {'phase': 'ex_pick', 'ex_item': 'shiny_patch', 'offset': 0})
+    async def item_picker(conn, session, interaction, *, item):
+        return await pick_page(conn, session, {'phase': 'ex_pick', 'ex_item': item, 'offset': 0})
 
     async def pick_paging(conn, session, interaction, delta):
         selection = json.loads(session['selection'])
-        if selection.get('phase') != 'ex_pick' or selection.get('ex_item') != 'shiny_patch':
+        if selection.get('phase') != 'ex_pick' or selection.get('ex_item') not in iv_items.EX_ITEMS:
             raise _Refused(REOPEN)
         selection['offset'] = max(0, selection['offset'] + delta)
         return await pick_page(conn, session, selection)
@@ -158,29 +163,35 @@ def handlers(walker):
     async def pick_next(conn, session, interaction):
         return await pick_paging(conn, session, interaction, 10)
 
-    def shiny_refusal(status):
+    def item_refusal(status, item):
+        name = service.EX_ITEMS[item]
         return {'shiny': 'It is already shiny. No Shiny Patch was used.',
-                'missing': 'You have no Shiny Patch. Nothing was used.',
+                'perfect': f'Its IVs are already perfect. No {name} was used.',
+                'missing': f'You have no {name}. Nothing was used.',
+                'deployed': 'Recall it from the gym first',
                 'stale': 'That Pokémon changed. Pick it again.', 'excluded': EXCLUDED}.get(status, REOPEN)
 
-    async def shiny_preview(conn, session, interaction):
+    async def item_preview(conn, session, interaction, *, item):
         selection = json.loads(session['selection'])
         pokemon = await storage.detail(conn, session['profile_id'], selection.get('pokemon_uid'))
         if pokemon is None or pokemon['revision'] != selection.get('pokemon_revision'):
             raise _Refused(REOPEN)
-        quote = await iv_items.quote(conn, session['profile_id'], pokemon['pokemon_uid'], 'shiny_patch',
+        quote = await iv_items.quote(conn, session['profile_id'], pokemon['pokemon_uid'], item,
                                     walker.bot.content, walker.multipliers)
-        status = 'shiny' if quote['shiny'] else 'missing' if quote['have'] < 1 else None
+        status = (('shiny' if quote['shiny'] else None) if item == 'shiny_patch' else
+                  'deployed' if quote['deployed'] else 'perfect' if quote['perfect'] else None)
+        status = status or ('missing' if quote['have'] < 1 else None)
         if status is not None:
-            raise _Refused(shiny_refusal(status))
-        selection['ex_preview'] = 'shiny_patch'
+            raise _Refused(item_refusal(status, item))
+        selection['ex_preview'] = item
         session['selection'] = json.dumps(selection)
-        return render_shiny_preview({'session': session, 'name': storage.identify(walker.bot.content, pokemon)[0]['name_en'],
-                                     'have': quote['have'], 'back': selection.get('ex_back', 'storage_detail')})
+        return render_item_preview({'session': session, 'item': item, 'quote': quote,
+                                    'name': storage.identify(walker.bot.content, pokemon)[0]['name_en'],
+                                    'back': selection.get('ex_back', 'storage_detail')})
 
     async def pick(conn, session, interaction):
         selection = json.loads(session['selection'])
-        if selection.get('phase') != 'ex_pick' or selection.get('ex_item') != 'shiny_patch':
+        if selection.get('phase') != 'ex_pick' or selection.get('ex_item') not in iv_items.EX_ITEMS:
             raise _Refused(REOPEN)
         values = interaction.data.get('values', [])
         if not values:
@@ -192,22 +203,25 @@ def handlers(walker):
         selection.update(pokemon_uid=pokemon['pokemon_uid'], pokemon_revision=pokemon['revision'], ex_back='ex_pick')
         selection.pop('ex_preview', None)
         session['selection'] = json.dumps(selection)
-        return await shiny_preview(conn, session, interaction)
+        return await item_preview(conn, session, interaction, item=selection['ex_item'])
 
-    async def shiny_confirm(conn, session, interaction):
+    async def item_confirm(conn, session, interaction, *, item):
         selection = json.loads(session['selection'])
-        if selection.get('ex_preview') != 'shiny_patch':
-            raise _Refused('Preview the Shiny Patch before confirming.')
+        if selection.get('ex_preview') != item:
+            raise _Refused(f'Preview the {service.EX_ITEMS[item]} before confirming.')
         result = await iv_items.use(conn, session, selection.get('pokemon_uid'), selection.get('pokemon_revision'),
-                                    'shiny_patch', walker.bot.content, walker.multipliers)
+                                    item, walker.bot.content, walker.multipliers)
         if result['status'] != 'used':
-            raise _Refused(shiny_refusal(result['status']))
+            raise _Refused(item_refusal(result['status'], item))
         if selection.get('ex_back') == 'ex_pick':
             name = storage.identify(walker.bot.content, result['pokemon'])[0]['name_en']
-            return await show(conn, session, {'phase': 'ex_gift', 'offset': 0}, f'{name} is now shiny.')
+            notice = f'{name} is now shiny.' if item == 'shiny_patch' else f"{name}'s IVs are now 15 / 15 / 15."
+            return await show(conn, session, {'phase': 'ex_gift', 'offset': 0}, notice)
         return await walker.handlers['storage_detail'](conn, session, interaction)
 
     return {'ex_gift': open_gifts, 'ex_gift_prev': previous, 'ex_gift_next': next_page, 'ex_claim': claim,
             'ex_use_time_gear_fragment': time_gear_preview, 'ex_time_gear_confirm': time_gear_confirm,
-            'ex_use_shiny_patch': shiny_picker, 'ex_pick': pick, 'ex_pick_prev': pick_previous,
-            'ex_pick_next': pick_next, 'ex_preview_shiny_patch': shiny_preview, 'ex_shiny_patch_confirm': shiny_confirm}
+            'ex_pick': pick, 'ex_pick_prev': pick_previous, 'ex_pick_next': pick_next,
+            **{action: partial(handler, item=item) for item in iv_items.EX_ITEMS for action, handler in
+               ((f'ex_use_{item}', item_picker), (f'ex_preview_{item}', item_preview),
+                (f'ex_{item}_confirm', item_confirm))}}
