@@ -15,7 +15,7 @@ from discord import app_commands
 from content.balance import load_table
 from pokewalker.bot import screens, storage
 from pokewalker.bot import research, powerup, pokedex
-from pokewalker.bot import evolve, gyms, iv_items, arena
+from pokewalker.bot import evolve, gyms, iv_items, arena, ex_gift
 from pokewalker.bot import milestones, bag, route, share, trade
 from pokewalker.services import arena as arena_service
 from pokewalker.services.milestones import pending_count
@@ -86,6 +86,7 @@ class Walker:
         self.handlers.update(share.handlers(self))
         self.handlers.update(gyms.handlers(self))
         self.handlers.update(arena.handlers(self))
+        self.handlers.update(ex_gift.handlers(self))
         self.handlers.update(trade.handlers(self))
         self.before_home = self.recover_terminal
         self._locks = WeakValueDictionary()

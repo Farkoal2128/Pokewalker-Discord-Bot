@@ -1923,3 +1923,23 @@ players and cooldowns reset. One mod_audit row per call records target guild, ow
 actor, target kind user|guild, action cooldown_reset and the choice as reason.
 Adding these commands changes the admin guild's command manifest, so that guild must
 be re-synced. Tests: tests/test_cooldown_reset.py.
+
+## C5: EX-Gift screen (EXG-9, additive)
+The private EX-Gift screen is titled "EX-Gift". It lists unclaimed gifts oldest
+first, ten per page: "New gifts: <total> · page <p>/<pages>", then one line per
+gift, "<YYYY-MM-DD UTC>: <labels joined by comma and space>" using the EX-Gift
+catalog labels. At zero it says "No new gifts.". "EX items:" follows, with one
+"<name> ×<n>" line per held kind, or "No EX items yet.". Any notice follows.
+Row 0 contains Claim (ex_claim, disabled without gifts), Prev (ex_gift_prev),
+Next (ex_gift_next), and Back (home). Prev and Next are disabled at their ends.
+Opening ex_gift resets selection to phase ex_gift, offset 0; paging moves by ten
+within the total, falling back to the last page when another claim removes gifts.
+Claim takes every unclaimed gift, resets the offset to zero, and reports
+"Claimed <g> gifts: <i> items went to your Inbox." followed by
+"EX items added: Shiny Patch ×1, …" for credited EX kinds, when any. With no
+gifts it reports "No new gifts to claim.". Ordinary items and Arena Tickets go
+to the reward inbox; EX-items stay in the separate EX inventory. Paused members
+may claim. The router's excluded, opted-out, session and revision guards still
+apply; service excluded and stale refusals use EXCLUDED and REOPEN respectively.
+Producer: bot.ex_gift and Walker; consumers: private Discord interactions and
+services.ex_gift. No slash command or service change. Tests: test_ex_gift_screens.py.
