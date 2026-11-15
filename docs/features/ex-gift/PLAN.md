@@ -114,7 +114,7 @@ Every build row is `seam` (PIPELINE.md:13: slash commands and interactions, pers
 | 4 | [EXG-3](tickets/EXG-3.md) reward inbox: ticket rows claim into `arena_tickets`; EX-Gift labels | build | seam | S | ✅ done · b2b6cbe · GO review-seam r2 |
 | 5 | [EXG-4](tickets/EXG-4.md) service: giftable catalog, send fan-out, history reads | build | seam | M | ✅ done · 47bc703 · GO review-seam r1 |
 | 6 | [EXG-5](tickets/EXG-5.md) `/admin gift`: manager editor and preview | build | seam | L | ✅ done · 443ecf8 · GO review-seam r2 |
-| 7 | [EXG-6](tickets/EXG-6.md) manager Confirm, draft states, receipt | build | seam | M | ❌ blocked: commit deadline/discard boundary requires design decision r1 |
+| 7 | [EXG-6](tickets/EXG-6.md) manager Confirm, draft states, receipt | build | seam | M | ✅ done · 99788bd · GO review-seam r2 |
 | 8 | [EXG-20](tickets/EXG-20.md) profile deletion discards drafts targeting it | build | seam | S | pending |
 | 9 | [EXG-7](tickets/EXG-7.md) `/admin gift-history` | build | seam | S | pending |
 | 10 | [EXG-8](tickets/EXG-8.md) service: claim and EX inventory | build | seam | M | pending |
@@ -133,7 +133,7 @@ Every build row is `seam` (PIPELINE.md:13: slash commands and interactions, pers
 
 ## 5. Briefs
 
-Each build row's brief is its ticket, linked in §4. §6 acceptance cases are distributed over the tickets' named tests; no row needs a package change or a new owner decision, so the plan has no other 🚦 row.
+Build briefs are linked in §4. §6 acceptance cases are distributed over the tickets' named tests; no row needs a package change or a new owner decision, so the plan has no other 🚦 row.
 
 **G-A · G-P (owner).** Asks: approve this plan; confirm Home `feature/ex-gift` (current checkout, cut from `main` at `5a68d79`); choose the delivery and push scope of §3.4. Stop if: the Home lacks `8c5fa33` (`git merge-base --is-ancestor 8c5fa33 feature/ex-gift`).
 
