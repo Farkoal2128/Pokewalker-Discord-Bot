@@ -16,7 +16,7 @@
 - `tests/test_screens.py`: `test_home_ex_gift_label_with_and_without_badge`, `test_home_ex_gift_enabled_when_registered`
 - `tests/test_ex_gift_screens.py`: `test_badge_shows_while_unclaimed_clears_after_claim`, `test_badge_ignores_held_and_armed_ex_items`, `test_badge_per_server_profile` (a user enrolled in two servers sees each server's own state)
 
-Pin moves only by the new label: `tests/test_screens.py:33` gains `"EX-Gift"` after `"Inbox (0)"`.
+Pin moves only by the new button: `tests/test_screens.py:33` gains `"EX-Gift"` after `"Inbox (0)"`, and `:63`'s total moves from 8 to 9 (supervisor fix 2026-11-15; the row-and-width checks stay).
 
 **Verify.** Focused (`Tests-Focused` on the staged tree; boundary G-F). `python -m unittest discover -s tests -p "test_<m>.py"` for `screens`, `ex_gift_screens`, `walker_router`, `milestones`, `route`; `git -c core.whitespace=cr-at-eol diff --cached --check`.
 
