@@ -115,7 +115,7 @@ Every build row is `seam` (PIPELINE.md:13: slash commands and interactions, pers
 | 5 | [EXG-4](tickets/EXG-4.md) service: giftable catalog, send fan-out, history reads | build | seam | M | ✅ done · 47bc703 · GO review-seam r1 |
 | 6 | [EXG-5](tickets/EXG-5.md) `/admin gift`: manager editor and preview | build | seam | L | ✅ done · 443ecf8 · GO review-seam r2 |
 | 7 | [EXG-6](tickets/EXG-6.md) manager Confirm, draft states, receipt | build | seam | M | ✅ done · 99788bd · GO review-seam r2 |
-| 8 | [EXG-20](tickets/EXG-20.md) profile deletion discards drafts targeting it | build | seam | S | pending |
+| 8 | [EXG-20](tickets/EXG-20.md) profile deletion discards drafts targeting it | build | seam | S | ✅ done · 4002449 · GO review-seam r1 |
 | 9 | [EXG-7](tickets/EXG-7.md) `/admin gift-history` | build | seam | S | pending |
 | 10 | [EXG-8](tickets/EXG-8.md) service: claim and EX inventory | build | seam | M | pending |
 | 11 | [EXG-9](tickets/EXG-9.md) EX-Gift screen with Claim | build | seam | M | pending |
