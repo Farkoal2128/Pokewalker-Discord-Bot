@@ -391,6 +391,39 @@ class DeletionTests(unittest.IsolatedAsyncioTestCase):
             await self.service().replay_markers(writer, self.path)
             await self.assert_arena_traces_removed(restored)
 
+    async def test_replay_after_restore_removes_ex_gift_rows_and_receipts(self):
+        from pokewalker.services import ex_gift
+        from test_ex_gift import CONTENT
+        self.assertTrue(callable(getattr(ex_gift, 'claim', None)), 'EX-Gift claim provider is absent')
+        session = dict(session_id=str(uuid4()), profile_id=self.profile_id, guild_id='1', user_id='2', revision=0)
+        await self.conn.execute('INSERT INTO sessions(session_id,guild_id,user_id,profile_id,expires_at) '
+                                'VALUES (?,?,?,?,1e12)',
+                                tuple(session[k] for k in ('session_id', 'guild_id', 'user_id', 'profile_id')))
+
+        async def send(conn, gift_id):
+            return await ex_gift.send(conn, send_id=gift_id, owner_id='owner', admin_guild_id='1',
+                                      scope='user', guild_id='1', user_id='2',
+                                      items=['poke_ball', 'ex_attack'], content=CONTENT, now=10)
+
+        await self.writer.run(lambda conn: send(conn, 'claimed'))
+        await self.writer.run(lambda conn: ex_gift.claim(conn, session, 20))
+        await self.writer.run(lambda conn: send(conn, 'unclaimed'))
+        backup = self.db_path.parent / 'ex-before-delete.sqlite3'
+        with closing(sqlite3.connect(backup)) as destination:
+            await self.conn.backup(destination)
+        await self.run_marker()
+        restored = await open_db(backup)
+        self.addAsyncCleanup(restored.close)
+        writer = Writer(restored)
+        self.addAsyncCleanup(writer.close)
+        for table, count in [('ex_gift_recipients', 2), ('ex_items', 1), ('inbox_items', 1), ('action_receipts', 1)]:
+            self.assertEqual(len(await restored.execute_fetchall(f'SELECT * FROM {table}')), count, table)
+        for _ in range(2):
+            await self.service().replay_markers(writer, self.path)
+            for table in ('ex_gift_recipients', 'ex_items', 'inbox_items', 'action_receipts', 'resource_ledger'):
+                self.assertEqual(await restored.execute_fetchall(f'SELECT * FROM {table}'), [], table)
+            self.assertEqual(len(await restored.execute_fetchall('SELECT * FROM ex_gifts')), 2)
+
     async def holder(self):
         await self.conn.execute(
             "INSERT INTO pokemon(pokemon_uid,profile_id,pokemon_id,level_x2,iv_attack,iv_defense,"

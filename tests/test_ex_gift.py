@@ -3,13 +3,18 @@
 import importlib
 import importlib.util
 import json
+from datetime import datetime, timezone
 from pathlib import Path
+import random
+import re
+import sqlite3
 import unittest
 from unittest.mock import patch
+from uuid import uuid4
 
 from content.balance import load_table
 from pokewalker.db import Writer
-from pokewalker.services import iv_items
+from pokewalker.services import deletion, iv_items, profiles
 import test_db
 
 
@@ -263,3 +268,197 @@ class ExGiftTests(unittest.IsolatedAsyncioTestCase):
         for key in self.service.EX_ITEMS:
             await self.conn.execute('INSERT INTO ex_items VALUES (?,?,1)', (self.p1, key))
         self.assertEqual(await self.scalar('SELECT count(*) FROM ex_items'), 6)
+
+
+class ExGiftClaimTests(unittest.IsolatedAsyncioTestCase):
+    asyncSetUp = ExGiftTests.asyncSetUp
+    scalar = ExGiftTests.scalar
+    profile = ExGiftTests.profile
+    send = ExGiftTests.send
+    rows = ExGiftTests.rows
+
+    async def session(self, **overrides):
+        session = dict(session_id=str(uuid4()), profile_id=self.p1, guild_id='g', user_id='u',
+                       revision=9, _original_revision=3)
+        session.update(overrides)
+        await self.conn.execute('INSERT INTO sessions(session_id,guild_id,user_id,profile_id,expires_at) '
+                                'VALUES (?,?,?,?,1e12)',
+                                tuple(session[k] for k in ('session_id', 'guild_id', 'user_id', 'profile_id')))
+        await self.conn.commit()
+        return session
+
+    async def claim(self, session=None, now=200):
+        self.assertTrue(callable(getattr(self.service, 'claim', None)), 'EX-Gift claim provider is absent')
+        session = session or await self.session()
+        return await self.writer.run(lambda conn: self.service.claim(conn, session, now))
+
+    async def snapshot(self):
+        return {table: await self.rows(table) for table in
+                ('ex_gift_recipients', 'ex_items', 'inbox_items', 'resource_ledger', 'action_receipts')}
+
+    async def test_claim_routes_items_tickets_and_ex_items(self):
+        package = ['poke_ball', 'poke_ball', 'arena_ticket:gold', 'shiny_patch', 'shiny_patch',
+                   'golden_bottlecap', 'ex_attack', 'ex_defense', 'arena_ex_voucher', 'time_gear_fragment']
+        await self.send(items=package)
+        session = await self.session()
+        counts = dict.fromkeys(self.service.EX_ITEMS, 1)
+        counts['shiny_patch'] = 2
+        self.assertEqual(await self.claim(session), dict(status='claimed', gifts=1, inbox=3, ex=counts))
+        inbox = await self.rows('inbox_items')
+        self.assertEqual([(r['profile_id'], r['milestone_id'], r['resource'], r['resource_id'],
+                           r['remaining'], r['created_at']) for r in inbox],
+                         [(self.p1, 'ex_gift:send', 'item', 'poke_ball', 1, 200)] * 2 +
+                         [(self.p1, 'ex_gift:send', 'arena_ticket', 'gold', 1, 200)])
+        self.assertEqual(await self.service.held(self.conn, self.p1), counts)
+        self.assertEqual({(r['resource'], r['resource_id'], r['delta'], r['reason'])
+                          for r in await self.rows('resource_ledger')},
+                         {('ex_item', key, n, 'ex_claim') for key, n in counts.items()})
+        ledger = await self.rows('resource_ledger')
+        self.assertEqual(len(ledger), 6)
+        self.assertTrue(all(r['profile_id'] == self.p1 and r['receipt_key'] ==
+                            f"ex_claim:{session['session_id']}:3" for r in ledger))
+        receipt = (await self.rows('action_receipts'))[0]
+        self.assertEqual((receipt['key'], receipt['action'], receipt['profile_id']),
+                         (f"ex_claim:{session['session_id']}:3", 'ex_claim', self.p1))
+        self.assertEqual(await self.rows('inventory'), [])
+        self.assertEqual(await self.rows('arena_tickets'), [])
+
+    async def test_claim_takes_every_unclaimed_gift_once(self):
+        for gift_id, at in [('z', 300), ('a', 100), ('b', 100)]:
+            await self.send(send_id=gift_id, now=at, items=['poke_ball', 'ex_attack'])
+        result = await self.claim()
+        self.assertEqual(result, dict(status='claimed', gifts=3, inbox=3, ex={'ex_attack': 3}))
+        self.assertEqual([r['milestone_id'] for r in await self.rows('inbox_items')],
+                         ['ex_gift:a', 'ex_gift:b', 'ex_gift:z'])
+        recipients = await self.rows('ex_gift_recipients')
+        self.assertTrue(all(r['claimed_at'] == 200 for r in recipients if r['profile_id'] == self.p1))
+        self.assertTrue(all(r['claimed_at'] is None for r in recipients if r['profile_id'] != self.p1))
+        self.assertEqual(len(await self.rows('resource_ledger')), 1)
+
+    async def test_second_session_claims_nothing(self):
+        await self.send(items=['poke_ball', 'ex_attack'])
+        await self.claim()
+        before = {t: await self.rows(t) for t in ('inbox_items', 'ex_items', 'resource_ledger')}
+        second = await self.session()
+        del second['_original_revision']
+        self.assertEqual(await self.claim(second), dict(status='claimed', gifts=0, inbox=0, ex={}))
+        self.assertEqual((await self.rows('action_receipts'))[-1]['key'], f"ex_claim:{second['session_id']}:9")
+        self.assertEqual({t: await self.rows(t) for t in before}, before)
+
+    async def test_same_press_replays_without_effect(self):
+        await self.send(items=['poke_ball', 'ex_attack'])
+        session = await self.session()
+        result = await self.claim(session)
+        await self.send(send_id='later', items=['shiny_patch'])
+        before = await self.snapshot()
+        self.assertEqual(await self.claim(dict(session, revision=10), now=999), result)
+        self.assertEqual(await self.snapshot(), before)
+        self.assertEqual((await self.service.unclaimed(self.conn, self.p1, 0))[1], 1)
+
+    async def test_failure_mid_claim_rolls_back_everything(self):
+        await self.send(items=['ex_attack', 'poke_ball', 'poke_ball', 'poke_ball'])
+        session = await self.session()
+        await self.conn.execute("CREATE TRIGGER fail_third BEFORE INSERT ON inbox_items "
+                                "WHEN (SELECT count(*) FROM inbox_items)=2 "
+                                "BEGIN SELECT RAISE(ABORT,'third inbox insert'); END")
+        before = await self.snapshot()
+        with self.assertRaisesRegex(sqlite3.IntegrityError, 'third inbox insert'):
+            await self.claim(session)
+        self.assertEqual(await self.snapshot(), before)
+
+    async def test_excluded_or_stale_session_claims_nothing(self):
+        await self.send()
+        session = await self.session()
+        for invalid in (dict(session, profile_id=self.p2), dict(session, session_id='missing'),
+                        dict(session, user_id='v'), dict(session, guild_id='h')):
+            before = await self.snapshot()
+            self.assertEqual(await self.claim(invalid), {'status': 'stale'})
+            self.assertEqual(await self.snapshot(), before)
+        result = await self.claim(session)
+        await self.conn.execute("UPDATE restrictions SET excluded=1 WHERE guild_id='g' AND user_id='u'")
+        before = await self.snapshot()
+        self.assertEqual(await self.claim(session), {'status': 'excluded'})
+        self.assertEqual(await self.snapshot(), before)
+        self.assertEqual(result['gifts'], 1)
+
+    async def test_unclaimed_pages_oldest_first_with_offset_and_total(self):
+        self.assertTrue(callable(getattr(self.service, 'unclaimed', None)), 'EX-Gift paging is absent')
+        for n in reversed(range(11)):
+            await self.send(send_id=f'g{n:02}', now=n // 2, items=['poke_ball', 'shiny_patch'])
+        rows, total = await self.service.unclaimed(self.conn, self.p1, 0)
+        self.assertEqual(total, 11)
+        expected = [dict(gift_id=f'g{n:02}', created_at=n // 2, items=['poke_ball', 'shiny_patch'])
+                    for n in range(11)]
+        self.assertEqual(rows, expected[:10])
+        self.assertEqual(await self.service.unclaimed(self.conn, self.p1, 10), (expected[10:], 11))
+        self.assertEqual(await self.service.unclaimed(self.conn, self.p1, 20), ([], 11))
+
+    async def test_has_unclaimed_false_after_claim(self):
+        self.assertTrue(callable(getattr(self.service, 'has_unclaimed', None)), 'EX-Gift badge query is absent')
+        self.assertFalse(await self.service.has_unclaimed(self.conn, self.p1))
+        await self.send()
+        self.assertTrue(await self.service.has_unclaimed(self.conn, self.p1))
+        await self.claim()
+        self.assertFalse(await self.service.has_unclaimed(self.conn, self.p1))
+        self.assertTrue(await self.service.has_unclaimed(self.conn, self.p3))
+
+    async def test_recorded_own_other_and_absent(self):
+        self.assertTrue(callable(getattr(self.service, 'recorded', None)), 'Owned EX receipt lookup is absent')
+        await self.conn.execute("INSERT INTO action_receipts VALUES ('key','ex_claim','{\"status\":\"claimed\"}',0,?)",
+                                (self.p1,))
+        self.assertEqual(await self.service.recorded(self.conn, 'key', 'ex_claim', self.p1), {'status': 'claimed'})
+        for action, pid in [('ex_claim', self.p2), ('ex_arm', self.p1)]:
+            self.assertEqual(await self.service.recorded(self.conn, 'key', action, pid), {'status': 'stale'})
+        self.assertIsNone(await self.service.recorded(self.conn, 'absent', 'ex_claim', self.p1))
+
+        await self.send()
+        session = await self.session()
+        key = f"ex_claim:{session['session_id']}:3"
+        for action, pid in [('ex_claim', self.p2), ('ex_arm', self.p1)]:
+            await self.conn.execute('INSERT OR REPLACE INTO action_receipts VALUES (?,?,?,0,?)',
+                                    (key, action, '{"status":"claimed"}', pid))
+            before = await self.snapshot()
+            self.assertEqual(await self.claim(session), {'status': 'stale'})
+            self.assertEqual(await self.snapshot(), before)
+
+    async def test_held_and_take_never_below_zero(self):
+        self.assertTrue(callable(getattr(self.service, 'held', None)), 'EX inventory lookup is absent')
+        self.assertEqual(await self.service.held(self.conn, self.p1), dict.fromkeys(self.service.EX_ITEMS, 0))
+        self.assertFalse(await self.service.take(self.conn, self.p1, 'ex_attack'))
+        await self.conn.execute("INSERT INTO ex_items VALUES (?,'ex_attack',2)", (self.p1,))
+        self.assertFalse(await self.service.take(self.conn, self.p2, 'ex_attack'))
+        for expected in (True, True, False):
+            self.assertIs(await self.service.take(self.conn, self.p1, 'ex_attack'), expected)
+        self.assertEqual(await self.service.held(self.conn, self.p1), dict.fromkeys(self.service.EX_ITEMS, 0))
+
+    async def test_ex_items_has_no_cap(self):
+        for n in range(100):
+            await self.send(send_id=f'uncapped{n}', items=['ex_attack'] * 10)
+        self.assertEqual(await self.claim(), dict(status='claimed', gifts=100, inbox=0, ex={'ex_attack': 1000}))
+        self.assertEqual((await self.service.held(self.conn, self.p1))['ex_attack'], 1000)
+
+    async def test_delete_reenrol_and_replay_leave_no_gift_or_ex_item(self):
+        await self.send(scope='user', guild_id='g', user_id='u', items=['ex_attack', 'poke_ball'])
+        session = await self.session()
+        await self.claim(session)
+        await self.send(send_id='unclaimed', scope='user', guild_id='g', user_id='u')
+        state = deletion.State(delete_ids={self.p1})
+        await self.writer.run(lambda conn: deletion.apply(conn, {('g', 'u'): state}))
+        replacement = await self.writer.run(lambda conn: profiles.enroll(
+            conn, 'g', 'u', CONTENT['starters'][0], CONTENT, random.Random(1), datetime.now(timezone.utc)))
+        self.assertNotEqual(replacement['profile_id'], self.p1)
+        for _ in range(2):
+            await self.writer.run(lambda conn: deletion.apply(conn, {('g', 'u'): state}, replay=True))
+        for table in ('ex_gift_recipients', 'ex_items', 'inbox_items'):
+            self.assertEqual(await self.rows(table), [], table)
+        self.assertEqual(await self.conn.execute_fetchall('SELECT * FROM action_receipts WHERE profile_id=?',
+                                                         (self.p1,)), [])
+        self.assertEqual(await self.claim(session), {'status': 'stale'})
+        self.assertEqual(await self.claim(await self.session(profile_id=replacement['profile_id'])),
+                         dict(status='claimed', gifts=0, inbox=0, ex={}))
+        self.assertEqual(len(await self.rows('ex_gifts')), 2)
+
+    def test_only_this_module_writes_ex_items(self):
+        writers = {path.as_posix() for path in Path('pokewalker').rglob('*.py')
+                   if re.search(r'\b(?:INTO|UPDATE)\s+ex_items\b', path.read_text(encoding='utf-8'), re.I)}
+        self.assertEqual(writers, {'pokewalker/services/ex_gift.py'})
