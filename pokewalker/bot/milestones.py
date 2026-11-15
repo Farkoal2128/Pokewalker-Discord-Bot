@@ -78,6 +78,8 @@ def _reward_name(row, content):
         return 'Stardust'
     if resource == 'candy':
         return f"{_species_name(content, content.get('families', {}).get(str(resource_id), [resource_id])[0])} Candy"
+    if resource == 'arena_ticket':
+        return f'{resource_id.title()} Arena Ticket'
     return str(resource_id or 'Item').replace('_', ' ').title()
 
 
@@ -85,6 +87,8 @@ async def _gym_labels(conn, session, details):
     labels = {}
     for row in details:
         key = row['milestone_id']
+        if key.startswith('ex_gift:'):
+            labels[key] = 'EX-Gift'
         if key.startswith('arena_month:'):
             parts = key.split(':')
             label = 'Arena leaderboard reward'
@@ -146,7 +150,9 @@ def render(state, content):
     lines = [f"Moved: {sum(moved.values())}", f"Waiting: {sum(waiting.values())}"]
     for resource in ('item', 'stardust', 'candy'):
         lines.append(f"{resource.title()}: moved {moved.get(resource, 0)} / waiting {waiting.get(resource, 0)}")
-    if waiting:
+    if moved.get('arena_ticket', 0) > 0 or waiting.get('arena_ticket', 0) > 0:
+        lines.append(f"Arena tickets: moved {moved.get('arena_ticket', 0)} / waiting {waiting.get('arena_ticket', 0)}")
+    if any(resource != 'arena_ticket' for resource in waiting):
         lines.append('Items wait for bag space; rare rewards wait for an empty pocket.')
     moved_lines = _detail_lines(state.get('moved_details', []), content, state.get('labels', {}))
     waiting_lines = _detail_lines(state.get('waiting_details', []), content, state.get('labels', {}))

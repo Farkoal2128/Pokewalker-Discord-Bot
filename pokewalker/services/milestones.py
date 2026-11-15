@@ -161,6 +161,10 @@ async def claim(conn, session, now):
             elif resource == 'stardust':
                 await conn.execute('UPDATE profiles SET stardust=stardust+? WHERE profile_id=?',
                                    (amount, session['profile_id']))
+            elif resource == 'arena_ticket':
+                await conn.execute('INSERT INTO arena_tickets VALUES (?,?,?) ON CONFLICT(profile_id,tier) '
+                                   'DO UPDATE SET quantity=quantity+excluded.quantity',
+                                   (session['profile_id'], resource_id, amount))
             else:
                 await conn.execute('INSERT INTO candy VALUES (?,?,?) ON CONFLICT(profile_id,family_id) '
                                    'DO UPDATE SET quantity=quantity+excluded.quantity',
@@ -168,7 +172,7 @@ async def claim(conn, session, now):
             if amount:
                 await conn.execute('UPDATE inbox_items SET remaining=remaining-? WHERE inbox_id=?',
                                    (amount, reward['inbox_id']))
-                moved[resource] += amount
+                moved[resource] = moved.get(resource, 0) + amount
                 lines.append({'profile_id': session['profile_id'], 'resource': resource,
                               'resource_id': resource_id, 'delta': amount, 'reason': 'milestone_claim'})
         await conn.execute('DELETE FROM inbox_items WHERE profile_id=? AND remaining=0', (session['profile_id'],))

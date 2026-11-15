@@ -1813,6 +1813,16 @@ A finished confirmed run replies "Deleted the game data of {d} of {m} profiles w
 left this server." The command manifest changes, so `sync-commands --global --yes` follows
 delivery. Tests: tests/test_admin_prune.py, tests/test_readme.py.
 
+## C5: EX-Gift reward inbox labels (EXG-3, additive)
+Inbox and Claim name arena_ticket rows by title-cased tier, such as "Bronze Arena
+Ticket". Every ex_gift: key is labelled "EX-Gift" without exposing the gift ID,
+for both waiting and moved details. After the Candy summary, "Arena tickets: moved
+<m> / waiting <w>" appears only when either ticket count is positive. Ticket rows
+do not trigger the bag-space explanation or bag expansion/conversion shortcuts.
+Existing ordinary reward summaries, claim receipts and lossless retention remain.
+Producers: services.milestones and bot.milestones; consumers: private Walker reward
+inbox and Arena ticket storage. Tests: tests/test_milestones.py.
+
 ## Owner amendment: D67 cooldown resets (2026-11-14)
 `/admin cooldown-user server_id user_id cooldown` and `/admin cooldown-server server_id
 cooldown` join the M4.5a `/admin` group: registered only in the admin guild, same
