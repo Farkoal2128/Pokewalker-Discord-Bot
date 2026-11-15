@@ -120,7 +120,7 @@ Every build row is `seam` (PIPELINE.md:13: slash commands and interactions, pers
 | 10 | [EXG-8](tickets/EXG-8.md) service: claim and EX inventory | build | seam | M | ✅ done · 56b678e · GO review-seam r1 |
 | 11 | [EXG-9](tickets/EXG-9.md) EX-Gift screen with Claim | build | seam | M | ✅ done · e64f122 · GO review-seam r1 |
 | 12 | [EXG-10](tickets/EXG-10.md) `/walker` home EX-Gift button and (!) | build | seam | S | ✅ done · 1e0cdd1 · GO review-seam r1 |
-| 13 | [EXG-11](tickets/EXG-11.md) Time Gear Fragment | build | seam | S | ? done ? b664503 ? GO review-seam r1 |
+| 13 | [EXG-11](tickets/EXG-11.md) Time Gear Fragment | build | seam | S | ✅ done · b664503 · GO review-seam r1 |
 | 14 | [EXG-12](tickets/EXG-12.md) Shiny Patch: EX-Gift picker, preview, confirm | build | seam | M | pending |
 | 15 | [EXG-13](tickets/EXG-13.md) Golden Bottlecap | build | seam | S | pending |
 | 16 | [EXG-14](tickets/EXG-14.md) service: EX-Attack/EX-Defense arming, run flags, boosted fights, X block | build | seam | M | pending |
