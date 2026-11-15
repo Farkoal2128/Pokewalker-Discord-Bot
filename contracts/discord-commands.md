@@ -708,7 +708,7 @@ Existing command shapes, persisted data and lifecycle exit meanings are compatib
 Tests: test_admin.py, test_client_lifecycle.py and affected adapter/config regressions.
 Live Discord, systemd restart handling and host acceptance remain unverified.
 
-### EX-Gift manager (additive, EXG-5)
+### EX-Gift manager (additive, EXG-5/EXG-6)
 
 `/admin gift scope:<all|server> [server_id] [user_id]` registers only in the
 admin guild. `all` takes neither ID; `server` requires a server ID and optionally
@@ -728,8 +728,8 @@ ten slots disable item picking. Remove needs a selected slot. This is at most
 five rows and 15 components (four rows and 14 components when empty).
 
 Every callback defers ephemerally, checks the draft owner, configured owner IDs,
-admin guild, deadline, a separate per-owner 30-per-minute bucket shared across
-drafts, and current exclusion through the writer. After awaits it rechecks draft
+admin guild, deadline, the applicable per-owner bucket shared across drafts,
+and current exclusion through the writer. After awaits it rechecks draft
 identity and permits editor changes/redraws only while editing. Refusals suppress
 mentions and change nothing. Cancel, expiry and view timeout use one discard
 operation: mark discarded, unregister only that draft, stop its view and clear
@@ -738,10 +738,30 @@ target IDs. Cancel leaves text without controls.
 Preview shows the send ID, scope, exact server/user target, every slot and the
 provisional targeted-server, populated-server and recipient counts. Zero recipients
 adds "No enrolled recipients: nothing can be sent." Edit preserves the package
-revision; Cancel discards. Confirm is introduced separately by EXG-6.
+revision; Cancel discards. Preview includes Confirm bound to that revision.
+Confirm takes the shared five-per-minute authorization token; other controls use
+the 30-per-minute callback bucket. After authorization/exclusion awaits, sent
+returns its stored receipt, sending refuses with "This gift is being sent.",
+discarded/unregistered refuses as expired, and a changed revision refuses with
+"The package changed. Preview it again." A valid Confirm changes editing to
+sending before queuing its writer job.
+
+The writer job checks draft identity, sending state and the absolute deadline
+both before send and after a sent result; a failed latter check raises to roll
+back every send write. The synchronous post-commit observer sets sent and stores
+the result, discards an expired draft, or restores editing for service refusals.
+A task shielded from callback cancellation owns settlement: rollback restores
+editing with the same revision/send ID only if still registered and sending;
+expiry discards. Callback cancellation never implies rollback. While sending,
+Edit, Cancel and retained picks refuse; after commit every stale control returns
+the same component-free receipt (send ID, scope, exact target, slots and committed
+counts), never an editor. Unsent results say "Nothing was sent." privately.
+Sent drafts remain registered until their deadline. On restart old controls have
+no registered handler, receive no acknowledgement and cannot send; committed
+sends remain available to gift-history (EXG-7).
 Producer: Admin and its EX-Gift view; consumers: configured owners and Discord's
 component serializer. Existing commands and persisted data remain compatible;
-tests: `test_admin_gift.py`, `test_admin.py`, `test_cooldown_reset.py`.
+tests: `test_admin_gift.py`, `test_admin.py`, `test_cooldown_reset.py`, `test_db.py`.
 
 ### M4.5a owner correction after review (2026-11-04)
 All configured-owner requests in the admin guild, across status/errors/restart

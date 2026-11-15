@@ -1,5 +1,7 @@
 """Owner-bound, temporary EX-Gift package editor (C5)."""
 
+import asyncio
+import time
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -10,6 +12,10 @@ from pokewalker.services import ex_gift
 
 EXPIRED = 'This gift draft expired. Run /admin gift again.'
 CATEGORIES = ('Balls', 'Berries', 'Rare', 'IV items', 'Arena', 'Evolution')
+
+
+class _Expired(Exception):
+    pass
 
 
 def attach(admin):
@@ -81,7 +87,9 @@ class GiftView(discord.ui.View):
             discard(draft)
             await self.refuse(interaction, EXPIRED)
             return False
-        wait = admin.throttled(admin.gift_callbacks, draft.owner_id, 30)
+        confirm = interaction.data.get('custom_id', '').startswith('gift_confirm:')
+        wait = admin.throttled(admin.requests if confirm else admin.gift_callbacks,
+                               draft.owner_id, 5 if confirm else 30)
         if wait is not None:
             await self.refuse(interaction, f'Slow down, try again in {wait} s.')
             return False
@@ -89,7 +97,7 @@ class GiftView(discord.ui.View):
             await self.refuse(interaction, 'Excluded owners cannot use admin commands.')
             return False
         self.timeout = max(0, draft.deadline - admin.bot.clock())
-        return await self.editable(interaction)
+        return True
 
     async def editable(self, interaction):
         draft = self.draft
@@ -98,15 +106,23 @@ class GiftView(discord.ui.View):
             discard(draft)
             await self.refuse(interaction, EXPIRED)
             return False
+        if draft.state == 'sent':
+            await self.receipt(interaction)
+            return False
         if draft.state != 'editing':
             await self.refuse(interaction, 'This gift is being sent.')
             return False
         return True
 
     def button(self, label, action, row, disabled=False):
-        item = discord.ui.Button(label=label, row=row, disabled=disabled)
+        revision = self.draft.revision
+        options = {'custom_id': f'gift_confirm:{self.draft.draft_id}:{revision}'} if action == 'Confirm' else {}
+        item = discord.ui.Button(label=label, row=row, disabled=disabled, **options)
         async def callback(interaction):
-            await self.action(interaction, action)
+            if action == 'Confirm':
+                await self.confirm(interaction, revision)
+            else:
+                await self.action(interaction, action)
         item.callback = callback
         self.add_item(item)
 
@@ -162,6 +178,7 @@ class GiftView(discord.ui.View):
                 await self.refuse(interaction, 'The gift target is no longer available.')
                 return
             self.clear_items()
+            self.button('Confirm', 'Confirm', 0)
             self.button('Edit', 'Edit', 0)
             self.button('Cancel', 'Cancel', 0)
             self.timeout = max(0, draft.deadline - draft.admin.bot.clock())
@@ -208,3 +225,60 @@ class GiftView(discord.ui.View):
             draft.revision += 1
             draft.send_id, draft.picked = uuid4().hex, None
         await self.editor(interaction)
+
+    async def receipt(self, interaction):
+        draft, result = self.draft, self.draft.result
+        text = f'Send ID: {result["gift_id"]}\nScope: {result["scope"]}'
+        if result['guild_id'] is not None:
+            text += f'\nServer ID: {result["guild_id"]}'
+        if draft.user_id is not None:
+            text += f'\nUser ID: {draft.user_id}'
+        text += '\n' + '\n'.join(f'{n + 1}. {ex_gift.label(key, draft.admin.bot.content)}'
+                                 for n, key in enumerate(result['items']))
+        text += (f'\nCounts (committed)\nTargeted servers: {result["servers"]}'
+                 f'\nServers with recipients: {result["servers_with_recipients"]}'
+                 f'\nRecipients: {result["recipients"]}')
+        await show(interaction, text)
+
+    async def confirm(self, interaction, revision):
+        if not await self.editable(interaction):
+            return
+        draft, bot = self.draft, self.draft.admin.bot
+        if revision != draft.revision:
+            await self.refuse(interaction, 'The package changed. Preview it again.')
+            return
+        def live():
+            return (draft.admin.gift_drafts.get(draft.draft_id) is draft
+                    and draft.state == 'sending' and bot.clock() < draft.deadline)
+        async def job(conn):
+            if not live():
+                return {'status': 'expired'}
+            result = await ex_gift.send(conn, send_id=draft.send_id, owner_id=draft.owner_id,
+                admin_guild_id=bot.settings.admin_guild_id, scope=draft.scope,
+                guild_id=draft.guild_id, user_id=draft.user_id, items=list(draft.slots),
+                content=bot.content, now=time.time())
+            if result['status'] == 'sent' and not live():
+                raise _Expired
+            return result
+        def record(result):
+            if result['status'] == 'sent':
+                draft.state, draft.result = 'sent', result
+            elif result['status'] == 'expired':
+                discard(draft)
+            else:
+                draft.state = 'editing'
+        async def settle():
+            try:
+                await bot.writer.run(job, after_commit=record)
+            except _Expired:
+                discard(draft)
+            except (Exception, asyncio.CancelledError):
+                if draft.admin.gift_drafts.get(draft.draft_id) is draft and draft.state == 'sending':
+                    draft.state = 'editing'
+        draft.state = 'sending'
+        draft.task = asyncio.create_task(settle())
+        await asyncio.shield(draft.task)
+        if draft.state == 'sent':
+            await self.receipt(interaction)
+        else:
+            await self.refuse(interaction, 'Nothing was sent.')
