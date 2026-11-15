@@ -104,7 +104,7 @@ No source increment: no row group serves a separate audience. The full `test_cmd
 
 ## 4. Step table
 
-Every build row is `seam` (PIPELINE.md:13: slash commands and interactions, persisted state and migrations, item tables, rate limits): at most 2 production files and 300 production lines; tests, contracts and docs are not counted. Rows run in order.
+Every build row is `seam` (PIPELINE.md:13: slash commands and interactions, persisted state and migrations, item tables, rate limits): at most 2 production files and 300 production lines; tests, contracts and docs are not counted. Rows run serially.
 
 | Step | Ticket(s) | Kind | Tier | Effort | Status |
 |---|---|---|---|---|---|
@@ -121,7 +121,7 @@ Every build row is `seam` (PIPELINE.md:13: slash commands and interactions, pers
 | 11 | [EXG-9](tickets/EXG-9.md) EX-Gift screen with Claim | build | seam | M | ✅ done · e64f122 · GO review-seam r1 |
 | 12 | [EXG-10](tickets/EXG-10.md) `/walker` home EX-Gift button and (!) | build | seam | S | ✅ done · 1e0cdd1 · GO review-seam r1 |
 | 13 | [EXG-11](tickets/EXG-11.md) Time Gear Fragment | build | seam | S | ✅ done · b664503 · GO review-seam r1 |
-| 14 | [EXG-12](tickets/EXG-12.md) Shiny Patch: EX-Gift picker, preview, confirm | build | seam | M | pending |
+| 14 | [EXG-12](tickets/EXG-12.md) Shiny Patch: EX-Gift picker, preview, confirm | build | seam | M | ? done ? e5d1f40 ? GO review-seam r1 |
 | 15 | [EXG-13](tickets/EXG-13.md) Golden Bottlecap | build | seam | S | pending |
 | 16 | [EXG-14](tickets/EXG-14.md) service: EX-Attack/EX-Defense arming, run flags, boosted fights, X block | build | seam | M | pending |
 | 17 | [EXG-15](tickets/EXG-15.md) screens: arm from EX-Gift; EX lines and X block on the break screen | build | seam | S | pending |
@@ -133,7 +133,7 @@ Every build row is `seam` (PIPELINE.md:13: slash commands and interactions, pers
 
 ## 5. Briefs
 
-Build briefs are linked in §4. §6 acceptance cases are distributed over the tickets' named tests; no row needs a package change or a new owner decision, so the plan has no other 🚦 row.
+Briefs are linked in §4. §6 acceptance cases are distributed over the tickets' named tests; no row needs a package change or a new owner decision, so the plan has no other 🚦 row.
 
 **G-A · G-P (owner).** Asks: approve this plan; confirm Home `feature/ex-gift` (current checkout, cut from `main` at `5a68d79`); choose the delivery and push scope of §3.4. Stop if: the Home lacks `8c5fa33` (`git merge-base --is-ancestor 8c5fa33 feature/ex-gift`).
 
