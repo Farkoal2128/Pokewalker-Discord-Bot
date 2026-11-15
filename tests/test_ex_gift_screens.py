@@ -42,8 +42,8 @@ class ExGiftScreenTests(unittest.IsolatedAsyncioTestCase):
     def buttons(self, rendered):
         return {button.label: button for button in rendered['view'].children if hasattr(button, 'label')}
 
-    async def shiny_picker(self, count=1):
-        session = await self.seed([['shiny_patch']])
+    async def shiny_picker(self, count=1, item='shiny_patch'):
+        session = await self.seed([[item]])
         _, session = await self.press(session, 'ex_claim')
         await self.conn.execute('DELETE FROM pokemon')
         for index in range(count):
@@ -52,7 +52,7 @@ class ExGiftScreenTests(unittest.IsolatedAsyncioTestCase):
                 'iv_stamina,gender,shiny,origin,content_version,caught_at) '
                 "VALUES (?,?,1,20,10,10,10,'male',0,'catch','test',?)",
                 (f'p{index:02}', session['profile_id'], index))
-        return await self.press(session, 'ex_use_shiny_patch')
+        return await self.press(session, f'ex_use_{item}')
 
     async def shiny_preview(self):
         _, session = await self.shiny_picker()
@@ -167,6 +167,100 @@ class ExGiftScreenTests(unittest.IsolatedAsyncioTestCase):
         rendered, session = await self.press(session, 'ex_use_shiny_patch')
         self.assertFalse(any(hasattr(child, 'options') for child in rendered['view'].children))
         self.assertEqual(await self.rows('SELECT quantity FROM ex_items'), [{'quantity': 1}])
+
+    async def test_golden_bottlecap_button_only_while_held(self):
+        session = await self.seed([['golden_bottlecap', 'golden_bottlecap']])
+        rendered, session = await self.press(session, 'ex_gift')
+        self.assertFalse(any('Use Golden Bottlecap' in label for label in self.buttons(rendered)))
+        rendered, session = await self.press(session, 'ex_claim')
+        button = self.buttons(rendered)['Use Golden Bottlecap (2)']
+        self.assertEqual(button.row, 1)
+        self.assertTrue(button.custom_id.endswith(':ex_use_golden_bottlecap'))
+        await self.conn.execute('UPDATE ex_items SET quantity=0')
+        rendered, _ = await self.press(session, 'ex_gift')
+        self.assertFalse(any('Use Golden Bottlecap' in label for label in self.buttons(rendered)))
+
+    async def test_golden_preview_shows_cp_and_appraisal_change(self):
+        from pokewalker.domain.cp import cp
+        _, session = await self.shiny_picker(11, item='golden_bottlecap')
+        self.assertEqual(json.loads(session['selection']),
+                         {'phase': 'ex_pick', 'ex_item': 'golden_bottlecap', 'offset': 0})
+        rendered, session = await self.press(session, 'ex_pick_next')
+        self.assertEqual(rendered['embed'].title, 'Use Golden Bottlecap')
+        select = next(child for child in rendered['view'].children if hasattr(child, 'options'))
+        self.assertEqual([option.value for option in select.options], ['p00'])
+        preview, session = await self.press(session, 'ex_pick', ['p00'])
+        from pokewalker.services import storage
+        pokemon = (await self.rows("SELECT * FROM pokemon WHERE pokemon_uid='p00'"))[0]
+        identity, _ = storage.identify(self.walker.bot.content, pokemon)
+        base = [identity[key] for key in ('base_attack', 'base_defense', 'base_stamina')]
+        before = cp(base, (10, 10, 10), 20, multipliers=self.walker.multipliers)
+        after = cp(base, (15, 15, 15), 20, multipliers=self.walker.multipliers)
+        self.assertEqual(preview['embed'].title, 'Use Golden Bottlecap')
+        self.assertEqual(preview['embed'].description,
+                         f'CP {before} → {after} · Appraisal 2 → 4 stars · uses 1 Golden Bottlecap (have 1)')
+        self.assertEqual(json.loads(session['selection'])['ex_preview'], 'golden_bottlecap')
+        self.assertTrue(self.buttons(preview)['Confirm'].custom_id.endswith(':ex_golden_bottlecap_confirm'))
+        self.assertTrue(self.buttons(preview)['Back'].custom_id.endswith(':ex_pick'))
+        back, session = await self.press(session, 'ex_pick')
+        self.assertNotIn('ex_preview', json.loads(session['selection']))
+        _, session = await self.press(session, 'ex_pick', ['p00'])
+        rendered, session = await self.press(session, 'ex_golden_bottlecap_confirm')
+        self.assertEqual(rendered['embed'].title, 'EX-Gift')
+        self.assertIn("Bulbasaur's IVs are now 15 / 15 / 15.", rendered['embed'].description)
+        self.assertEqual(await self.rows("SELECT iv_attack,iv_defense,iv_stamina,revision FROM pokemon WHERE pokemon_uid='p00'"),
+                         [{'iv_attack': 15, 'iv_defense': 15, 'iv_stamina': 15, 'revision': 1}])
+        self.assertEqual(await self.rows('SELECT quantity FROM ex_items'), [{'quantity': 0}])
+
+    async def test_golden_preview_refusals(self):
+        _, session = await self.shiny_picker(item='golden_bottlecap')
+        _, session = await self.press(session, 'ex_pick', ['p00'])
+        for sql, message in (
+                ('UPDATE pokemon SET iv_attack=15,iv_defense=15,iv_stamina=15',
+                 'Its IVs are already perfect. No Golden Bottlecap was used.'),
+                ('UPDATE pokemon SET iv_attack=10,iv_defense=10,iv_stamina=10; UPDATE ex_items SET quantity=0',
+                 'You have no Golden Bottlecap. Nothing was used.')):
+            await self.conn.executescript(sql)
+            before = await self.rows('SELECT * FROM pokemon')
+            refused = await self.click(session, 'ex_preview_golden_bottlecap')
+            self.assertEqual(refused.followup.send.await_args.args[0], message)
+            refused = await self.click(session, 'ex_golden_bottlecap_confirm')
+            self.assertEqual(refused.followup.send.await_args.args[0], message)
+            self.assertEqual(await self.rows('SELECT * FROM pokemon'), before)
+            self.assertEqual(await self.rows("SELECT * FROM action_receipts WHERE action='golden_bottlecap'"), [])
+        await self.conn.execute('UPDATE pokemon SET revision=1')
+        refused = await self.click(session, 'ex_preview_golden_bottlecap')
+        self.assertEqual(refused.followup.send.await_args.args[0], self.module.REOPEN)
+        refused = await self.click(session, 'ex_golden_bottlecap_confirm')
+        self.assertEqual(refused.followup.send.await_args.args[0], 'That Pokémon changed. Pick it again.')
+        await self.conn.execute('UPDATE pokemon SET revision=0')
+        await self.conn.execute('UPDATE ex_items SET quantity=1')
+        _, session = await self.press(session, 'ex_pick', ['p00'])
+        from pokewalker.services import gyms
+        gym = await self.writer.run(lambda conn: gyms.create(conn, session['guild_id'], 'Park', 100))
+        deployed = await self.writer.run(lambda conn: gyms.deploy(
+            conn, session, gym['gym_id'], 'p00', 0, 1000, self.walker.bot.content))
+        self.assertEqual(deployed['status'], 'deployed')
+        refused = await self.click(session, 'ex_golden_bottlecap_confirm')
+        self.assertEqual(refused.followup.send.await_args.args[0], 'Recall it from the gym first')
+        _, session = await self.press(session, 'ex_use_golden_bottlecap')
+        refused = await self.click(session, 'ex_pick', ['p00'])
+        self.assertEqual(refused.followup.send.await_args.args[0], 'Recall it from the gym first')
+        self.assertEqual(await self.rows('SELECT quantity FROM ex_items'), [{'quantity': 1}])
+
+    async def test_golden_confirm_after_shiny_preview_or_none_spends_nothing(self):
+        _, session = await self.shiny_picker(item='golden_bottlecap')
+        await self.conn.execute("INSERT INTO ex_items VALUES (?,'shiny_patch',1)", (session['profile_id'],))
+        before = await self.rows('SELECT * FROM pokemon')
+        for preview in (None, 'shiny_patch'):
+            if preview:
+                _, session = await self.press(session, 'ex_use_shiny_patch')
+                _, session = await self.press(session, 'ex_pick', ['p00'])
+            refused = await self.click(session, 'ex_golden_bottlecap_confirm')
+            self.assertEqual(refused.followup.send.await_args.args[0], 'Preview the Golden Bottlecap before confirming.')
+            self.assertEqual(await self.rows('SELECT * FROM pokemon'), before)
+            self.assertEqual(await self.rows('SELECT quantity FROM ex_items'), [{'quantity': 1}, {'quantity': 1}])
+            self.assertEqual(await self.rows("SELECT * FROM action_receipts WHERE action='golden_bottlecap'"), [])
 
     async def test_time_gear_button_only_while_held(self):
         session = await self.seed([['time_gear_fragment', 'time_gear_fragment']])

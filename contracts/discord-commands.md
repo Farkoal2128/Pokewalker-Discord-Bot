@@ -1981,3 +1981,21 @@ stock, including stock lost since preview, returns to EX-Gift with "You have no
 Time Gear Fragment.". Excluded and stale refusals use EXCLUDED and REOPEN.
 Paused members may use it; the router's other guards remain. No slash command
 changes. Tests: test_ex_gift_screens.py and test_ex_items.py.
+
+## C5: Golden Bottlecap (EXG-13, additive)
+While held, EX-Gift shows Use Golden Bottlecap (<n>) (ex_use_golden_bottlecap).
+It reuses the Shiny Patch picker with ex_item=golden_bottlecap, including paging,
+selection revision, preview clearing and Back. ex_preview_golden_bottlecap
+requires the selected owned Pokemon at its saved revision, else REOPEN.
+Deployed says "Recall it from the gym first"; perfect says "Its IVs are already
+perfect. No Golden Bottlecap was used."; no stock says "You have no Golden
+Bottlecap. Nothing was used.". Success records ex_preview=golden_bottlecap and
+shows Use Golden Bottlecap with "CP <a> → <b> · Appraisal <x> → <y> stars · uses 1
+Golden Bottlecap (have <n>)", Confirm (ex_golden_bottlecap_confirm), and Back
+(ex_back, else storage_detail). Confirm requires that exact preview, else
+"Preview the Golden Bottlecap before confirming.". It calls C3 iv_items.use;
+stale says "That Pokémon changed. Pick it again.". Success from the picker
+returns to EX-Gift with "<name>'s IVs are now 15 / 15 / 15."; from details it
+calls storage_detail. Refusals spend nothing. Existing IV screens stay compatible.
+Producer: bot.ex_gift; consumers: private Walker interactions and C3 iv_items.
+Tests: tests/test_ex_gift_screens.py.

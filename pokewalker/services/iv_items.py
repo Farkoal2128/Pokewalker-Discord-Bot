@@ -9,6 +9,7 @@ from pokewalker.services.profiles import session_owner
 
 
 ITEMS = ('bottlecap', 'vitamin')
+EX_ITEMS = ('shiny_patch', 'golden_bottlecap')
 IVS = ('iv_attack', 'iv_defense', 'iv_stamina')
 MAX_IV = 15
 
@@ -44,52 +45,56 @@ async def quote(conn, profile_id, uid, item, content, multipliers):
     identity, _ = storage.identify(content, pokemon)
     base = [identity[key] for key in ('base_attack', 'base_defense', 'base_stamina')]
     before = tuple(pokemon[key] for key in IVS)
-    after = before if perfect(pokemon) else apply(item, before)
+    after = (15, 15, 15) if item == 'golden_bottlecap' else before if perfect(pokemon) else apply(item, before)
     level = pokemon['level_x2']
     return {'cp_before': cp(base, before, level, multipliers=multipliers),
             'cp_after': cp(base, after, level, multipliers=multipliers),
             'stars_before': appraisal(before), 'stars_after': appraisal(after),
-            'have': (await held(conn, profile_id))[item], 'perfect': perfect(pokemon),
+            'have': (await (ex_gift.held(conn, profile_id) if item in EX_ITEMS else held(conn, profile_id)))[item],
+            'perfect': perfect(pokemon),
             'deployed': pokemon['gym_deployment_id'] is not None}
 
 
 async def use(conn, session, uid, expected_revision, item, content, multipliers):
     if not conn.in_transaction:
         raise RuntimeError('Bottlecap and Vitamin use requires an active writer transaction')
-    if item not in (*ITEMS, 'shiny_patch'):
+    if item not in (*ITEMS, *EX_ITEMS):
         return {'status': 'refused', 'pokemon': None}
     profile, refusal = await session_owner(conn, session)
     if refusal is not None:
         return {**refusal, 'pokemon': None}
     pid = profile['profile_id']
     key = f'{item}:{uid}:{expected_revision}'
-    if item == 'shiny_patch':
+    if item in EX_ITEMS:
         receipt = await ex_gift.recorded(conn, key, item, pid)
         if receipt is not None:
             return receipt
     pokemon = await storage.detail(conn, pid, uid)
     if pokemon is None:
         return {'status': 'stale', 'pokemon': None}
-    if item == 'shiny_patch':
-        status = ('stale' if pokemon['revision'] != expected_revision else
-                  'shiny' if pokemon['shiny'] else
-                  'missing' if (await ex_gift.held(conn, pid))[item] < 1 else None)
-    else:
+    if item not in EX_ITEMS:
         async with conn.execute('SELECT profile_id,result FROM action_receipts WHERE key=? AND action=?',
                                 (key, item)) as cursor:
             receipt = await cursor.fetchone()
         if receipt is not None:
             return json.loads(receipt['result']) if receipt['profile_id'] == pid else {'status': 'stale', 'pokemon': pokemon}
+    if item == 'shiny_patch':
+        status = ('stale' if pokemon['revision'] != expected_revision else
+                  'shiny' if pokemon['shiny'] else
+                  'missing' if (await ex_gift.held(conn, pid))[item] < 1 else None)
+    else:
         status = ('deployed' if pokemon['gym_deployment_id'] is not None else
                   'stale' if pokemon['revision'] != expected_revision else
                   'perfect' if perfect(pokemon) else
-                  'missing' if (await held(conn, pid))[item] < 1 else None)
+                  'missing' if (await (ex_gift.held(conn, pid) if item in EX_ITEMS else held(conn, pid)))[item] < 1 else None)
     if status is not None:
         return {'status': status, 'pokemon': pokemon}
 
     async def compute(conn):
-        if item == 'shiny_patch':
-            await conn.execute('UPDATE pokemon SET shiny=1,revision=revision+1 '
+        if item in EX_ITEMS:
+            effect = ('shiny=1' if item == 'shiny_patch' else
+                      'iv_attack=15,iv_defense=15,iv_stamina=15')
+            await conn.execute(f'UPDATE pokemon SET {effect},revision=revision+1 '
                                "WHERE pokemon_uid=? AND profile_id=? AND revision=? AND state='owned'",
                                (uid, pid, expected_revision))
             await ex_gift.take(conn, pid, item)

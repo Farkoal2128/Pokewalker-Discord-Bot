@@ -1924,3 +1924,19 @@ commit atomically. No mod_audit row is written. Force-raid, last_share_at and
 message step-credit limits stay intact. Paused members may use it. Admin reset
 continues using the same updates and writing its moderation audit row unchanged.
 No migration is needed. Tests: test_ex_items.py and unchanged test_cooldown_reset.py.
+
+## Golden Bottlecap (EXG-13, additive C3)
+services.iv_items.quote for golden_bottlecap returns the same CP, appraisal,
+perfect and deployed fields as Bottlecap, but computes after values from
+(15, 15, 15) and reads have from ex_gift.held. use checks session_owner, then
+the profile-owned golden_bottlecap:<uid>:<pokemon revision> receipt before
+storage.detail and every mutable refusal. Refusals are deployed, stale (not
+owned or revision mismatch), perfect (all IVs 15), then missing, spending nothing.
+In one writer transaction it sets all three IVs to 15 and increments revision
+where UID, profile, revision and owned state match, consumes one through
+ex_gift.take and records ex_item / golden_bottlecap / -1 / golden_bottlecap.
+Replay returns the recorded used result even after IVs, ownership, state or
+stock change. Authorization still precedes replay; foreign receipts are stale.
+Ordinary Bottlecap and Vitamin retain their lowest-IV effect and existing order.
+Producers: services.iv_items; consumers: EX-Gift previews and confirmations.
+Tests: tests/test_ex_items.py; tests/test_iv_items.py unchanged.
