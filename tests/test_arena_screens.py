@@ -611,10 +611,24 @@ class ArenaScreenTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.selection()['team'], [])
         self.assertTrue(self.button(cleared, 'arena_start').disabled)
 
+    async def test_team_has_its_own_section_above_the_picker(self):
+        # Tester feedback 2026-11-15: picked members were hard to tell apart from the list.
+        empty = (await self.click('arena_team'))['embed']
+        self.assertEqual([(field.name, field.value) for field in empty.fields],
+                         [('Your team (0/3)', '1. —\n2. —\n3. —')])
+        self.assertNotIn('Team 1', empty.description)
+        picked = (await self.click('arena_team_pick', ['m0']))['embed']
+        name = picked.fields[0].value.splitlines()[0].removeprefix('1. ')
+        self.assertNotEqual(name, '—')
+        self.assertEqual((picked.fields[0].name, picked.fields[0].value.splitlines()[1:]),
+                         ('Your team (1/3)', ['2. —', '3. —']))
+        self.assertTrue(any(line.startswith(name + ' · CP ') for line in picked.description.splitlines()))
+
     async def test_special_pick_shows_boss_only_candy_warning_and_does_not_block(self):
         await self.conn.execute("UPDATE pokemon SET pokemon_id=150 WHERE pokemon_uid='m2'")
         rendered = await self.picked()
-        self.assertIn('Mewtwo is a special Pokémon: it only earns Candy from boss knockouts.', rendered['embed'].description)
+        team = rendered['embed'].fields[0].value
+        self.assertIn('Mewtwo is a special Pokémon: it only earns Candy from boss knockouts.', team)
         self.assertFalse(self.button(rendered, 'arena_start').disabled)
         self.assertEqual((await self.click('arena_start'))['embed'].title, 'Arena break')
 

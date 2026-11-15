@@ -1469,6 +1469,16 @@ to the client constructor, so Discord shows "/walker" as the bot's custom status
 every connect and reconnect (identify and resume carry it). No command, intent or
 manifest change. Tests: tests/test_client_lifecycle.py.
 
+## C5: Arena team picker shows the team in its own section (tester feedback 2026-11-15)
+The Arena team embed keeps the page line, the Pokémon rows and any notice in its
+description. The chosen team moves out of the description into one embed field,
+named "Your team (k/3)" where k is the number picked, which Discord draws below the
+description, directly above the "Choose team member" select. Its value has one line
+per slot: "1. Name", "n. changed" for a pick whose revision moved, and "n. —" for an
+empty slot, followed by any special-Pokémon Candy warning. Buttons, selects, custom
+IDs and selection state are unchanged. Discord always draws components below every
+embed, so the team cannot sit below the select itself. Tests: tests/test_arena_screens.py.
+
 ## C5: Arena team restrictions in gym screens
 
 The deploy and attacker pickers label the caller's own live Arena team members

@@ -132,10 +132,11 @@ def render_redeem(state):
 def render_team(state):
     selection = state['selection']
     lines = [f"{state['total']} owned Pokémon · page {selection['offset'] // 10 + 1}"]
-    for position, item in enumerate(state['members'], 1):
-        lines.append(f"Team {position}: {item['identity']['name_en']}" if item else f'Team {position}: changed')
-        if item and item['special']:
-            lines.append(f"{item['identity']['name_en']} is a special Pokémon: it only earns Candy from boss knockouts.")
+    members = state['members']
+    team = [f"{position}. {item['identity']['name_en'] if item else 'changed'}" if position <= len(members)
+            else f'{position}. —' for position, item in enumerate([*members, *[None] * (3 - len(members))], 1)]
+    team += [f"{item['identity']['name_en']} is a special Pokémon: it only earns Candy from boss knockouts."
+             for item in members if item and item['special']]
     if state.get('notice'):
         lines.append(state['notice'])
     view = gyms.buttons(state, [('Prev', 'arena_team_prev'), ('Next', 'arena_team_next'),
@@ -165,7 +166,9 @@ def render_team(state):
             view.add_item(discord.ui.Select(placeholder='Skip floors', custom_id=custom_id(state, action), row=row,
                           options=[discord.SelectOption(label='No skip' if k == 0 else f'Skip {k} floors: start at floor {k + 1}',
                                                         value=str(k), default=skip == k) for k in range(start, end + 1)]))
-    return {'embed': discord.Embed(title='Arena team', description='\n'.join(lines)), 'view': view}
+    embed = discord.Embed(title='Arena team', description='\n'.join(lines))
+    embed.add_field(name=f'Your team ({len(members)}/3)', value='\n'.join(team), inline=False)  # drawn above the picker
+    return {'embed': embed, 'view': view}
 
 
 def result_lines(state):
