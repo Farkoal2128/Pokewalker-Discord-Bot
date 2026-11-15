@@ -1521,8 +1521,20 @@ then returns the updated details, whose CP and "Appraisal: N stars" reflect the 
 Preview and confirm refusals are private and spend nothing: perfect "Its IVs are already
 perfect. No <Item> was used.", missing "You have no <Item>. Nothing was used.", deployed
 "Recall it from the gym first", a confirm without its preview "Preview the <Item> before
-confirming.", and every other refusal the reopen text. Details keep at most 9 components
-in 3 rows.
+confirming.", and every other refusal the reopen text.
+
+EX-24 adds `Use Shiny Patch` (`ex_preview_shiny_patch`) and `Use Golden Bottlecap`
+(`ex_preview_golden_bottlecap`) after Bottlecap and Vitamin on row 2. Each EX button
+is shown only while the caller holds at least one of that item in their EX inventory;
+it stays enabled for shiny, perfect or gym-deployed targets so the existing EX preview
+can explain the refusal. Row 2 holds at most four buttons; details keep at most 11
+components in 3 rows. These entry points reuse the EX-Gift preview and confirm handlers
+and their private, no-spend refusals. Shiny Patch remains allowed on a gym defender;
+Golden Bottlecap requires recall. Back and successful confirm return to updated details.
+Every details redraw clears `iv_item`, `ex_back`, `ex_item` and `ex_preview`, so confirms
+require a fresh matching preview. No slash command or action-ID grammar changes.
+Producer: bot.storage; consumers: private Walker interactions and bot.ex_gift.
+Tests: tests/test_storage.py and tests/test_ex_gift_screens.py.
 
 Check-in replies name the new pack "Vitamin ×1".
 

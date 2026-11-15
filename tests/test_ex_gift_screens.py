@@ -200,6 +200,143 @@ class ExGiftScreenTests(unittest.IsolatedAsyncioTestCase):
         _, session = await self.shiny_picker()
         return await self.press(session, 'ex_pick', ['p00'])
 
+    async def details_ex_item(self, item='shiny_patch'):
+        _, session = await self.shiny_picker(item=item)
+        _, session = await self.press(session, 'storage')
+        return await self.press(session, 'storage_open', ['p00'])
+
+    async def test_details_shiny_patch_preview_back_returns_to_details(self):
+        _, session = await self.details_ex_item()
+        before = await self.voucher_snapshot()
+        preview, session = await self.press(session, 'ex_preview_shiny_patch')
+        self.assertEqual(preview['embed'].title, 'Use Shiny Patch')
+        self.assertEqual(preview['embed'].description, 'Bulbasaur becomes shiny. Uses 1 Shiny Patch (have 1).')
+        back = self.buttons(preview)['Back'].custom_id.rsplit(':', 1)[-1]
+        self.assertEqual(back, 'storage_detail')
+        rendered, session = await self.press(session, back)
+        self.assertEqual(rendered['embed'].title, 'Pokémon details')
+        self.assertNotIn('ex_preview', json.loads(session['selection']))
+        self.assertEqual(await self.voucher_snapshot(), before)
+        refused = await self.click(session, 'ex_shiny_patch_confirm')
+        self.assertEqual(refused.followup.send.await_args.args[0], 'Preview the Shiny Patch before confirming.')
+        self.assertEqual(await self.voucher_snapshot(), before)
+        # Details also clear a picker preview's return target and item.
+        _, session = await self.press(session, 'ex_use_shiny_patch')
+        _, session = await self.press(session, 'ex_pick', ['p00'])
+        self.assertEqual(json.loads(session['selection'])['ex_back'], 'ex_pick')
+        _, session = await self.press(session, 'storage_detail')
+        for key in ('ex_back', 'ex_item', 'ex_preview'):
+            self.assertNotIn(key, json.loads(session['selection']))
+        preview, _ = await self.press(session, 'ex_preview_shiny_patch')
+        self.assertTrue(self.buttons(preview)['Back'].custom_id.endswith(':storage_detail'))
+
+    async def test_details_shiny_patch_confirm_redraws_details_shiny(self):
+        rendered, session = await self.details_ex_item()
+        before_image = rendered['embed'].image.url
+        await self.conn.execute('UPDATE ex_items SET quantity=2')
+        _, session = await self.press(session, 'ex_preview_shiny_patch')
+        rendered, session = await self.press(session, 'ex_shiny_patch_confirm')
+        self.assertEqual(rendered['embed'].title, 'Pokémon details')
+        self.assertIn(' · Shiny', rendered['embed'].description)
+        self.assertNotEqual(rendered['embed'].image.url, before_image)
+        self.assertEqual(await self.rows('SELECT shiny,revision FROM pokemon'), [{'shiny': 1, 'revision': 1}])
+        self.assertEqual(await self.rows('SELECT quantity FROM ex_items'), [{'quantity': 1}])
+        self.assertFalse(self.buttons(rendered)['Use Shiny Patch'].disabled)
+        self.assertEqual(json.loads(session['selection'])['pokemon_revision'], 1)
+        self.assertNotIn('ex_preview', json.loads(session['selection']))
+        before = await self.voucher_snapshot()
+        refused = await self.click(session, 'ex_shiny_patch_confirm')
+        self.assertEqual(refused.followup.send.await_args.args[0], 'Preview the Shiny Patch before confirming.')
+        self.assertEqual(await self.voucher_snapshot(), before)
+
+    async def test_details_golden_bottlecap_confirm_redraws_perfect_ivs(self):
+        from pokewalker.domain.cp import cp
+        from pokewalker.services import storage
+        _, session = await self.details_ex_item('golden_bottlecap')
+        preview, session = await self.press(session, 'ex_preview_golden_bottlecap')
+        self.assertEqual(preview['embed'].title, 'Use Golden Bottlecap')
+        self.assertTrue(self.buttons(preview)['Back'].custom_id.endswith(':storage_detail'))
+        rendered, session = await self.press(session, 'ex_golden_bottlecap_confirm')
+        pokemon = (await self.rows("SELECT * FROM pokemon WHERE pokemon_uid='p00'"))[0]
+        self.assertEqual(tuple(pokemon[key] for key in ('iv_attack', 'iv_defense', 'iv_stamina')), (15, 15, 15))
+        self.assertEqual(pokemon['revision'], 1)
+        identity, _ = storage.identify(self.bot.content, pokemon)
+        base = [identity[key] for key in ('base_attack', 'base_defense', 'base_stamina')]
+        expected_cp = cp(base, (15, 15, 15), pokemon['level_x2'], multipliers=self.walker.multipliers)
+        self.assertEqual(rendered['embed'].title, 'Pokémon details')
+        self.assertIn(f'CP {expected_cp} ·', rendered['embed'].description)
+        self.assertIn('Appraisal: 4 stars', rendered['embed'].description)
+        self.assertNotIn('15 / 15 / 15', rendered['embed'].description)
+        self.assertNotIn('Use Golden Bottlecap', self.buttons(rendered))
+        self.assertEqual(await self.rows('SELECT quantity FROM ex_items'), [{'quantity': 0}])
+        self.assertEqual(json.loads(session['selection'])['pokemon_revision'], 1)
+        self.assertNotIn('ex_preview', json.loads(session['selection']))
+
+    async def test_details_refusals_shiny_perfect_and_deployed_with_messages(self):
+        from pokewalker.services import gyms
+        _, session = await self.details_ex_item()
+        await self.conn.execute("INSERT INTO ex_items VALUES (?,'golden_bottlecap',1)", (session['profile_id'],))
+        for condition, item, message in (
+                ('shiny', 'shiny_patch', 'It is already shiny. No Shiny Patch was used.'),
+                ('perfect', 'golden_bottlecap', 'Its IVs are already perfect. No Golden Bottlecap was used.'),
+                ('deployed', 'golden_bottlecap', 'Recall it from the gym first')):
+            with self.subTest(condition=condition):
+                await self.conn.execute('UPDATE pokemon SET shiny=?,iv_attack=?,iv_defense=?,iv_stamina=?',
+                                        (int(condition == 'shiny'), *((15,) * 3 if condition == 'perfect' else (10,) * 3)))
+                if condition == 'deployed':
+                    gym = await self.writer.run(lambda conn: gyms.create(conn, session['guild_id'], 'Park', 100))
+                    deployed = await self.writer.run(lambda conn: gyms.deploy(
+                        conn, session, gym['gym_id'], 'p00', 0, 1000, self.bot.content))
+                    self.assertEqual(deployed['status'], 'deployed')
+                rendered, session = await self.press(session, 'storage_detail')
+                for label in ('Use Shiny Patch', 'Use Golden Bottlecap'):
+                    self.assertFalse(self.buttons(rendered)[label].disabled)
+                before = await self.voucher_snapshot()
+                refused = await self.click(session, f'ex_preview_{item}')
+                refused.edit_original_response.assert_not_awaited()
+                self.assertEqual(refused.followup.send.await_args.args[0], message)
+                self.assertTrue(refused.followup.send.await_args.kwargs['ephemeral'])
+                self.assertEqual(await self.voucher_snapshot(), before)
+        # Shininess has no combat-stat restriction, even for a gym defender (D8).
+        _, session = await self.press(session, 'ex_preview_shiny_patch')
+        rendered, _ = await self.press(session, 'ex_shiny_patch_confirm')
+        self.assertIn(' · Shiny', rendered['embed'].description)
+        self.assertIn('Deployed at Park', rendered['embed'].description)
+
+    async def test_details_stale_preview_after_trade_refused(self):
+        import random
+        from pokewalker.services import profiles, trading
+        _, session = await self.details_ex_item()
+        _, session = await self.press(session, 'ex_preview_shiny_patch')
+        partner = await self.writer.run(lambda conn: profiles.enroll(
+            conn, 123, 789, 1, self.bot.content, random.Random(9), datetime.now(timezone.utc)))
+        await self.conn.execute('UPDATE profiles SET companion_uid=NULL WHERE profile_id=?', (partner['profile_id'],))
+        await self.conn.execute('UPDATE pokemon SET favorite=0 WHERE profile_id=?', (partner['profile_id'],))
+        other = {**session, 'session_id': 'other', 'user_id': '789', 'profile_id': partner['profile_id']}
+        await self.conn.execute('INSERT INTO sessions(session_id,guild_id,user_id,profile_id,expires_at) '
+                                "VALUES ('other','123','789',?,9000)", (partner['profile_id'],))
+        trade = await self.writer.run(lambda conn: trading.open_or_join(conn, session, '789', 1000, False))
+        tid = trade['trade_id']
+        await self.writer.run(lambda conn: trading.open_or_join(conn, other, '456', 1001, False))
+        await self.writer.run(lambda conn: trading.offer(conn, session, tid, 'p00', 1002))
+        await self.writer.run(lambda conn: trading.offer(conn, other, tid, partner['companion_uid'], 1003))
+        await self.writer.run(lambda conn: trading.confirm(conn, session, tid, 2, 1004, self.bot.content))
+        swapped = await self.writer.run(lambda conn: trading.confirm(conn, other, tid, 2, 1005, self.bot.content))
+        self.assertEqual(swapped['status'], 'completed')
+        before = await self.voucher_snapshot()
+        refused = await self.click(session, 'ex_shiny_patch_confirm')
+        self.assertEqual(refused.followup.send.await_args.args[0], 'That Pokémon changed. Pick it again.')
+        self.assertEqual(await self.voucher_snapshot(), before)
+
+    async def test_details_confirm_without_preview_spends_nothing(self):
+        _, session = await self.details_ex_item()
+        before = await self.voucher_snapshot()
+        refused = await self.click(session, 'ex_shiny_patch_confirm')
+        refused.edit_original_response.assert_not_awaited()
+        self.assertEqual(refused.followup.send.await_args.args[0], 'Preview the Shiny Patch before confirming.')
+        self.assertTrue(refused.followup.send.await_args.kwargs['ephemeral'])
+        self.assertEqual(await self.voucher_snapshot(), before)
+
     async def test_shiny_patch_button_only_while_held(self):
         session = await self.seed([['shiny_patch', 'shiny_patch']])
         rendered, session = await self.press(session, 'ex_gift')
