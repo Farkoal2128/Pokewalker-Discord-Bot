@@ -42,6 +42,98 @@ class ExGiftScreenTests(unittest.IsolatedAsyncioTestCase):
     def buttons(self, rendered):
         return {button.label: button for button in rendered['view'].children if hasattr(button, 'label')}
 
+    async def test_arm_buttons_only_while_held_and_unarmed(self):
+        session = await self.seed([list(service.EX_ITEMS)])
+        rendered, session = await self.press(session, 'ex_gift')
+        for name in ('EX-Attack', 'EX-Defense'):
+            self.assertFalse(any(label.startswith(f'Use {name}') for label in self.buttons(rendered)))
+        _, session = await self.press(session, 'ex_claim')
+        for attack, defense in ((0, 0), (1, 0), (0, 1), (1, 1)):
+            await self.conn.execute('UPDATE profiles SET ex_attack_armed=?,ex_defense_armed=?', (attack, defense))
+            rendered, session = await self.press(session, 'ex_gift')
+            for item, armed in (('ex_attack', attack), ('ex_defense', defense)):
+                name = service.EX_ITEMS[item]
+                self.assertEqual(f'Use {name} (1)' in self.buttons(rendered), not armed)
+                self.assertEqual(f'{name} armed for your next new Arena run.' in rendered['embed'].description,
+                                 bool(armed))
+                if not armed:
+                    button = self.buttons(rendered)[f'Use {name} (1)']
+                    self.assertTrue(button.custom_id.endswith(f':ex_arm_{item}'))
+                    self.assertIsNotNone(re.fullmatch(self.module.CUSTOM_ID, button.custom_id))
+            use_buttons = [b for b in rendered['view'].children if b.label.startswith('Use ')]
+            self.assertLessEqual(len(use_buttons), 5)
+            self.assertTrue(all(b.row == 1 for b in use_buttons))
+        await self.conn.execute('UPDATE ex_items SET quantity=0')
+        rendered, _ = await self.press(session, 'ex_gift')
+        for name in ('EX-Attack', 'EX-Defense'):
+            self.assertIn(f'{name} armed for your next new Arena run.', rendered['embed'].description)
+
+    async def test_arm_notice_then_armed_line(self):
+        session = await self.seed([['ex_attack', 'ex_attack', 'ex_defense', 'ex_defense']])
+        _, session = await self.press(session, 'ex_claim')
+        await self.conn.execute("INSERT INTO restrictions(guild_id,user_id,paused) VALUES ('123','456',1)")
+        for item, stat in (('ex_attack', 'attack'), ('ex_defense', 'defense')):
+            name = service.EX_ITEMS[item]
+            rendered, session = await self.press(session, f'ex_arm_{item}')
+            self.assertIn(f'{name} armed: ×2 {stat} for your whole next new Arena run. '
+                          'A run in progress does not get it.', rendered['embed'].description)
+            self.assertIn(f'{name} armed for your next new Arena run.', rendered['embed'].description)
+            self.assertNotIn(f'Use {name} (1)', self.buttons(rendered))
+            self.assertEqual(await self.rows('SELECT quantity FROM ex_items WHERE item_id=?', (item,)),
+                             [{'quantity': 1}])
+            self.assertEqual(await self.rows(f'SELECT {item}_armed FROM profiles'), [{f'{item}_armed': 1}])
+        self.assertEqual(len(await self.rows("SELECT * FROM resource_ledger WHERE reason='ex_arm'")), 2)
+
+    async def test_arm_already_and_missing_notices(self):
+        session = await self.seed([['ex_attack', 'ex_attack', 'ex_defense', 'ex_defense']])
+        _, session = await self.press(session, 'ex_claim')
+        for item in ('ex_attack', 'ex_defense'):
+            name = service.EX_ITEMS[item]
+            _, session = await self.press(session, f'ex_arm_{item}')
+            before = await self.rows('SELECT * FROM ex_items')
+            receipts = await self.rows("SELECT * FROM action_receipts WHERE action='ex_arm'")
+            rendered, session = await self.press(session, f'ex_arm_{item}')
+            self.assertIn(f'{name} is already armed. Nothing was spent.', rendered['embed'].description)
+            self.assertEqual(await self.rows('SELECT * FROM ex_items'), before)
+            self.assertEqual(await self.rows("SELECT * FROM action_receipts WHERE action='ex_arm'"), receipts)
+            await self.conn.execute(f'UPDATE profiles SET {item}_armed=0')
+            await self.conn.execute('UPDATE ex_items SET quantity=0 WHERE item_id=?', (item,))
+            rendered, session = await self.press(session, f'ex_arm_{item}')
+            self.assertIn(f'You have no {name}.', rendered['embed'].description)
+            self.assertEqual(await self.rows(f'SELECT {item}_armed FROM profiles'), [{f'{item}_armed': 0}])
+            self.assertEqual(await self.rows("SELECT * FROM action_receipts WHERE action='ex_arm'"), receipts)
+
+    async def test_arm_with_live_run_notice_and_run_unchanged(self):
+        session = await self.seed([['ex_attack', 'ex_defense']])
+        _, session = await self.press(session, 'ex_claim')
+        await self.conn.execute("INSERT INTO arena_runs(run_id,profile_id,started_at,floor,slot,team,enemy) "
+                                "VALUES ('live',?,1000,1,0,'[]','{}')", (session['profile_id'],))
+        before = await self.rows('SELECT * FROM arena_runs')
+        for item in ('ex_attack', 'ex_defense'):
+            rendered, session = await self.press(session, f'ex_arm_{item}')
+            self.assertIn('A run in progress does not get it.', rendered['embed'].description)
+            self.assertEqual(await self.rows('SELECT * FROM arena_runs'), before)
+            self.assertEqual(await self.rows(f'SELECT {item}_armed FROM profiles'), [{f'{item}_armed': 1}])
+
+    async def test_arm_service_refusals_and_rule_driven_notice(self):
+        from content.balance import load_table
+        from pokewalker.services import arena
+        screens = importlib.import_module('pokewalker.bot.ex_gift')
+        session = await self.seed([['ex_attack']])
+        _, session = await self.press(session, 'ex_claim')
+        for status, message in (('excluded', self.module.EXCLUDED), ('stale', self.module.REOPEN),
+                                ('invalid', self.module.REOPEN)):
+            with self.subTest(status=status), patch.object(arena, 'arm', return_value={'status': status}):
+                refused = await self.click(session, 'ex_arm_ex_attack')
+                refused.edit_original_response.assert_not_awaited()
+                self.assertEqual(refused.followup.send.await_args.args[0], message)
+        rules = copy.deepcopy(load_table('arena')['rules'])
+        rules['x_items']['multiplier'] = 3
+        rules['ex_items']['items']['ex_attack']['stat'] = 'defense'
+        with patch.object(screens, 'load_table', return_value={'rules': rules}):
+            rendered, _ = await self.press(session, 'ex_arm_ex_attack')
+        self.assertIn('EX-Attack armed: ×3 defense', rendered['embed'].description)
+
     async def shiny_picker(self, count=1, item='shiny_patch'):
         session = await self.seed([[item]])
         _, session = await self.press(session, 'ex_claim')

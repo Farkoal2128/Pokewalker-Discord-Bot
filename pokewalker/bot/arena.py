@@ -11,7 +11,7 @@ from content.balance import limits, load_table
 from pokewalker.bot import gyms
 from pokewalker.bot.screens_catch import custom_id
 from pokewalker.domain import arena as domain
-from pokewalker.services import arena as service, profiles, storage
+from pokewalker.services import arena as service, ex_gift, profiles, storage
 
 
 OFF = 'The Arena is turned off in this server.'
@@ -219,6 +219,9 @@ def render_break(state):
         if left := run[f'{item}_left']:
             lines.append(f"{x_name(item)}: ×{state['x_rules']['multiplier']} {state['x_rules']['items'][item]['stat']} · "
                          + fights_left(left))
+    for item, rule in state['ex_rules']['items'].items():
+        if run[item]:
+            lines.append(f"{ex_gift.EX_ITEMS[item]}: ×{state['x_rules']['multiplier']} {rule['stat']} · whole run")
     if state.get('notice'):
         lines.append(state['notice'])
     embed = discord.Embed(title='Arena break', description='\n'.join(lines))
@@ -234,10 +237,13 @@ def render_break(state):
                                        custom_id=custom_id(state, action), row=1, disabled=member['hp'] >= member['full_hp']))
     for item in X_ITEMS:
         left, held = run[f'{item}_left'], state['x_items'][item]
-        action = 'arena_use_' + item if left or held else 'arena_buy_' + item
-        label = (f'{x_name(item)}: {fights_left(left)}' if left else f'Use {x_name(item)} ({held})' if held
+        active_ex = next((ex for ex, rule in state['ex_rules']['items'].items()
+                          if run[ex] and rule['x_item'] == item), None)
+        action = 'arena_use_' + item if active_ex or left or held else 'arena_buy_' + item
+        label = (f"{x_name(item)}: {ex_gift.EX_ITEMS[active_ex]} active" if active_ex
+                 else f'{x_name(item)}: {fights_left(left)}' if left else f'Use {x_name(item)} ({held})' if held
                  else f"Buy {x_name(item)} · {state['x_rules']['items'][item]['stardust']}")
-        view.add_item(discord.ui.Button(label=label, custom_id=custom_id(state, action), row=1, disabled=left > 0))
+        view.add_item(discord.ui.Button(label=label, custom_id=custom_id(state, action), row=1, disabled=bool(active_ex) or left > 0))
     view.add_item(discord.ui.Select(placeholder='Healing berry', custom_id=custom_id(state, 'arena_berry'), row=2,
                                    options=[discord.SelectOption(label=f"{berry.replace('_', ' ').title()} ×{state['stock'].get(berry, 0)}"
                                                                        + (' · heals party' if service.heals_party(berry) else ''),
@@ -344,7 +350,7 @@ def handlers(walker):
         live = run['ended_at'] is None
         session['selection'] = json.dumps({'phase': 'arena_break' if live else 'arena_defeat',
                                             'run_id': run['run_id'], 'run_revision': run['revision'], 'berry': berry})
-        state = {**current, 'session': session, 'x_rules': rules['x_items'], 'run': run,
+        state = {**current, 'session': session, 'x_rules': rules['x_items'], 'ex_rules': rules['ex_items'], 'run': run,
                  'stock': stock, 'berry': berry, 'result': result, 'notice': notice, 'fights': fights}
         if not live:
             return render_defeat(state)
@@ -389,6 +395,10 @@ def handlers(walker):
         status, notice = result['status'], None
         if status == 'stale':
             notice = STALE
+        elif action in USE_X and status == 'ex_active':
+            item = USE_X[action]
+            ex = next(ex for ex, rule in rules['ex_items']['items'].items() if rule['x_item'] == item)
+            notice = f"{ex_gift.EX_ITEMS[ex]} is active for this run, so {x_name(item)} can't be used. Nothing was spent."
         elif action in USE_X and status in ('used', 'active', 'missing'):
             item, x_rules = USE_X[action], rules['x_items']
             name, stat = x_name(item), x_rules['items'][item]['stat']

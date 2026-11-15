@@ -6,8 +6,9 @@ import json
 
 import discord
 
+from content.balance import load_table
 from pokewalker.bot.screens_catch import custom_id
-from pokewalker.services import cooldowns, ex_gift as service, iv_items, storage
+from pokewalker.services import arena as arena_service, cooldowns, ex_gift as service, iv_items, profiles, storage
 
 
 def render(state):
@@ -21,19 +22,23 @@ def render(state):
     held = [f"{name} ×{state['held'].get(key, 0)}" for key, name in service.EX_ITEMS.items()
             if state['held'].get(key, 0) > 0]
     lines.extend(held or ['No EX items yet.'])
-    if state.get('notice'):
-        lines.append(state['notice'])
     view = discord.ui.View(timeout=None)
     for label, action, disabled in (
             ('Claim', 'ex_claim', total == 0), ('Prev', 'ex_gift_prev', offset == 0),
             ('Next', 'ex_gift_next', offset + 10 >= total), ('Back', 'home', False)):
         view.add_item(discord.ui.Button(label=label, custom_id=custom_id(state, action),
                                         disabled=disabled, row=0))
-    for item in ('time_gear_fragment', *iv_items.EX_ITEMS):
+    for item in ('time_gear_fragment', *iv_items.EX_ITEMS, 'ex_attack', 'ex_defense'):
+        if state.get('profile', {}).get(f'{item}_armed'):
+            lines.append(f'{service.EX_ITEMS[item]} armed for your next new Arena run.')
+            continue
         quantity = state['held'].get(item, 0)
         if quantity > 0:
+            action = f'ex_arm_{item}' if item in ('ex_attack', 'ex_defense') else f'ex_use_{item}'
             view.add_item(discord.ui.Button(label=f'Use {service.EX_ITEMS[item]} ({quantity})',
-                                            custom_id=custom_id(state, f'ex_use_{item}'), row=1))
+                                            custom_id=custom_id(state, action), row=1))
+    if state.get('notice'):
+        lines.append(state['notice'])
     return {'embed': discord.Embed(title='EX-Gift', description='\n'.join(lines)), 'view': view}
 
 
@@ -86,7 +91,8 @@ def handlers(walker):
         session['selection'] = json.dumps(selection)
         return render({'session': session, 'selection': selection, 'gifts': gifts, 'total': total,
                        'held': await service.held(conn, session['profile_id']),
-                       'content': walker.bot.content, 'notice': notice})
+                       'content': walker.bot.content, 'notice': notice,
+                       'profile': await profiles.get_profile(conn, session['guild_id'], session['user_id'])})
 
     async def open_gifts(conn, session, interaction):
         return await show(conn, session, {'phase': 'ex_gift', 'offset': 0})
@@ -115,6 +121,18 @@ def handlers(walker):
                  if result['ex'].get(key, 0) > 0]
         if added:
             notice += '\nEX items added: ' + ', '.join(added)
+        return await show(conn, session, {'phase': 'ex_gift', 'offset': 0}, notice)
+
+    async def arm(conn, session, interaction, *, item):
+        result = await arena_service.arm(conn, session, item, walker.clock())
+        status = result['status']
+        if status not in ('armed', 'armed_already', 'missing'):
+            raise _Refused(EXCLUDED if status == 'excluded' else REOPEN)
+        name, rules = service.EX_ITEMS[item], load_table('arena')['rules']
+        notice = {'armed': f"{name} armed: ×{rules['x_items']['multiplier']} {rules['ex_items']['items'][item]['stat']} "
+                           'for your whole next new Arena run. A run in progress does not get it.',
+                  'armed_already': f'{name} is already armed. Nothing was spent.',
+                  'missing': f'You have no {name}.'}[status]
         return await show(conn, session, {'phase': 'ex_gift', 'offset': 0}, notice)
 
     async def time_gear_preview(conn, session, interaction):
@@ -221,6 +239,7 @@ def handlers(walker):
 
     return {'ex_gift': open_gifts, 'ex_gift_prev': previous, 'ex_gift_next': next_page, 'ex_claim': claim,
             'ex_use_time_gear_fragment': time_gear_preview, 'ex_time_gear_confirm': time_gear_confirm,
+            **{f'ex_arm_{item}': partial(arm, item=item) for item in ('ex_attack', 'ex_defense')},
             'ex_pick': pick, 'ex_pick_prev': pick_previous, 'ex_pick_next': pick_next,
             **{action: partial(handler, item=item) for item in iv_items.EX_ITEMS for action, handler in
                ((f'ex_use_{item}', item_picker), (f'ex_preview_{item}', item_preview),
