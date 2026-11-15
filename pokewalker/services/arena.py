@@ -10,7 +10,7 @@ from content.balance import limits, load_table
 from pokewalker.db import with_receipt
 from pokewalker.domain import arena as domain
 from pokewalker.domain import battle as battle_engine
-from pokewalker.services import gyms, items, profiles, stepping, storage
+from pokewalker.services import ex_gift, gyms, items, profiles, stepping, storage
 
 
 STOP_PCTS = range(10, 100, 10)
@@ -175,9 +175,15 @@ async def start(conn, session, team, now, rng, content, multipliers, skip=0):
                               'special': domain.is_special(identity, rules), 'full_hp': combatant.hp,
                               'hp': combatant.hp, 'snapshot': snapshot})
         enemy = _roll_enemy(skip + 1, 0, rng, content, multipliers)
-        await conn.execute('INSERT INTO arena_runs(run_id,profile_id,started_at,floor,slot,team,enemy) '
-                           'VALUES (?,?,?,?,0,?,?)',
-                           (str(uuid4()), session['profile_id'], now, skip + 1, json.dumps(snapshots), json.dumps(enemy)))
+        async with conn.execute('SELECT ex_attack_armed,ex_defense_armed FROM profiles WHERE profile_id=?',
+                                (session['profile_id'],)) as cursor:
+            armed = await cursor.fetchone()
+        await conn.execute('INSERT INTO arena_runs(run_id,profile_id,started_at,floor,slot,team,enemy,ex_attack,ex_defense) '
+                           'VALUES (?,?,?,?,0,?,?,?,?)',
+                           (str(uuid4()), session['profile_id'], now, skip + 1, json.dumps(snapshots), json.dumps(enemy),
+                            armed['ex_attack_armed'], armed['ex_defense_armed']))
+        await conn.execute('UPDATE profiles SET ex_attack_armed=0,ex_defense_armed=0 WHERE profile_id=?',
+                           (session['profile_id'],))
         lines = []
         for tier, copies in domain.skip_tickets(skip, rules).items():
             await conn.execute('INSERT INTO arena_tickets VALUES (?,?,?) ON CONFLICT(profile_id,tier) '
@@ -240,6 +246,35 @@ async def set_auto_order(conn, session, run_id, revision, on, now):
     return {'status': 'set', 'run': run}
 
 
+async def arm(conn, session, item, now):
+    if item not in load_table('arena')['rules']['ex_items']['items']:
+        return {'status': 'invalid'}
+    if not conn.in_transaction:
+        raise RuntimeError('Arena requires an active writer transaction')
+    profile, refusal = await profiles.session_owner(conn, session)
+    if refusal:
+        return refusal
+    pid = profile['profile_id']
+    revision = session.get('_original_revision', session['revision'])
+    key = f"ex_arm:{session['session_id']}:{revision}"
+    saved = await ex_gift.recorded(conn, key, 'ex_arm', pid)
+    if saved is not None:
+        return saved
+    column = f'{item}_armed'
+    if profile[column]:
+        return {'status': 'armed_already'}
+    if (await ex_gift.held(conn, pid))[item] < 1:
+        return {'status': 'missing'}
+
+    async def compute(conn):
+        await ex_gift.take(conn, pid, item)
+        await conn.execute(f'UPDATE profiles SET {column}=1 WHERE profile_id=?', (pid,))
+        return {'status': 'armed', 'item': item}, [
+            {'profile_id': pid, 'resource': 'ex_item', 'resource_id': item, 'delta': -1, 'reason': 'ex_arm'}]
+
+    return await with_receipt(conn, key, 'ex_arm', compute, profile_id=pid)
+
+
 async def buy_x(conn, session, item):
     rule = load_table('arena')['rules']['x_items']['items'].get(item)
     if rule is None:
@@ -258,6 +293,9 @@ async def use_x(conn, session, run_id, revision, item, now):
     rules = load_table('arena')['rules']['x_items']
     if item not in rules['items']:
         return {'status': 'invalid'}
+    if any(run[ex] and rule['x_item'] == item
+           for ex, rule in load_table('arena')['rules']['ex_items']['items'].items()):
+        return {'status': 'ex_active'}
     column = f'{item}_left'
     if run[column] > 0:
         return {'status': 'active', 'left': run[column]}
@@ -338,7 +376,8 @@ async def fight(conn, session, run_id, revision, now, rng, content, multipliers,
 
     async def compute(conn):
         x_rules = rules['x_items']
-        boosted_stats = [rule['stat'] for item, rule in x_rules['items'].items() if run[f'{item}_left'] > 0]
+        boosted_stats = {rule['stat'] for item, rule in x_rules['items'].items() if run[f'{item}_left'] > 0}
+        boosted_stats.update(rule['stat'] for item, rule in rules['ex_items']['items'].items() if run[item])
         party = [replace(fighter(member['snapshot']), hp=member['hp'],
                          **{stat: member['snapshot']['combatant'][stat] * x_rules['multiplier']
                             for stat in boosted_stats}) for member in run['team']]

@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 from datetime import datetime, timezone
 import random
+import sqlite3
 import unittest
 from unittest.mock import patch
 
@@ -695,6 +696,144 @@ class ArenaTests(unittest.IsolatedAsyncioTestCase):
                             defense=member['snapshot']['combatant']['defense'] * defense)
                     for member in run['team']]
         self.assertEqual(simulate.call_args.args[0], expected)
+
+    async def test_new_run_takes_armed_flags_and_clears_them(self):
+        for attack, defense in ((1, 1), (1, 0), (0, 1)):
+            with self.subTest(attack=attack, defense=defense):
+                await self.reset_run_fixture()
+                await self.conn.execute('UPDATE profiles SET ex_attack_armed=?,ex_defense_armed=? WHERE profile_id=?',
+                                        (attack, defense, self.pid))
+                result = await self.start()
+                self.assertEqual(set(result), {'status', 'run'})
+                self.assertEqual(result['status'], 'started')
+                self.assertEqual((result['run']['ex_attack'], result['run']['ex_defense']), (attack, defense))
+                self.assertEqual(await self.rows('SELECT ex_attack_armed,ex_defense_armed FROM profiles '
+                                                 'WHERE profile_id=?', (self.pid,)),
+                                 [{'ex_attack_armed': 0, 'ex_defense_armed': 0}])
+
+    async def test_refused_start_keeps_flags(self):
+        run = (await self.start())['run']
+        await self.conn.execute("UPDATE arena_runs SET ended_at=1100,end_reason='loss'")
+        await self.conn.execute('UPDATE profiles SET ex_attack_armed=1,ex_defense_armed=1 WHERE profile_id=?',
+                                (self.pid,))
+        for refusal in ('cooldown', 'paused', 'off', 'invalid'):
+            with self.subTest(refusal=refusal):
+                if refusal == 'paused':
+                    await self.conn.execute("INSERT INTO restrictions(guild_id,user_id,paused) VALUES ('g','u',1)")
+                elif refusal == 'off':
+                    await self.conn.execute('UPDATE restrictions SET paused=0')
+                    await self.conn.execute('UPDATE guilds SET arena_enabled=0')
+                elif refusal == 'invalid':
+                    await self.conn.execute('UPDATE guilds SET arena_enabled=1')
+                before = await self.snapshot()
+                result = await self.start(now=1200 if refusal == 'cooldown' else 65800, team=[])
+                self.assertEqual(result['status'], refusal)
+                self.assertEqual(await self.snapshot(), before)
+        self.assertEqual((await self.state())['run']['run_id'], run['run_id'])
+
+    async def test_live_run_not_boosted_flag_waits_for_next_new_run(self):
+        run = (await self.start())['run']
+        await self.conn.execute('INSERT INTO ex_items VALUES (?,?,1)', (self.pid, 'ex_attack'))
+        self.assertTrue(callable(getattr(self.service(), 'arm', None)), 'Arena EX arming service is absent')
+        self.assertEqual(await self.writer.run(lambda c: self.service().arm(c, self.session, 'ex_attack', 1100)),
+                         {'status': 'armed', 'item': 'ex_attack'})
+        resumed = await self.start(now=1200)
+        self.assertEqual((resumed['status'], resumed['run']), ('live', run))
+        with patch.object(battle_engine, 'simulate', return_value=self.outcome()) as simulate:
+            await self.fight(run)
+        self.assert_x_party(simulate, run)
+        await self.conn.execute("UPDATE arena_runs SET ended_at=1301,end_reason='loss'")
+        await self.x_press()
+        next_run = (await self.start(now=65800))['run']
+        self.assertNotEqual(next_run['run_id'], run['run_id'])
+        self.assertEqual(next_run['ex_attack'], 1)
+        self.assertEqual(await self.scalar('SELECT ex_attack_armed FROM profiles WHERE profile_id=?', (self.pid,)), 0)
+
+    async def test_ex_flag_doubles_stat_every_fight_of_the_run(self):
+        for item, stat in (('ex_attack', 'attack'), ('ex_defense', 'defense')):
+            with self.subTest(item=item):
+                await self.reset_run_fixture()
+                await self.conn.execute(f'UPDATE profiles SET {item}_armed=1 WHERE profile_id=?', (self.pid,))
+                run = (await self.start())['run']
+                snapshots = [member['snapshot'] for member in run['team']]
+                hp = tuple(member['full_hp'] for member in run['team'])
+                for index in range(5):
+                    with patch.object(battle_engine, 'simulate', return_value=self.outcome(hp=hp)) as simulate:
+                        result = await self.chain_step(run) if index >= 3 else await self.fight(run)
+                    self.assertEqual(result['status'], 'won')
+                    self.assert_x_party(simulate, run, **{stat: 2})
+                    self.assertEqual(simulate.call_args.args[1],
+                                     battle_engine.Combatant(**run['enemy']['snapshot']['combatant']))
+                    run = (await self.state())['run']
+                    self.assertEqual(run[item], 1)
+                    self.assertEqual((run['x_attack_left'], run['x_defense_left']), (0, 0))
+                    self.assertEqual([member['snapshot'] for member in run['team']], snapshots)
+                self.assertEqual((run['floor'], run['slot']), (2, 2))
+                with patch.object(battle_engine, 'simulate', return_value=self.outcome('loss', hp=(0, 0, 0))):
+                    self.assertEqual((await self.fight(run))['status'], 'defeated')
+                self.assertEqual((await self.state())['run'][item], 1)
+                self.assertEqual(await self.scalar(f'SELECT {item}_armed FROM profiles WHERE profile_id=?',
+                                                  (self.pid,)), 0)
+                self.assertEqual(await self.scalar('SELECT count(*) FROM ex_items'), 0)
+
+    async def test_ex_and_x_on_same_stat_apply_one_double(self):
+        for item, stat in (('ex_attack', 'attack'), ('ex_defense', 'defense')):
+            with self.subTest(item=item):
+                await self.reset_run_fixture()
+                run = await self.x_fight_run(attack=3, defense=3)
+                await self.conn.execute(f'UPDATE arena_runs SET {item}=1 WHERE run_id=?', (run['run_id'],))
+                run = (await self.state())['run']
+                with patch.object(battle_engine, 'simulate', return_value=self.outcome()) as simulate:
+                    await self.fight(run)
+                self.assert_x_party(simulate, run, attack=2, defense=2)
+                after = (await self.state())['run']
+                self.assertEqual((after['x_attack_left'], after['x_defense_left']), (2, 2))
+
+    async def test_matching_x_item_refused_ex_active_other_kind_allowed(self):
+        for ex, matching, other in (('ex_attack', 'x_attack', 'x_defense'),
+                                    ('ex_defense', 'x_defense', 'x_attack')):
+            with self.subTest(ex=ex):
+                await self.reset_run_fixture()
+                await self.conn.execute(f'UPDATE profiles SET {ex}_armed=1 WHERE profile_id=?', (self.pid,))
+                run = (await self.start())['run']
+                await self.inventory(matching, 2)
+                await self.inventory(other, 2)
+                before = await self.snapshot()
+                self.assertEqual(await self.use_x(run, matching), {'status': 'ex_active'})
+                # The helper advances only the click session, which is independent of the refusal.
+                before['sessions'] = await self.rows('SELECT * FROM sessions ORDER BY 1')
+                self.assertEqual(await self.snapshot(), before)
+                result = await self.use_x(run, other)
+                self.assertEqual(result['status'], 'used')
+                self.assertEqual(result['run'][f'{other}_left'], RULES['x_items']['fights'])
+                self.assertEqual(await self.scalar('SELECT quantity FROM inventory WHERE profile_id=? AND item_id=?',
+                                                  (self.pid, matching)), 2)
+                before = await self.snapshot()
+                stale = await self.use_x(run, matching)
+                self.assertEqual(stale['status'], 'stale')
+                before['sessions'] = await self.rows('SELECT * FROM sessions ORDER BY 1')
+                self.assertEqual(await self.snapshot(), before)
+                self.assertEqual(await self.use_x(result['run'], 'unknown'), {'status': 'invalid'})
+
+    async def test_buy_x_allowed_during_ex_run(self):
+        await self.conn.execute('UPDATE profiles SET ex_attack_armed=1,ex_defense_armed=1,stardust=1000 '
+                                'WHERE profile_id=?', (self.pid,))
+        run = (await self.start())['run']
+        for item in ('x_attack', 'x_defense'):
+            self.assertEqual((await self.buy_x(item))['status'], 'bought')
+            self.assertEqual(await self.scalar('SELECT quantity FROM inventory WHERE profile_id=? AND item_id=?',
+                                              (self.pid, item)), 1)
+        self.assertEqual((await self.state())['run'], run)
+
+    async def test_start_failure_rolls_back_ex_flag_transfer(self):
+        await self.conn.execute('UPDATE profiles SET ex_attack_armed=1,ex_defense_armed=1,arena_best_floor=80 '
+                                'WHERE profile_id=?', (self.pid,))
+        await self.conn.execute("CREATE TRIGGER fail_skip BEFORE INSERT ON resource_ledger "
+                                "WHEN NEW.reason='arena_skip' BEGIN SELECT RAISE(ABORT,'skip ledger'); END")
+        before = await self.snapshot()
+        with self.assertRaisesRegex(sqlite3.IntegrityError, 'skip ledger'):
+            await self.start(skip=40)
+        self.assertEqual(await self.snapshot(), before)
 
     async def test_x_attack_doubles_only_party_attack_given_to_simulate(self):
         run = await self.x_fight_run(attack=3, floor=5)

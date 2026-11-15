@@ -9,6 +9,112 @@ import test_arena
 import test_iv_items
 
 
+class EXBoostTests(unittest.IsolatedAsyncioTestCase):
+    _base = test_arena.ArenaTests
+    asyncSetUp = _base.asyncSetUp
+    profile, scalar, rows = _base.profile, _base.scalar, _base.rows
+    service, start, state, x_press = _base.service, _base.start, _base.state, _base.x_press
+
+    async def stock(self, item='ex_attack', quantity=2):
+        await self.conn.execute('INSERT INTO ex_items VALUES (?,?,?)', (self.pid, item, quantity))
+
+    async def arm(self, item='ex_attack', session=None):
+        self.assertTrue(callable(getattr(self.service(), 'arm', None)), 'Arena EX arming service is absent')
+        return await self.writer.run(lambda conn: self.service().arm(conn, session or self.session, item, 1100))
+
+    async def snapshot(self):
+        return {table: await self.rows(f'SELECT * FROM {table} ORDER BY 1') for table in
+                ('profiles', 'ex_items', 'arena_runs', 'action_receipts', 'resource_ledger')}
+
+    async def test_arm_spends_one_sets_flag_with_ledger(self):
+        await self.stock()
+        self.assertEqual(await self.arm(), {'status': 'armed', 'item': 'ex_attack'})
+        self.assertEqual(await self.scalar('SELECT quantity FROM ex_items'), 1)
+        self.assertEqual(await self.rows('SELECT ex_attack_armed,ex_defense_armed FROM profiles WHERE profile_id=?',
+                                         (self.pid,)), [{'ex_attack_armed': 1, 'ex_defense_armed': 0}])
+        self.assertEqual(await self.rows('SELECT key,action,profile_id FROM action_receipts'),
+                         [{'key': 'ex_arm:s:4', 'action': 'ex_arm', 'profile_id': self.pid}])
+        self.assertEqual(await self.rows('SELECT receipt_key,profile_id,resource,resource_id,delta,reason '
+                                         'FROM resource_ledger'),
+                         [{'receipt_key': 'ex_arm:s:4', 'profile_id': self.pid, 'resource': 'ex_item',
+                           'resource_id': 'ex_attack', 'delta': -1, 'reason': 'ex_arm'}])
+
+    async def test_arm_twice_refused_other_kind_independent(self):
+        await self.stock()
+        await self.stock('ex_defense')
+        await self.arm()
+        await self.x_press()
+        before = await self.snapshot()
+        self.assertEqual(await self.arm(), {'status': 'armed_already'})
+        self.assertEqual(await self.snapshot(), before)
+        self.assertEqual(await self.arm('ex_defense'), {'status': 'armed', 'item': 'ex_defense'})
+        self.assertEqual(await self.rows('SELECT ex_attack_armed,ex_defense_armed FROM profiles WHERE profile_id=?',
+                                         (self.pid,)), [{'ex_attack_armed': 1, 'ex_defense_armed': 1}])
+        self.assertEqual(await self.rows('SELECT quantity FROM ex_items ORDER BY item_id'),
+                         [{'quantity': 1}, {'quantity': 1}])
+
+    async def test_arm_missing_or_excluded_refused_paused_allowed(self):
+        before = await self.snapshot()
+        self.assertEqual(await self.arm(), {'status': 'missing'})
+        for item in ('time_gear_fragment', 'x_attack', 'unknown'):
+            self.assertEqual(await self.arm(item), {'status': 'invalid'})
+        self.assertEqual(await self.snapshot(), before)
+        await self.stock()
+        await self.start()
+        await self.conn.execute("INSERT INTO restrictions(guild_id,user_id,paused,excluded) VALUES ('g','u',1,1)")
+        await self.conn.execute('UPDATE guilds SET arena_enabled=0')
+        before = await self.snapshot()
+        self.assertEqual(await self.arm(), {'status': 'excluded'})
+        self.assertEqual(await self.arm(session={**self.session, 'profile_id': self.other}), {'status': 'stale'})
+        self.assertEqual(await self.snapshot(), before)
+        await self.conn.execute('UPDATE restrictions SET excluded=0')
+        self.assertEqual((await self.arm())['status'], 'armed')
+
+    async def test_arm_replay_returns_armed_after_flag_set(self):
+        await self.stock()
+        result = await self.arm()
+        for change in ('DELETE FROM ex_items', 'UPDATE profiles SET ex_attack_armed=0'):
+            await self.conn.execute(change)
+            before = await self.snapshot()
+            self.assertEqual(await self.arm(), result)
+            self.assertEqual(await self.snapshot(), before)
+        await self.conn.execute("INSERT INTO restrictions(guild_id,user_id,excluded) VALUES ('g','u',1)")
+        self.assertEqual(await self.arm(), {'status': 'excluded'})
+
+    async def test_restart_while_armed_keeps_flag(self):
+        await self.stock()
+        await self.arm()
+        before = await self.snapshot()
+        await self.writer.close()
+        await self.conn.close()
+        self.conn = await self.db.open_db(self.path)
+        self.addAsyncCleanup(self.conn.close)
+        self.writer = self.db.Writer(self.conn)
+        self.addAsyncCleanup(self.writer.close)
+        self.assertEqual(await self.snapshot(), before)
+        self.assertEqual(await self.arm(), {'status': 'armed', 'item': 'ex_attack'})
+        self.assertEqual(await self.snapshot(), before)
+
+    async def test_arm_atomic_failure_and_receipt_owner(self):
+        await self.stock()
+        await self.conn.execute("CREATE TRIGGER fail_arm BEFORE INSERT ON resource_ledger "
+                                "WHEN NEW.reason='ex_arm' BEGIN SELECT RAISE(ABORT,'arm ledger'); END")
+        before = await self.snapshot()
+        with self.assertRaisesRegex(sqlite3.IntegrityError, 'arm ledger'):
+            await self.arm()
+        self.assertEqual(await self.snapshot(), before)
+        await self.conn.execute('DROP TRIGGER fail_arm')
+        session = {key: value for key, value in self.session.items() if key != '_original_revision'}
+        await self.arm(session=session)
+        self.assertEqual(await self.scalar('SELECT key FROM action_receipts'), 'ex_arm:s:5')
+        for column, value in (('profile_id', self.other), ('action', 'ex_claim')):
+            await self.conn.execute("UPDATE action_receipts SET profile_id=?,action='ex_arm'", (self.pid,))
+            await self.conn.execute(f'UPDATE action_receipts SET {column}=?', (value,))
+            before = await self.snapshot()
+            self.assertEqual(await self.arm(session=session), {'status': 'stale'})
+            self.assertEqual(await self.snapshot(), before)
+
+
 class ShinyPatchTests(unittest.IsolatedAsyncioTestCase):
     _base = test_iv_items.IVItemTests
     asyncSetUp, connect, close = _base.asyncSetUp, _base.connect, _base.close
