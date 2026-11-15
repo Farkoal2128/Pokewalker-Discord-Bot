@@ -160,6 +160,12 @@ def render_team(state):
         view.add_item(discord.ui.Button(label=f"Start on floor {state['voucher_floor'] + 1} · EX-Voucher",
                                        custom_id=custom_id(state, 'arena_voucher_start'), row=2,
                                        disabled=view.children[-1].disabled))
+    for item in ('ex_attack', 'ex_defense'):
+        name = ex_gift.EX_ITEMS[item]
+        if state['profile'][f'{item}_armed']:
+            lines.append(f'{name} armed for your next new Arena run.')
+        elif state['held'][item]:
+            view.add_item(discord.ui.Button(label=name, custom_id=custom_id(state, f'arena_arm_{item}'), row=2))
     skip = selection.get('skip', 0)
     if skip:
         paid = ', '.join(f'{copies} {tier.title()}' for tier, copies in state['skip_tickets'].items()) or 'nothing'
@@ -343,7 +349,8 @@ def handlers(walker):
         return {'session': session, 'selection': selection, 'rows': [pokemon_state(row) for row in rows],
                 'members': members, 'total': total, 'notice': notice, 'max_skip': domain.max_skip(best_floor, rules),
                 'skip_tickets': domain.skip_tickets(selection.get('skip', 0), rules),
-                'held': await ex_gift.held(conn, session['profile_id']), 'voucher_floor': rules['ex_items']['voucher_floor']}
+                'held': await ex_gift.held(conn, session['profile_id']), 'voucher_floor': rules['ex_items']['voucher_floor'],
+                'profile': await profiles.get_profile(conn, session['guild_id'], session['user_id'])}
 
     async def open_break(conn, session, run, current, result=None, notice=None, fights=None):
         async with conn.execute(f"SELECT item_id,quantity FROM inventory WHERE profile_id=? AND item_id IN ({','.join('?' * len(BERRIES))})",
@@ -539,6 +546,17 @@ def handlers(walker):
             selection['team'] = []
         state = await team_state(conn, session, selection, current['best_floor'])
         notice = None
+        if action in ('arena_arm_ex_attack', 'arena_arm_ex_defense'):
+            item = action.removeprefix('arena_arm_')
+            result = await service.arm(conn, session, item, now)
+            status = result['status']
+            if status not in ('armed', 'armed_already', 'missing'):
+                raise _Refused(EXCLUDED if status == 'excluded' else REOPEN)
+            name = ex_gift.EX_ITEMS[item]
+            notice = {'armed': f"{name} armed: ×{rules['x_items']['multiplier']} {rules['ex_items']['items'][item]['stat']} "
+                               'for your whole next new Arena run. A run in progress does not get it.',
+                      'armed_already': f'{name} is already armed. Nothing was spent.',
+                      'missing': f'You have no {name}.'}[status]
         if action == 'arena_team_pick':
             values = interaction.data.get('values', [])
             item = next((item for item in state['rows'] if len(values) == 1 and item['pokemon']['pokemon_uid'] == values[0]), None)
@@ -580,5 +598,6 @@ def handlers(walker):
     return {name: partial(dispatch, name) for name in
             ('arena', 'arena_leaderboard', 'arena_resume', 'arena_team', 'arena_team_prev', 'arena_team_next',
              'arena_team_sort', 'arena_team_pick', 'arena_team_clear', 'arena_start', 'arena_voucher_start',
+             'arena_arm_ex_attack', 'arena_arm_ex_defense',
              'arena_skip', 'arena_skip_more', *BREAK_ACTIONS,
              'arena_tickets', *REDEEM, 'arena_redeem_confirm', *BUY_X)}

@@ -2056,3 +2056,22 @@ A stale matching X press returning ex_active redraws the break with "EX-Attack
 is active for this run, so X-Attack can't be used. Nothing was spent." (or the
 defense names). The defeat screen does not change. No slash-command, service
 or persisted-state changes. Tests: test_ex_gift_screens.py, test_arena_screens.py.
+
+## C5: Arena team EX boosts and player help (EXG-19, additive)
+Producer: bot.arena; consumers: private Walker interactions and services.arena.arm.
+The team state reads both armed flags with profiles.get_profile. After the voucher,
+row 2 adds EX-Attack (arena_arm_ex_attack) and EX-Defense (arena_arm_ex_defense),
+each only while held and unarmed. An armed kind instead shows "EX-Attack armed
+for your next new Arena run." (or EX-Defense), even with no stock remaining.
+Row 2 holds at most Clear, Start, voucher and both boosts; skip selects remain on
+rows 3-4. Both actions require the arena_team phase, call arena.arm, reuse the
+EXG-15 notices and refusals, and redraw with the same team and skip selection.
+The EX-Gift voucher entry can open the team screen during a live run; arming
+there leaves that run unchanged and waits for the next new run. Resume has no
+arming buttons. No service or persisted-state changes.
+Player help before the admin page describes owner event gifts, the waiting (!)
+badge, no expiry, Claim routing ordinary items and Arena Tickets to Inbox,
+unlimited non-tradeable EX stock, all six items and their entry points, next-new-run
+boosts and voucher rewards for floors 1-80 with a start on floor 81. The gym
+sentence stays on page 3 and every page fits 4096 UTF-16 units.
+Tests: test_arena_screens.py, test_readme.py.
