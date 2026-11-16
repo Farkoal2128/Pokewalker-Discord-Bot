@@ -1301,6 +1301,14 @@ stored as `level_x2` 40-50) instead of `wild_level_range`; IVs, gender and shiny
 as before, and no level is displayed. Existing raid encounters keep their rolls.
 Ordinary wild encounters are unchanged. Tests: tests/test_raids.py, tests/test_encounters.py.
 
+## Owner amendment D70: chosen IV for Bottlecap and Vitamin (2026-11-16)
+`apply(item, ivs, index=None)` changes the IV at index, defaulting to `lowest(ivs)`.
+`quote(..., multipliers, stat=None)` and `use(..., multipliers, stat=None)` take an
+optional stat in IVS (`iv_attack`, `iv_defense`, `iv_stamina`); None means the lowest IV.
+`use` refuses an unknown stat as refused, and after the perfect check refuses a chosen IV
+already at 15 as maxed; both write nothing. The receipt key stays
+`<item>:<uid>:<expected_revision>`. No schema change.
+
 ## Owner amendment: Bottlecap and Vitamin (2026-11-12), Shiny Patch (EXG-12)
 `bottlecap` and `vitamin` are ordinary stackable Bag items, not rare pockets. They convert
 at 2,500 and 500 Stardust and come from the survivor roll (Bottlecap), the hourly gym

@@ -41,7 +41,7 @@ class ReadmeTests(IsolatedAsyncioTestCase):
     def test_approved_text_verbatim(self):
         content = Path('content/help.md').read_bytes()
         self.assertEqual(hashlib.sha256(content).hexdigest(),
-                         '7cd7a6d33f941592c671e2a02575564a4a3e3863618faaf4fdade7d7386568a1')
+                         'f8af932c1bbfc7203fa33fa7291283b488416dcb60adcff1c3d9459840baa44b')
 
     def test_help_describes_x_items(self):
         player = next(page for page in self.pages() if '**Arena.**' in page)
@@ -190,7 +190,8 @@ class ReadmeTests(IsolatedAsyncioTestCase):
         rates = load_table('conversion_rates')
         for heading, facts in (
                 ('**Vitamins and Bottlecaps.**',
-                 ("Use one from a Pokémon's details on its lowest IV", 'a Vitamin raises it by 1',
+                 ("Use one from a Pokémon's details and pick the IV", 'a meter for each IV',
+                  'A Vitamin raises it by 1',
                   'a Bottlecap raises it to the max', 'CP and Appraisal stars',
                   'Neither works once all its IVs are perfect',
                   f"Buy Vitamins in Bag for {rates['purchase_stardust']['vitamin']:,} Stardust each",

@@ -178,7 +178,7 @@ def handlers(walker):
     async def show_detail(conn, session, pokemon):
         selection = json.loads(session["selection"])
         selection.update(pokemon_uid=pokemon["pokemon_uid"], pokemon_revision=pokemon["revision"])
-        for key in ("iv_item", "ex_back", "ex_item", "ex_preview"):
+        for key in ("iv_item", "iv_stat", "ex_back", "ex_item", "ex_preview"):
             selection.pop(key, None)
         session["selection"] = json.dumps(selection)
         item = item_state(pokemon)

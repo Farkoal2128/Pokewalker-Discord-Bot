@@ -7,6 +7,8 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
 
+import discord
+
 from content.balance import load_table
 from pokewalker.db import Writer, open_db
 from pokewalker.domain.cp import appraisal, cp
@@ -41,6 +43,20 @@ class IVRuleTests(unittest.TestCase):
         self.assertEqual(apply('vitamin', (1, 2, 3)), (2, 2, 3))
         self.assertEqual(apply('vitamin', (15, 15, 14)), (15, 15, 15))
         self.assertEqual(apply('vitamin', (3, 3, 3)), (4, 3, 3))
+
+    def test_apply_on_a_chosen_iv(self):
+        apply = service().apply
+        self.assertEqual(apply('bottlecap', (1, 2, 3), 2), (1, 2, 15))
+        self.assertEqual(apply('vitamin', (1, 2, 3), 1), (1, 3, 3))
+
+    def test_meter_is_one_colour_by_value(self):
+        meter = importlib.import_module('pokewalker.bot.iv_items').meter
+        self.assertEqual(meter(0), '⬛' * 15)
+        self.assertEqual(meter(5), '🟥' * 5 + '⬛' * 10)
+        self.assertEqual(meter(6), '🟨' * 6 + '⬛' * 9)
+        self.assertEqual(meter(10), '🟨' * 10 + '⬛' * 5)
+        self.assertEqual(meter(11), '🟩' * 11 + '⬛' * 4)
+        self.assertEqual(meter(15), '🟩' * 15)
 
 
 class IVItemTests(unittest.IsolatedAsyncioTestCase):
@@ -101,10 +117,10 @@ class IVItemTests(unittest.IsolatedAsyncioTestCase):
         rows = await self.rows('SELECT quantity FROM inventory WHERE profile_id=? AND item_id=?', (pid, item))
         return rows[0]['quantity'] if rows else 0
 
-    async def use(self, item, revision=0, uid='mon', session=None):
+    async def use(self, item, revision=0, uid='mon', session=None, stat=None):
         session = session or await self.current()
         return await self.writer.run(lambda conn: service().use(
-            conn, session, uid, revision, item, CONTENT, MULTIPLIERS))
+            conn, session, uid, revision, item, CONTENT, MULTIPLIERS, stat=stat))
 
     async def snapshot(self):
         return {table: await self.rows(f'SELECT * FROM {table}') for table in
@@ -275,11 +291,17 @@ class IVItemTests(unittest.IsolatedAsyncioTestCase):
         rendered = await self.screen('iv_bottlecap')
         self.assertEqual(rendered['embed'].title, 'Use Bottlecap')
         self.assertEqual(rendered['embed'].description,
-                         f"CP {quote['cp_before']} → {quote['cp_after']} · Appraisal "
+                         '**Attack**\n' + '🟥' + '⬛' * 14 + '\n**Defense**\n' + '🟥' * 2 + '⬛' * 13 +
+                         '\n**Stamina**\n' + '🟥' * 3 + '⬛' * 12 + '\n\n'
+                         f"Attack · CP {quote['cp_before']} → {quote['cp_after']} · Appraisal "
                          f"{quote['stars_before']} → {quote['stars_after']} stars · uses 1 Bottlecap (have 2)")
         self.assertNotIn('level', rendered['embed'].description.lower())
         buttons = self.buttons(rendered)
-        self.assertEqual(set(buttons), {'Confirm', 'Back'})
+        self.assertEqual(set(buttons), {'Attack', 'Defense', 'Stamina', 'Confirm', 'Back'})
+        self.assertEqual(buttons['Attack'].style, discord.ButtonStyle.primary)
+        self.assertEqual(buttons['Defense'].style, discord.ButtonStyle.secondary)
+        self.assertTrue(buttons['Stamina'].custom_id.endswith(':iv_stat_stamina'))
+        self.assertEqual([buttons[x]._rendered_row for x in ('Attack', 'Confirm')], [0, 1])
         self.assertTrue(buttons['Confirm'].custom_id.endswith(':iv_bottlecap_confirm'))
         self.assertTrue(buttons['Back'].custom_id.endswith(':storage_detail'))
         self.assertEqual(await self.snapshot(), before)
@@ -333,11 +355,54 @@ class IVItemTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_render_preview_does_no_io(self):
         module = importlib.import_module('pokewalker.bot.iv_items')
-        state = {'session': {'session_id': 'abcd', 'revision': 3}, 'item': 'vitamin',
+        state = {'session': {'session_id': 'abcd', 'revision': 3}, 'item': 'vitamin', 'stat': 'iv_stamina',
+                 'ivs': (15, 7, 11),
                  'quote': {'cp_before': 100, 'cp_after': 104, 'stars_before': 0, 'stars_after': 1, 'have': 1}}
         rendered = module.render_preview(state)
         self.assertEqual(rendered['embed'].description,
-                         'CP 100 → 104 · Appraisal 0 → 1 stars · uses 1 Vitamin (have 1)')
+                         '**Attack**\n' + '🟩' * 15 + '\n**Defense**\n' + '🟨' * 7 + '⬛' * 8 +
+                         '\n**Stamina**\n' + '🟩' * 11 + '⬛' * 4 +
+                         '\n\nStamina · CP 100 → 104 · Appraisal 0 → 1 stars · uses 1 Vitamin (have 1)')
+        buttons = self.buttons(rendered)
+        self.assertTrue(buttons['Attack'].disabled)
+        self.assertFalse(buttons['Defense'].disabled)
+        self.assertEqual(buttons['Stamina'].style, discord.ButtonStyle.primary)
+
+    async def test_pick_another_iv_then_confirm(self):
+        await self.details()
+        await self.screen('iv_vitamin')
+        quote = await service().quote(self.conn, 'p', 'mon', 'vitamin', CONTENT, MULTIPLIERS, stat='iv_stamina')
+        before = await self.snapshot()
+        rendered = await self.screen('iv_stat_stamina')
+        self.assertTrue(rendered['embed'].description.endswith(
+            f"Stamina · CP {quote['cp_before']} → {quote['cp_after']} · Appraisal "
+            f"{quote['stars_before']} → {quote['stars_after']} stars · uses 1 Vitamin (have 3)"))
+        self.assertEqual(self.buttons(rendered)['Stamina'].style, discord.ButtonStyle.primary)
+        self.assertEqual(await self.snapshot(), before)
+        rendered = await self.screen('iv_vitamin_confirm')
+        self.assertEqual(rendered['embed'].title, 'Pokémon details')
+        self.assertEqual(await self.ivs(), (1, 2, 4))
+        self.assertNotIn('iv_stat', json.loads((await self.current())['selection']))
+
+    async def test_pick_refusals(self):
+        await self.details()
+        self.assertIn('reopen /walker', await self.refusal('iv_stat_defense'))
+        await self.conn.execute('UPDATE pokemon SET iv_defense=15')
+        await self.screen('iv_bottlecap')
+        self.assertIn('reopen /walker', await self.refusal('iv_stat_defense'))
+        await self.screen('iv_stat_stamina')
+        await self.conn.execute('UPDATE pokemon SET iv_stamina=15')
+        before = await self.snapshot()
+        self.assertEqual(await self.refusal('iv_bottlecap_confirm'), 'That IV is already maxed. No Bottlecap was used.')
+        self.assertEqual(await self.snapshot(), before)
+
+    async def test_use_on_a_chosen_stat(self):
+        self.assertEqual((await self.use('bottlecap', stat='iv_stamina'))['status'], 'used')
+        self.assertEqual(await self.ivs(), (1, 2, 15))
+        before = await self.snapshot()
+        self.assertEqual((await self.use('vitamin', revision=1, stat='iv_stamina'))['status'], 'maxed')
+        self.assertEqual((await self.use('vitamin', revision=1, stat='hp'))['status'], 'refused')
+        self.assertEqual(await self.snapshot(), before)
 
     # Buying Vitamins
 

@@ -19,8 +19,9 @@ def lowest(ivs):
     return list(ivs).index(min(ivs))
 
 
-def apply(item, ivs):
-    changed, index = list(ivs), lowest(ivs)
+def apply(item, ivs, index=None):
+    changed = list(ivs)
+    index = lowest(ivs) if index is None else index
     changed[index] = MAX_IV if item == 'bottlecap' else min(MAX_IV, changed[index] + 1)
     return tuple(changed)
 
@@ -36,7 +37,11 @@ async def held(conn, profile_id):
     return {item: counts.get(item, 0) for item in ITEMS}
 
 
-async def quote(conn, profile_id, uid, item, content, multipliers):
+def _index(pokemon, stat):
+    return lowest(tuple(pokemon[key] for key in IVS)) if stat is None else IVS.index(stat)
+
+
+async def quote(conn, profile_id, uid, item, content, multipliers, stat=None):
     pokemon = await storage.detail(conn, profile_id, uid)
     if pokemon is None:
         return None
@@ -45,7 +50,7 @@ async def quote(conn, profile_id, uid, item, content, multipliers):
     identity, _ = storage.identify(content, pokemon)
     base = [identity[key] for key in ('base_attack', 'base_defense', 'base_stamina')]
     before = tuple(pokemon[key] for key in IVS)
-    after = (15, 15, 15) if item == 'golden_bottlecap' else before if perfect(pokemon) else apply(item, before)
+    after = (15, 15, 15) if item == 'golden_bottlecap' else before if perfect(pokemon) else apply(item, before, _index(pokemon, stat))
     level = pokemon['level_x2']
     return {'cp_before': cp(base, before, level, multipliers=multipliers),
             'cp_after': cp(base, after, level, multipliers=multipliers),
@@ -55,10 +60,10 @@ async def quote(conn, profile_id, uid, item, content, multipliers):
             'deployed': pokemon['gym_deployment_id'] is not None}
 
 
-async def use(conn, session, uid, expected_revision, item, content, multipliers):
+async def use(conn, session, uid, expected_revision, item, content, multipliers, stat=None):
     if not conn.in_transaction:
         raise RuntimeError('Bottlecap and Vitamin use requires an active writer transaction')
-    if item not in (*ITEMS, *EX_ITEMS):
+    if item not in (*ITEMS, *EX_ITEMS) or (stat is not None and stat not in IVS):
         return {'status': 'refused', 'pokemon': None}
     profile, refusal = await session_owner(conn, session)
     if refusal is not None:
@@ -86,6 +91,7 @@ async def use(conn, session, uid, expected_revision, item, content, multipliers)
         status = ('deployed' if pokemon['gym_deployment_id'] is not None else
                   'stale' if pokemon['revision'] != expected_revision else
                   'perfect' if perfect(pokemon) else
+                  'maxed' if stat is not None and pokemon[stat] == MAX_IV else
                   'missing' if (await (ex_gift.held(conn, pid) if item in EX_ITEMS else held(conn, pid)))[item] < 1 else None)
     if status is not None:
         return {'status': status, 'pokemon': pokemon}
@@ -100,7 +106,7 @@ async def use(conn, session, uid, expected_revision, item, content, multipliers)
             await ex_gift.take(conn, pid, item)
             lines = [{'profile_id': pid, 'resource': 'ex_item', 'resource_id': item, 'delta': -1, 'reason': item}]
             return {'status': 'used', 'pokemon': await storage.detail(conn, pid, uid)}, lines
-        changed = dict(zip(IVS, apply(item, tuple(pokemon[key] for key in IVS))))
+        changed = dict(zip(IVS, apply(item, tuple(pokemon[key] for key in IVS), _index(pokemon, stat))))
         await conn.execute('UPDATE pokemon SET iv_attack=?,iv_defense=?,iv_stamina=?,revision=revision+1 '
                            "WHERE pokemon_uid=? AND profile_id=? AND revision=? AND state='owned'",
                            (*changed.values(), uid, pid, expected_revision))

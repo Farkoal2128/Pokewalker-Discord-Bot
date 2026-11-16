@@ -1509,6 +1509,20 @@ deploy installer runs it automatically). The ticket path, existing commands and
 persisted formats remain compatible. Tests: tests/test_admin_force_raid.py;
 test_raids, test_admin_channels and test_readme stay green.
 
+## Owner amendment D70: choose the IV for Bottlecap and Vitamin (2026-11-16)
+Supersedes the preview layout above. The `Use Bottlecap` and `Use Vitamin` preview
+description starts with three meters, each a bold label line (`**Attack**`, `**Defense**`,
+`**Stamina**`) followed by 15 squares: the first IV squares are all 🟥 when the IV is 0-5,
+🟨 when 6-10 and 🟩 when 11-15, and the rest are ⬛. A blank line then the line "<Stat> ·
+CP <before> → <after> · Appraisal <a> → <b> stars · uses 1 <Item> (have N)" follows for
+the picked IV. Row 0 holds `Attack` (`iv_stat_attack`), `Defense` (`iv_stat_defense`) and
+`Stamina` (`iv_stat_stamina`); the picked one is primary and an IV of 15 is disabled. Row 1
+holds Confirm and Back. Opening the preview picks the lowest IV (ties Attack, Defense,
+Stamina) and saves `iv_stat` in the selection beside `iv_item`. A stat button without an
+open preview, or for a maxed IV, refuses with the reopen text and changes nothing. Confirm
+uses the saved stat; if that IV became 15 it refuses "That IV is already maxed. No <Item>
+was used." The hidden level is still never shown. Tests: tests/test_iv_items.py.
+
 ## Owner amendment: Bottlecap and Vitamin (2026-11-12)
 Pokemon details gain a third button row: `Use Bottlecap` (`iv_bottlecap`) and `Use Vitamin`
 (`iv_vitamin`). Each is disabled when none of that item is held, when all three IVs are 15

@@ -564,6 +564,22 @@ autofight."
   as below. Hurt or 1 HP members further back no longer stop it, though they still fight if
   the leader faints. Ticket and defeat stops are unchanged.
 
+### Choose the IV for Bottlecaps and Vitamins (D70, owner request 2026-11-16)
+
+The owner requested: "amend the vitamin and regular bottlecap, make it so when using it, you
+can choose which IV to use it on. In the UI for using them, have three meters showing how
+close the IVs are to empty or full. If possible, can it be color coded? Red for 5 and below,
+Yellow for up to 10, and Green up to 15." and "have the whole bar be the color based on the
+IV/15".
+
+- **D70: IV picker with meters.** The Bottlecap and Vitamin preview shows Attack, Defense
+  and Stamina meters of 15 squares, one per IV point. Filled squares share one colour set by
+  that IV: red at 0-5, yellow at 6-10, green at 11-15; the rest are black. Attack, Defense
+  and Stamina buttons pick the IV; a maxed IV's button is disabled. The lowest IV is picked
+  when the preview opens (ties go Attack, Defense, Stamina), so the old one-click flow still
+  works. This replaces the earlier rule that the preview never shows IVs. Golden Bottlecap
+  and Shiny Patch are unchanged.
+
 ## Platform constraints
 
 - Reading message text needs the privileged Message Content intent. Discord reviews

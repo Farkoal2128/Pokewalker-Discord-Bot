@@ -33,7 +33,7 @@ Buy evolution items in Bag for 500 Stardust each, or use Buy & evolve on a missi
 **Shiny Charm.** Complete the Pokédex to earn it: 4× shiny odds on every encounter, stacking with a Shiny Lure. Turn it off or on in Bag.
 **Star Piece.** Activate one from Bag for 1.5× Stardust on your next 10 catch or find Stardust rewards.
 
-**Vitamins and Bottlecaps.** Use one from a Pokémon's details on its lowest IV: a Vitamin raises it by 1 and a Bottlecap raises it to the max, which can raise its CP and Appraisal stars. Neither works once all its IVs are perfect. Buy Vitamins in Bag for 5,000 Stardust each; Bottlecaps come from gym survivor rewards.
+**Vitamins and Bottlecaps.** Use one from a Pokémon's details and pick the IV: the screen shows a meter for each IV, red, yellow or green as it fills. A Vitamin raises it by 1 and a Bottlecap raises it to the max, which can raise its CP and Appraisal stars. Neither works once all its IVs are perfect. Buy Vitamins in Bag for 5,000 Stardust each; Bottlecaps come from gym survivor rewards.
 **Trade up.** In Bag, trade 2 Poké Balls for 1 Great Ball, or 2 Great Balls for 1 Ultra Ball.
 
 <!-- page -->
