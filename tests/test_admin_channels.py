@@ -125,6 +125,16 @@ class AdminChannelTests(unittest.IsolatedAsyncioTestCase):
         await self.invoke("add", channel=self.channel, reason="Test")
         self.assertEqual(await self.rows("guild_channels"), [])
 
+    async def test_raids_description_names_both_kinds(self):
+        from pokewalker.bot.client import WalkerBot
+        from pokewalker.config import Secret, Settings
+        bot = WalkerBot(Settings(Secret('synthetic'), owner_ids=frozenset({456})))
+        self.addAsyncCleanup(bot.drain)
+        payload = self.group.to_dict(bot.tree)
+        raids = next(option for option in payload["options"] if option["name"] == "raids")
+        self.assertEqual(raids["description"],
+                         "Enable or disable raids (World Legendary and EX-Raid) in this server")
+
     async def test_registered_group_appears_in_client_manifest_without_sync(self):
         from pokewalker.bot.client import WalkerBot
         bot = WalkerBot(SimpleNamespace())

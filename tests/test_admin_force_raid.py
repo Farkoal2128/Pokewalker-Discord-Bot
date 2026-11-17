@@ -205,6 +205,34 @@ class ForceRaidTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([(r["post_state"], r["message_id"]) for r in await self.rows("world_spawns")],
                          [("sent", "555")])
 
+    async def test_force_raid_spawns_while_ex_raid_live(self):
+        await self.conn.execute(
+            "INSERT INTO world_spawns(spawn_id,guild_id,channel_id,pokemon_id,identity_id,"
+            "spawned_at,expires_at,post_state,content_version,kind) "
+            "VALUES ('ex','123','789',144,'articuno',?,?,'sent','fixture','ex')",
+            (START, START + 3600))
+        await self.conn.commit()
+        ex = (await self.rows("world_spawns"))[0]
+        self.assertTrue((await self.invoke()).startswith("Spawned "))
+        spawns = await self.rows("world_spawns")
+        self.assertEqual(next(s for s in spawns if s["spawn_id"] == "ex"), ex)
+        world = next(s for s in spawns if s["kind"] == "world")
+        self.assertIsNone(world["spawned_by_profile_id"])
+        self.assertEqual(world["expires_at"], START + 3600)
+        audit, = await self.rows("mod_audit")
+        self.assertEqual((audit["guild_id"], audit["actor_id"], audit["action"],
+                          audit["reason"], audit["created_at"]),
+                         ("123", "456", "force_raid", "weekend event", START))
+        self.posted.send.assert_awaited_once()
+        for table in ("inventory", "resource_ledger", "action_receipts"):
+            self.assertEqual(await self.rows(table), [])
+        await self.conn.execute("UPDATE world_spawns SET ended=1 WHERE kind='world'")
+        await self.conn.commit()
+        before = (await self.rows("world_spawns"), await self.rows("mod_audit"))
+        self.now += 1
+        self.assertEqual(await self.invoke(), COOLDOWN.format("24h 0m"))
+        self.assertEqual((await self.rows("world_spawns"), await self.rows("mod_audit")), before)
+
     async def test_second_force_within_24_hours_refused_with_time_left_and_no_writes(self):
         await self.invoke()
         await self.conn.execute("UPDATE world_spawns SET ended=1")

@@ -904,7 +904,9 @@ class RaidSpawnTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_expire_one_guild_preserves_foreign_then_all_settles_it(self):
         own = (await self.use())['spawn']
-        await self.conn.execute("INSERT INTO world_spawns SELECT 'foreign','h',channel_id,pokemon_id,identity_id,"
+        await self.conn.execute("INSERT INTO world_spawns(spawn_id,guild_id,channel_id,pokemon_id,identity_id,"
+            "spawned_at,expires_at,spawned_by_profile_id,post_state,message_id,ended,content_version) "
+            "SELECT 'foreign','h',channel_id,pokemon_id,identity_id,"
             "spawned_at,expires_at,NULL,'pending',NULL,0,content_version FROM world_spawns WHERE spawn_id=?",
             (own['spawn_id'],))
         await self.encounter(self.other, 'foreign-encounter', 'revealed', 'foreign')
@@ -925,14 +927,14 @@ class RaidSpawnTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_participation_deleted_at_expiry_rejoin_impossible_spawn_ended(self):
         spawn = (await self.use())['spawn']
-        await self.writer.run(lambda conn: self.raids().join(conn, 'g', 'u', self.now, self.rng, self.content))
+        await self.writer.run(lambda conn: self.raids().join(conn, 'g', 'u', spawn['spawn_id'], self.now, self.rng, self.content))
         self.now = spawn['expires_at']
         await self.writer.run(lambda conn: self.raids().expire(conn, self.now))
         self.assertEqual(await self.rows('SELECT * FROM raid_participation'), [])
         self.assertEqual(await self.scalar('SELECT ended FROM world_spawns'), 1)
         before = await self.rows('SELECT * FROM encounters')
         self.assertEqual(await self.writer.run(lambda conn: self.raids().join(
-            conn, 'g', 'u', self.now, self.rng, self.content)), {'status': 'none'})
+            conn, 'g', 'u', spawn['spawn_id'], self.now, self.rng, self.content)), {'status': 'none'})
         self.assertEqual(await self.rows('SELECT * FROM encounters'), before)
         self.assertEqual(await self.rows('SELECT * FROM raid_participation'), [])
 
@@ -984,7 +986,7 @@ class RaidJoinTests(unittest.IsolatedAsyncioTestCase):
     async def join(self, *, guild='g', user='u', rng=None):
         self.assertTrue(hasattr(self.raids(), 'join'), 'Raid join service is absent')
         return await self.writer.run(lambda conn: self.raids().join(
-            conn, guild, user, self.now, self.rng if rng is None else rng, self.content))
+            conn, guild, user, 'join-spawn', self.now, self.rng if rng is None else rng, self.content))
 
     async def snapshot(self):
         return {table: await self.rows(f'SELECT * FROM {table}') for table in
@@ -1018,7 +1020,7 @@ class RaidJoinTests(unittest.IsolatedAsyncioTestCase):
             self.now = now
             await self.conn.execute('UPDATE world_spawns SET ended=?', (ended,))
             before = await self.snapshot()
-            self.assertIsNone(await self.raids().active_spawn(self.conn, 'g', self.now))
+            self.assertEqual(await self.raids().live_spawns(self.conn, 'g', self.now), [])
             self.assertEqual(await self.join(), {'status': 'none'})
             self.assertEqual(await self.snapshot(), before)
 
@@ -1194,14 +1196,14 @@ class RaidJoinTests(unittest.IsolatedAsyncioTestCase):
         await self.active()
         before = await self.snapshot()
         self.assertEqual(await self.join(guild='h', user='v'), none)
-        self.assertIsNone(await self.raids().active_spawn(self.conn, 'h', self.now))
+        self.assertEqual(await self.raids().live_spawns(self.conn, 'h', self.now), [])
         self.assertEqual(await self.snapshot(), before)
 
     async def test_join_rollback_and_writer_transaction(self):
         await self.active()
         self.assertTrue(hasattr(self.raids(), 'join'), 'Raid join service is absent')
         with self.assertRaisesRegex(RuntimeError, 'writer transaction'):
-            await self.raids().join(self.conn, 'g', 'u', self.now, self.rng, self.content)
+            await self.raids().join(self.conn, 'g', 'u', 'join-spawn', self.now, self.rng, self.content)
         await self.conn.execute('INSERT INTO active_effects(effect_id,profile_id,kind,starts_at,expires_at,'
                                 "receipt_key,remaining_encounters) VALUES ('lure',?,'shiny_lure',0,1,'fixture',1)",
                                 (self.pid,))
@@ -1643,10 +1645,10 @@ class RaidCommandTests(unittest.IsolatedAsyncioTestCase):
     async def test_raid_none_active_explains(self):
         for guild in (123, 999):
             screen = await self.invoke(guild=guild)
-            self.assertEqual(self.rendered(screen)['content'], 'No World Legendary is active here.')
+            self.assertEqual(self.rendered(screen)['content'], 'No raid is active here.')
         await self.active()
         screen = await self.invoke(guild=999)
-        self.assertEqual(self.rendered(screen)['content'], 'No World Legendary is active here.')
+        self.assertEqual(self.rendered(screen)['content'], 'No raid is active here.')
         self.assertEqual(await self.rows(), [])
         self.assertEqual(await self.rows('SELECT * FROM raid_participation'), [])
 
@@ -1826,7 +1828,7 @@ class RaidCommandTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.session())['expires_at'], 5400)
         self.assertEqual((await self.raid_row())['created_at'], 4500)
         self.now = 4600
-        self.assertEqual(self.rendered(await self.invoke())['content'], 'No World Legendary is active here.')
+        self.assertEqual(self.rendered(await self.invoke())['content'], 'No raid is active here.')
 
     async def test_command_guild_only_and_ephemeral(self):
         from pokewalker.bot.client import WalkerBot

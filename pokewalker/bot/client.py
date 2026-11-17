@@ -130,6 +130,7 @@ class WalkerBot(discord.Client):
         self.reactions = None
         self._reaction_sweep = None
         self._gym_sweep = None
+        self._raid_fanouts = set()
         self.heartbeat = Heartbeat(self)
 
     async def setup_hook(self):
@@ -182,7 +183,16 @@ class WalkerBot(discord.Client):
             except Exception:  # a network error must not skip announcing pending raids
                 LOG.exception("Startup reaction sweep failed")
             if not self._stopping:
-                await raids.resume_pending(self)
+                await self.announce_ex_raid()
+
+    def announce_ex_raid(self, ex_raid_id=None):
+        if self._stopping:
+            return None
+        pending = raids.resume_pending(self) if ex_raid_id is None else raids.resume_pending(self, ex_raid_id)
+        task = asyncio.create_task(pending)
+        self._raid_fanouts.add(task)
+        task.add_done_callback(self._raid_fanouts.discard)
+        return task
 
     async def _sweep_once(self):
         async def settle(conn):
@@ -239,10 +249,13 @@ class WalkerBot(discord.Client):
                 await bounded(asyncio.gather(self._reaction_sweep, return_exceptions=True), limit=19)
             except Exception as error:
                 failures.append(error)
-        if self._gym_sweep is not None and not self._gym_sweep.done():
-            self._gym_sweep.cancel()
+        tasks = [task for task in (*self._raid_fanouts, self._gym_sweep)
+                 if task is not None and not task.done()]
+        if tasks:
+            for task in tasks:
+                task.cancel()
             try:
-                await bounded(asyncio.gather(self._gym_sweep, return_exceptions=True), limit=19)
+                await bounded(asyncio.gather(*tasks, return_exceptions=True), limit=19)
             except Exception as error:
                 failures.append(error)
         if self.heartbeat._task is not None:

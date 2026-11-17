@@ -1,22 +1,37 @@
 # Contract: Discord command and lifecycle boundary (C5)
 
-## C5: M8.3b private World Legendary join and reopen (additive)
-Under D60 and Q12, guild-only `/raid` defers ephemerally before its writer job.
+## C5: M8.3b private raid join, chooser and reopen (additive)
+Under D60 and Q12, guild-only `/raid`, described as "Join or reopen an active raid",
+defers ephemerally before its writer job.
 It joins using Walker.clock(), Walker.rng and the configured content artifact.
-No live spawn in this guild says "No World Legendary is active here." Unenrolled,
+No live spawn in this guild says "No raid is active here." Unenrolled,
 excluded and opted-out members receive the existing private enrollment/access refusal.
 `/raid` with a pending catch opens its menu without joining. After opt-out and,
 for an existing profile, exclusion checks, it creates a normal Walker session and
 opens the pending menu before looking for a spawn; no participation, raid encounter
 or Lure use occurs. A pending World Legendary survives spawn expiry and is exempt
 from auto-send, holding the catch lock until confirmed.
+After those checks, one live spawn opens directly. Two live spawns open a normal
+Walker session with selection `{'raid_choices': {'world': <spawn_id>, 'ex': <spawn_id>}}`
+and text "Two raids are active here. Choose one." Buttons are
+"World Legendary: <name> · ends <UTC>" (`raid_pick_world`) and
+"EX-Raid: <name> · ends <UTC>" (`raid_pick_ex`), each cut at 80 characters.
+A pick reads only its kind's saved spawn ID; missing choices refuse with Walker's
+REOPEN message. A pick never accepts a spawn ID from the client. Both actions check
+for a pending catch first, including one caught after the chooser opened elsewhere.
+Command and picks share entry: join the selected spawn by ID; `none` says
+"That raid has ended.", including when another spawn of that kind replaced it.
+A player may join both kinds once each; duplicate presses do not reroll or rejoin.
 A saved encounter must belong to the current guild/user/profile and live spawn;
 missing and foreign encounters are indistinguishable and reveal no foreign existence.
 For a joined participation with NULL, missing or foreign encounter, say "You already
-joined this World Legendary; it can be joined once." No reroll or replacement occurs.
+joined this World Legendary; it can be joined once." for kind=world, or "You already
+joined this EX-Raid; it can be joined once." for kind=ex. No reroll or replacement occurs.
 
-Live queued/revealed encounters use render_catch with "World Legendary · ends <UTC>";
-every render_catch of a raid encounter (ball/berry select and pick included) keeps that line.
+Live queued/revealed encounters use render_catch with "EX-Raid · ends <UTC>" for
+kind=ex, otherwise "World Legendary · ends <UTC>"; every render_catch of a raid
+encounter (ball/berry select and pick included) keeps that line. Catch, confirmation
+and result tier text is "EX-Raid" for kind=ex, otherwise the existing encounter tier.
 Resolved caught/ran encounters use the existing recovery render_terminal: Done (plus
 Send for research while the caught Pokémon is owned),
 no catch controls. Each successful open persists a normal Walker session with revision
@@ -708,6 +723,83 @@ Existing command shapes, persisted data and lifecycle exit meanings are compatib
 Tests: test_admin.py, test_client_lifecycle.py and affected adapter/config regressions.
 Live Discord, systemd restart handling and host acceptance remain unverified.
 
+### EX-Raid manager (additive, EXR-9/EXR-10/EXR-11)
+
+`/admin ex-raid pokemon:<autocomplete> [server_id] [shiny] [level] [iv_attack]
+[iv_defense] [iv_stamina] [duration]` registers only in the admin guild. Only
+`pokemon` is required. Level is 1–40, each IV 0–15, and duration 1–24 whole hours
+(default 1). Submit uses the existing owner authorization, five-per-minute bucket
+and exclusion check. Server IDs use `config.snowflake`.
+
+The picker searches all 1,094 catalog identities, case- and accent-insensitively,
+ranked by exact Dex number, name prefix, substring, then close spelling. It returns
+at most 25 unique choices labelled `#006 Charizard`, valued by string identity ID;
+empty input returns the first 25 in catalog order. Autocomplete checks admin guild
+and configured owner IDs in memory; other callers receive no choices. It never
+defers, reads exclusion/database state, submits a writer job or spends a bucket
+token. Excluded owners may see public species names but cannot submit.
+
+Autocomplete is only a hint. Submit accepts only a known identity ID; free text
+and unknown IDs receive "Pick a Pokémon from the list." Invalid level, IV or
+duration receives "Level must be 1-40, each IV 0-15 and the duration 1-24 hours."
+Invalid server ID receives "Server ID must be a Discord ID." Refusals write nothing.
+A valid submit opens an in-memory, owner-bound draft in `admin.ex_raid_drafts`:
+identity, five locks, hours, server ID or None, `all_servers=False`, revision zero,
+one stable send ID for its lifetime, `state='editing'`, `discard_pending=False`,
+and an absolute monotonic deadline of `bot.clock() + 900`. An unknown server
+receives "The bot has no data for server <id>." and opens no draft.
+
+The private preview shows send ID, boss Dex number, name and sprite, each lock or
+"rolled per player", duration, and target: "server <id>", "all servers", or
+"none chosen: press All servers". Without a server ID no target is selected;
+only an explicit All servers press selects every persisted server. It increments
+the revision and redraws without changing the send ID or deadline. All servers is
+shown only before a target is chosen; Cancel and Confirm are always shown.
+Confirm is disabled until a target is selected and uses
+`ex_raid_confirm:<draft_id>:<revision>`.
+
+Once targeted, Counts (provisional) lists targeted servers, servers that will get
+it, and counts for raids off, no raid channel, no permission or bot not in server,
+raid channel changed, and EX-Raid already live. Zero spawning adds "Nothing would
+spawn." Counts use `raids.ex_target` in a writer job, UTC `bot.walker.clock()`,
+and gateway-only `bot.get_guild` plus `raids.checked_channel`; previews write
+nothing, including no expiry settlement, spawn or announcement.
+
+The view subclasses EX-Gift's OwnerView: every press privately defers and checks
+the configured draft owner, admin guild, absolute deadline, bucket and exclusion,
+then rechecks registry identity and state after awaits. Expiry refuses "This EX-Raid draft expired. Run
+/admin ex-raid again." Cancel, expiry and view timeout discard the draft, stop
+the view and remove it from the registry. Discard during sending marks pending
+discard. Cancel leaves "EX-Raid draft cancelled." with no controls or embed.
+Restart leaves old controls without registered handlers or acknowledgement.
+Confirm prefixes `gift_confirm:` and `ex_raid_confirm:` share the five-per-minute
+`admin.requests` bucket; other presses share the 30-per-minute
+`admin.gift_callbacks` bucket. After inherited checks, sent drafts return their
+stored receipt; sending drafts refuse "This EX-Raid is being sent." An absent or
+discarded draft receives the expiry refusal. A missing target or stale revision
+refuses "This preview is out of date. Nothing was sent."
+
+A valid Confirm enters sending and shields settlement from callback cancellation.
+Its writer job checks registry identity, sending state, pending discard and the
+monotonic deadline before `raids.ex_commit` and again after it; losing liveness
+after the service returns rolls back all settlement and send writes. The service
+uses the UTC walker clock and the preview's gateway-only channel resolver.
+Refusal or rollback restores editing with the same revision and send ID; expiry
+or pending discard completes cleanup. The synchronous after-commit observer
+stores a sent result and schedules `bot.announce_ex_raid(ex_raid_id)` before any
+receipt, including when the callback was cancelled. A replay schedules nothing.
+
+A successful reply uses a local snapshot, with no controls or embed: send ID,
+boss, all locks, duration, target, end UTC and committed counts, including every
+skip reason. A send spawning nowhere replies "Nothing was sent: no server could
+get this EX-Raid." with skip reasons and writes nothing. Other failures reply
+"Nothing was sent." Other controls while sending refuse, and after sent return
+the same receipt. Committed sends survive failed acknowledgements and a deadline
+or discard arriving during commit; local snapshots preserve their receipt.
+No persisted draft state is added. Producers are Admin and admin_ex_raid; consumers are configured owners and explicit admin-guild
+command sync. This is additive; global commands and persisted formats are unchanged.
+Tests: test_admin_ex_raid.py and test_client_lifecycle.py. Live Discord is unverified.
+
 ### EX-Gift manager (additive, EXG-5/EXG-6)
 
 `/admin gift scope:<all|server> [server_id] [user_id]` registers only in the
@@ -771,6 +863,29 @@ and cannot send; committed sends remain available to gift-history (EXG-7).
 Producer: Admin and its EX-Gift view; consumers: configured owners and Discord's
 component serializer. Existing commands and persisted data remain compatible;
 tests: `test_admin_gift.py`, `test_admin.py`, `test_cooldown_reset.py`, `test_db.py`.
+
+### EX-Raid history (additive, EXR-12)
+
+`/admin ex-raid-history [send_id]` registers only in the admin guild, privately
+defers and takes the shared five-per-minute owner authorization token and current
+exclusion check. It lists every configured owner's committed sends, newest first,
+ten per page, or one send by its exact 32-character lowercase hexadecimal send ID.
+Malformed or missing IDs reply "No EX-Raid send with ID <id> was committed."
+Reads use `raids.ex_history` or `raids.ex_lookup` through the writer; history never
+spawns or announces, and survives draft discard and restart.
+
+The "EX-Raid history" embed shows send ID, UTC commit time, boss (`#<dex> <name>`),
+locks or "all rolled per player", duration, target ("all servers" or "server <id>"),
+end time UTC and "Counts (committed)": targeted servers, servers spawned, and each
+skip reason with its count. Pages exceeding 4096 description characters drop each
+entry's lock line. Empty history says "No EX-Raids were sent." No player, profile
+or owner IDs appear. Prev/Next inherit EX-Gift history's opening-owner binding,
+900-second absolute expiry, shared 30-per-minute callback bucket and exclusion
+checks. Expiry says "This history expired. Run /admin ex-raid-history again."
+All replies suppress mentions. Producer: Admin and its RaidHistoryView; consumers:
+configured owners and Discord. Existing commands and persisted data remain
+compatible; only the admin-guild command manifest changes and needs explicit sync.
+Tests: `test_admin_ex_raid.py`, `test_client_lifecycle.py`.
 
 ### EX-Gift history (additive, EXG-7)
 
@@ -1208,8 +1323,11 @@ Tests: test_gym_mod, test_mod, test_deletion. G-F2 and live acceptance remain op
 `/walker-admin raids on|off reason [channel]` is guild-only with Manage Server
 defaults and runtime checks. On requires a text channel in the interaction guild;
 missing and foreign channels receive the same refusal without cross-guild lookup.
-Off clears raids_enabled while retaining raid_channel_id; on sets both. New guilds
-remain off with no channel until configured. A stripped nonblank reason is required.
+The switch also decides whether this server receives owner EX-Raids. Its command
+description is "Enable or disable raids (World Legendary and EX-Raid) in this server".
+Off clears raids_enabled while retaining raid_channel_id; on sets both. A live raid
+runs to its expiry after off. New guilds remain off with no channel until configured.
+A stripped nonblank reason is required.
 The command defers privately before writer waits, rechecks Manage Server and actor
 exclusion inside its mutation job, and atomically audits target_kind=guild, the
 guild ID, actor, raids_on/raids_off, stripped reason and time. Refusals write nothing;
@@ -1224,26 +1342,29 @@ M8.1a guild fields. Tests: test_raids and test_admin_channels. G-F2/live gates s
 Under D60 and Q12, home Open encounter selects only ordinary queued/revealed rows.
 Back from Master Ball, shiny Run confirmation or the storage warning instead reopens
 the selected queued/revealed raid encounter owned by this profile, while its spawn in this guild
-is unexpired. It preserves the frozen encounter and selected items, uses the normal
+is unexpired. With both raid kinds joined, Back returns only to the selected raid,
+never the other one. It preserves the frozen encounter and selected items, uses the normal
 reveal handling and clears the Run, Master Ball and storage confirmation flags.
 A deleted, expired, foreign or missing selection falls through to the ordinary queue
-or home without revealing another profile's encounter. Later and the empty-queue
+or home without revealing another profile's encounter or opening the other raid,
+before and after expiry cleanup. Later and the empty-queue
 home fallback clear the Run, Master Ball and storage flags, including after a
 read-only failed confirmed throw or a confirmed throw that broke free. Ordinary Back is unchanged.
 Every home entry clears only these confirmation flags before normal terminal recovery,
 preserving unrelated selection values; a fabricated home action cannot carry them onward.
 Run and shiny Confirm Run recheck raid spawn expiry using Walker.clock() in the
 writer transaction before any resolution or receipt. At expires_at <= now they
-privately refuse with "The World Legendary left.", preserving every table and the
-revealed encounter for cleanup. A throw that catching.throw refuses as expired
-shows "The World Legendary left; this encounter expired." on the catch screen.
+privately refuse with "The EX-Raid left." for kind=ex, otherwise "The World Legendary
+left.", preserving every table and the revealed encounter for cleanup. A throw that
+catching.throw refuses as expired shows "This EX-Raid ended; this encounter expired."
+for kind=ex, otherwise "The World Legendary left; this encounter expired." on the catch screen.
 A live raid can still use the normal Run flow.
 Producer: Walker; consumers: home/catch/confirmation screens and saved session
 selection. Existing buttons, custom IDs, schema and ordinary catch semantics stay
 compatible. Tests: test_raids, test_walker_encounter and test_walker_router.
 Focused evidence leaves G-F2 and live Discord acceptance open.
 
-## C5: M8.2a at-most-once World Legendary announcement (additive)
+## C5: M8.2a at-most-once raid announcement (additive)
 D60 deliberately excepts D2 with one public embed, no pings and no DMs. The embed
 names the exact identity, shows its normal D48 sprite when available, and gives
 the UTC despawn time. `raids.announce(bot,spawn)` uses bot.writer and bot.walker.clock;
@@ -1254,11 +1375,25 @@ to the persisted channel only, with AllowedMentions.none() and
 enforce_nonce=true to that payload. A successful third job stores sent/message_id.
 A failure or cancellation after claiming leaves attempted, with no retry/refund,
 including a crash after Discord accepts and before its ID is saved.
-`resume_pending(bot)` announces only live, unended pending rows; attempted/sent
-rows are never sent again. Concurrent/repeated calls cannot claim twice. No live
-Discord acceptance is implied by mocked tests. Producer: raids; consumers: later
-startup recovery and ticket UI. Existing commands remain compatible. Tests:
-test_raids, test_share. G-F2 and live gates remain separate.
+The claimed row's kind selects the title: `EX-Raid: <name>` for `ex`, otherwise
+`World Legendary: <name>`. The description stays "<name> is here! Despawns <UTC>.
+Join with /raid." A failed post logs one warning containing only the spawn ID as
+context and returns with the row still attempted.
+`resume_pending(bot, ex_raid_id=None)` announces only live, unended pending rows,
+filtered to that send when an ID is given, ordered by spawned_at then spawn_id.
+Each row's Exception (including claim or sent-write failure) logs a warning with
+only its spawn ID and allows later servers to proceed; cancellation propagates.
+Attempted/sent rows are never sent again. Concurrent/repeated calls cannot claim
+twice. A spawn with a failed or skipped announcement remains joinable through /raid.
+`WalkerBot.announce_ex_raid(ex_raid_id=None)` synchronously returns a bot-owned
+fan-out task, retained until done. Startup awaits the tracked task without an ID.
+Shutdown cancels and awaits fan-outs alongside the gym sweep before closing the
+writer, within the existing drain deadline. While stopping it returns None without
+creating a task; committed pending rows resume on the next startup.
+No live Discord acceptance is implied by mocked tests. Producer: raids; consumers:
+startup recovery, EX send and ticket UI. Existing commands remain compatible.
+Tests: test_ex_raid, test_client_lifecycle, test_raids, test_share.
+G-F2 and live gates remain separate.
 
 Supervisor ruling: announce uses direct channel.send with no application deadline
 or cancellation wrapper. The application starts at most one send per spawn;
@@ -2089,3 +2224,14 @@ unlimited non-tradeable EX stock, all six items and their entry points, next-new
 boosts and voucher rewards for floors 1-80 with a start on floor 81. The gym
 sentence stays on page 3 and every page fits 4096 UTF-16 units.
 Tests: test_arena_screens.py, test_readme.py.
+
+## C5: EX-Raid player help (EXR-13, additive)
+Producer: content/help.md via bot.client.load_help; consumers: /readme players
+and server administrators. After Join a World Legendary, player help describes
+owner EX-Raids for any Pokémon, lasting 1 to 24 hours, joining once with /raid,
+and choosing and joining each when both raid kinds are active. The Server raids
+paragraph keeps its World Legendary prefix and adds that the same switch covers
+owner EX-Raids. The raids on|off list entry names World Legendary spawns and
+EX-Raids. Player pages expose neither /walker-admin nor /admin; page one stays
+verbatim and every page fits 4096 UTF-16 units. No persisted-state change.
+Tests: test_readme.py, test_admin_channels.py.

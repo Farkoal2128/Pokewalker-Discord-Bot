@@ -102,7 +102,7 @@ class OwnerView(discord.ui.View):
             await self.on_timeout()
             await self.refuse(interaction, self.expired)
             return False
-        confirm = interaction.data.get('custom_id', '').startswith('gift_confirm:')
+        confirm = interaction.data.get('custom_id', '').startswith(('gift_confirm:', 'ex_raid_confirm:'))
         wait = admin.throttled(admin.requests if confirm else admin.gift_callbacks,
                                self.owner_id, 5 if confirm else 30)
         if wait is not None:

@@ -8,7 +8,7 @@
 
 **Gyms.** If you deploy a Pokémon to a server's gym, other members of that server can see it while it defends: its species, form, CP and battle stats, and your Discord user ID as its holder. Challengers' battle results against it are saved in their game data. If you delete your data, opt out, or a server admin resets your profile, your defender's details are removed from those saved results.
 
-**Raids.** A World Legendary announcement does not say who started it. When you join a raid, the bot records the server, your user ID and that World Legendary. This record is kept after `delete-data` until that World Legendary leaves, at most 60 minutes.
+**Raids.** A raid announcement does not say who started it. When you join a raid, the bot records the server, your user ID and that raid. This record is kept after `delete-data` until that raid leaves: at most 60 minutes for a World Legendary, at most 24 hours for an EX-Raid.
 
 **Your controls.**
 - `/walker-account privacy` shows this text.

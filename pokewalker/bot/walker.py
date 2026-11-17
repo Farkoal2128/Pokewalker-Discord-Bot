@@ -16,7 +16,7 @@ from content.balance import load_table
 from pokewalker.bot import screens, storage
 from pokewalker.bot import research, powerup, pokedex
 from pokewalker.bot import evolve, gyms, iv_items, arena, ex_gift
-from pokewalker.bot import milestones, bag, route, share, trade
+from pokewalker.bot import milestones, bag, route, share, trade, raid
 from pokewalker.services import arena as arena_service
 from pokewalker.services import ex_gift as ex_gift_service
 from pokewalker.services.milestones import pending_count
@@ -88,6 +88,7 @@ class Walker:
         self.handlers.update(gyms.handlers(self))
         self.handlers.update(arena.handlers(self))
         self.handlers.update(ex_gift.handlers(self))
+        self.handlers.update(raid.handlers(self))
         self.handlers.update(trade.handlers(self))
         self.before_home = self.recover_terminal
         self._locks = WeakValueDictionary()
@@ -181,7 +182,7 @@ class Walker:
                 session["revision"] += 1
                 pending = None
                 if action in ("open_encounter", "select_ball", "select_berry", "pick_ball", "pick_berry",
-                              "throw", "master_confirm", "run", "run_confirm"):
+                              "throw", "master_confirm", "run", "run_confirm", "raid_pick_world", "raid_pick_ex"):
                     pending = await self.pending_catch(conn, session["profile_id"])
                 selected = json.loads(session["selection"])
                 # Replay only an already-saved menu; an older throw screen must save the menu's storage quote.
@@ -190,6 +191,8 @@ class Walker:
                     session["_read_only"] = True
                 rendered = (await self.pending_menu(conn, session, pending) if pending is not None
                             else await handler(conn, session, interaction))
+                if action in ("raid_pick_world", "raid_pick_ex"):
+                    rendered = {"content": None, "embed": None, "view": None, **rendered}
                 if not session.get("_read_only"):
                     await conn.execute("UPDATE sessions SET revision=?,profile_id=?,selection=?,expires_at=MAX(expires_at,?) "
                                        "WHERE session_id=?", (session["revision"], session["profile_id"],
@@ -455,15 +458,18 @@ class Walker:
                                 "WHERE encounter_id=? AND success=1 AND profile_id=? AND reason='catch_reward' "
                                 "GROUP BY resource", (encounter_id, session["profile_id"])) as cursor:
             rewards = {row["resource"]: row["delta"] for row in await cursor.fetchall()}
-        raid_line = None
+        raid_line = raid_kind = None
         if encounter.get("raid_spawn_id"):
-            async with conn.execute("SELECT expires_at FROM world_spawns WHERE spawn_id=?",
+            async with conn.execute("SELECT expires_at,kind FROM world_spawns WHERE spawn_id=?",
                                     (encounter["raid_spawn_id"],)) as cursor:
                 spawn = await cursor.fetchone()
             if spawn is not None:
                 until = datetime.fromtimestamp(spawn["expires_at"], timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-                raid_line = f"World Legendary · ends {until}"
-        return {"raid_line": raid_line, "candy": rewards.get("candy", 0), "stardust": rewards.get("stardust", 0),
+                raid_kind = spawn["kind"]
+                name = "EX-Raid" if raid_kind == "ex" else "World Legendary"
+                raid_line = f"{name} · ends {until}"
+        return {"raid_line": raid_line, "raid_kind": raid_kind,
+                "candy": rewards.get("candy", 0), "stardust": rewards.get("stardust", 0),
                 "pending": encounter["state"] == "caught" and pokemon is None,
                 "session": session, "encounter": encounter, "identity": identity,
                 "pokemon": dict(pokemon) if pokemon is not None else None,
@@ -514,10 +520,12 @@ class Walker:
             session["_read_only"] = True
             return screens.render_terminal(state) if terminal else screens.render_catch(state)
         if encounter["raid_spawn_id"] is not None:
-            async with conn.execute("SELECT 1 FROM world_spawns WHERE spawn_id=? AND guild_id=? AND expires_at>?",
-                                    (encounter["raid_spawn_id"], session["guild_id"], self.clock())) as cursor:
-                if await cursor.fetchone() is None:
-                    raise _Refused("The World Legendary left.")
+            async with conn.execute("SELECT expires_at,kind FROM world_spawns WHERE spawn_id=? AND guild_id=?",
+                                    (encounter["raid_spawn_id"], session["guild_id"])) as cursor:
+                spawn = await cursor.fetchone()
+            if spawn is None or spawn["expires_at"] <= self.clock():
+                name = "EX-Raid" if spawn is not None and spawn["kind"] == "ex" else "World Legendary"
+                raise _Refused(f"The {name} left.")
         if encounter["shiny"]:
             if not confirmed:
                 selection["run_confirm"] = True
@@ -584,7 +592,8 @@ class Walker:
         berry = screens.label(state["selection"].get("berry"))
         notices = {"no_ball": "You have none of the selected ball.",
                    "no_berry": f"You're out of {berry}. Pick another berry or None to throw.",
-                   "expired": "The World Legendary left; this encounter expired.",
+                   "expired": ("This EX-Raid ended; this encounter expired." if state["raid_kind"] == "ex"
+                               else "The World Legendary left; this encounter expired."),
                    "revealed": "It broke free!" if not session.get("_read_only") else "Encounter updated. Reopen /walker."}
         state["notice"] = notices.get(result.status, result.status)
         return screens.render_catch(state)

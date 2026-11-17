@@ -951,7 +951,8 @@ D28/D60 and Q11/Q12 add migration 0015. Guilds default raids_enabled to 0
 guild_id (guild deletion cascades), the checked channel_id, pokemon_id, identity_id,
 spawned_at/expires_at UTC epoch times, content_version, nullable message_id,
 post_state (pending/attempted/sent), and ended (0/1, default 0). A partial unique
-index permits only one ended=0 spawn per guild. spawned_by_profile_id references
+index permits only one ended=0 spawn per guild and kind (world or ex; see 0031).
+spawned_by_profile_id references
 profiles ON DELETE SET NULL: deleting its creator preserves the complete spawn,
 including its destination, expiry and announcement state; it never cancels/refunds it.
 
@@ -982,7 +983,9 @@ before expiry, configuration, active-spawn or inventory guards. Missing and fore
 session/profile requests both return stale. No cross-guild existence lookup occurs.
 New attempts first expire their guild's overdue spawn, then refuse raids_off,
 no_channel, no_permission, channel_changed, active, or missing in that order. Each
-refusal keeps the ticket. Success uniformly selects one Legendary identity,
+refusal keeps the ticket. The active refusal means a live World Legendary
+(kind='world') in this server; a live EX-Raid does not block a ticket.
+Success uniformly selects one Legendary identity,
 excluding Mythicals and ignoring routes, consumes one world_legendary_ticket and
 inserts a pending spawn with checked channel, content version and now+3600 expiry,
 plus one item -1 ledger line with reason wlt_use. Rollback restores every effect.
@@ -994,27 +997,38 @@ Producers: raids service; consumers: later ticket UI, raid command and sweep.
 Existing schema and ordinary encounter rules are unchanged. Tests: test_raids.
 
 ## M8.3a raid join and catch deadline (additive)
-D60/Q12 adds `raids.active_spawn(conn,guild_id,now)`, returning the server's
-unended spawn only while expires_at>now, otherwise None. No foreign-server
-existence lookup occurs. `raids.join(conn,guild_id,user_id,now,rng,content)` requires
-an active writer transaction. It returns status none without an active spawn,
+EXR-2 replaces the single-spawn lookup with `raids.live_spawns(conn,guild_id,now)`,
+returning all this server's rows with ended=0 and expires_at>now as dicts, World
+Legendary (kind='world') before EX-Raid (kind='ex'), or [] when none.
+`raids.join(conn,guild_id,user_id,spawn_id,now,rng,content)` requires an active
+writer transaction. It reads only the named spawn in this server while ended=0
+and expires_at>now. Unknown, foreign-server, ended or expired IDs return status
+none before any other check, with nothing written and no foreign-server existence
+lookup. For a valid spawn it returns
 not_enrolled without a server/user profile, or excluded for an excluded member.
 These checks precede participation/replay. Existing participation returns joined
 and its encounter_id, including NULL after profile deletion/re-enrollment, with
 no new rolls or writes. New participation uses the owner-bearing
 `raid:<spawn_id>:<user_id>` receipt (action raid_join), returning new and encounter_id.
-It rolls the spawn's exact identity with the existing gender, shiny, level and IV
-helpers, consumes one remaining active Lure encounter, and saves a revealed
-Legendary/Mythical encounter with raid_spawn_id, the profile's route and the loaded
-content version. Species seen_at is inserted only when absent. Encounter, Lure,
-Pokédex, participation and receipt commit or roll back together; ordinary queue
-capacity does not apply. Producers: raids service; consumers: private raid command
-and normal catching. No migration or existing receipt-format change is required.
+It rolls the spawn's exact identity in a fixed sequence: roll_gender, roll_shiny,
+then one roll_level_ivs using raid_level_range [20, 25]. EXR-3 left-joins ex_raids
+by ex_raid_id; each non-NULL shiny, level, iv_attack, iv_defense or iv_stamina lock
+then replaces only its field (level_x2 = 2 * level). Shiny 0 and IV 0 are locks;
+gender always rolls. World spawns have no locks. With shiny locked, active_lure
+is neither read nor consumed and lure_id is NULL. With shiny open, the existing
+Lure and Shiny Charm rules apply and one remaining active Lure encounter is consumed.
+Rolls are made once at join and frozen in the revealed Legendary/Mythical encounter,
+with raid_spawn_id, the profile's route and the loaded content version. Species
+seen_at is inserted only when absent. Encounter, Lure, Pokédex, participation and
+receipt commit or roll back together; ordinary queue capacity does not apply.
+Producers: raids service and EX send locks; consumers: private raid command, normal
+catching and storage CP. This is additive; World Legendary rolls and existing
+encounters are unchanged. No migration or existing receipt-format change is required.
 `catching.throw` returns expired for an owned, currently revealed raid encounter
 whose spawn expires_at<=now, before item checks or spending, even before cleanup.
 Terminal outcomes take precedence, so a catch committed before expiry remains
 readable after expiry settlement. Ordinary catching is unchanged.
-Tests: test_raids, test_catching and test_lure. G-F2/live acceptance remain separate.
+Tests: test_ex_raid, test_raids, test_catching and test_lure. G-F2/live acceptance remain separate.
 
 
 ## M8.4 raid expiry sweep and retention (additive)
@@ -1023,7 +1037,10 @@ then `research.auto_send`, in the same writer transaction on each existing
 60-second sweep. All receive
 one UTC epoch `now` from `walker.clock`; the bot monotonic clock is not used.
 Expiry deletes queued/revealed raid encounters and participation, including the
-server/user/spawn record retained after delete-data. A deleted spender leaves
+server/user/spawn record retained after delete-data, opt-out or reset until
+that spawn's own `expires_at`: at most 60 minutes for a World Legendary and
+at most 24 hours for an EX-Raid. `ex_raids` holds aggregate counts and the
+sending owner's ID, never a participant's ID. A deleted spender leaves
 NULL attribution on the preserved spawn history; species, times, channel and
 announcement state remain. Ended history no longer blocks a new spawn.
 Deleting unfinished encounters cascades catch attempts, but preserves previously
@@ -1033,9 +1050,11 @@ for cleanup with no terminal recovery result. Ordinary queue entries are unchang
 A catch committed before expiry keeps its Pokemon, rewards, terminal encounter
 and recovery/acknowledgement path. No schema or receipt format changes.
 Producer: client sweep and raids.expire; consumers: catching, walker recovery,
-queue and deletion. Tests: test_raids plus walker acknowledgement, deletion and
-gym regressions. G-F2 remains pending until the owner commits the privacy
-retention disclosure; this contract is not runtime privacy text or live evidence.
+queue and deletion. Tests: test_raids and test_ex_raid plus walker acknowledgement,
+deletion and gym regressions. The repository disclosure is
+`docs/features/pokewalker-bot/privacy.md`; the configured runtime file and the
+running bot's reply are checked separately at delivery (EX-Raid G-V).
+This contract is not runtime privacy text or live evidence.
 
 ## Trading schema (0018, additive)
 The owner's trading requirement (R0-R5, docs/features/pokemon-trading/PLAN.md
@@ -1278,7 +1297,9 @@ next allowed force) before any other read or write. Exactly 86400 seconds later 
 allowed. The cooldown is shared by every administrator of the server, is independent
 per server and starts only at a successful force. Then, like `spawn`, it expires the
 guild's overdue spawn and refuses raids_off (also when the guild has no row),
-no_channel, no_permission, channel_changed and active in that order; a refusal
+no_channel, no_permission, channel_changed and active in that order. The active
+refusal means a live World Legendary (kind='world') in this server; a live
+EX-Raid does not block a force-raid. A refusal
 inserts no spawn and no audit. Success selects one Legendary identity, excluding
 Mythicals and ignoring routes, exactly as `spawn` does, inserts one pending
 world_spawns row with the checked channel, content version, now+3600 expiry and
@@ -1299,7 +1320,9 @@ of level 20 (half the level-40 cap, roughly half of maximum CP). `raids.join` ro
 each participant's level from catch rule `raid_level_range` [20, 25] (whole levels,
 stored as `level_x2` 40-50) instead of `wild_level_range`; IVs, gender and shiny roll
 as before, and no level is displayed. Existing raid encounters keep their rolls.
-Ordinary wild encounters are unchanged. Tests: tests/test_raids.py, tests/test_encounters.py.
+EXR-3 allows an EX-Raid level lock of 1-40 (level_x2 2-80); open EX levels
+and World Legendary levels still roll 20-25. Ordinary wild encounters are unchanged.
+Tests: tests/test_ex_raid.py, tests/test_raids.py, tests/test_encounters.py.
 
 ## Owner amendment D70: chosen IV for Bottlecap and Vitamin (2026-11-16)
 `apply(item, ivs, index=None)` changes the IV at index, defaulting to `lowest(ivs)`.
@@ -2005,3 +2028,65 @@ This additive service contract consumes schema 0030's existing columns and
 the EX inventory helpers; no migration or domain/engine change is needed.
 Producers: services.arena and services.ex_gift; consumers: Arena combat and later
 EX-Gift/Arena screens. Tests: tests/test_ex_items.py and tests/test_arena.py.
+
+## EX-Raid schema (0031)
+Migration 0031 implements EX-Raid R4/R10 and PLAN D2. Producers are migrations and
+later owner-send writer jobs; consumers are raid spawning, join, expiry and owner
+history. Existing spawn rows become kind='world', with ex_raid_id NULL, preserving
+their other columns. world_spawns gains kind TEXT NOT NULL DEFAULT 'world', checked
+to world/ex, and nullable ex_raid_id referencing ex_raids. The old active-guild
+index is replaced by world_spawns_active_guild_kind on (guild_id,kind) WHERE
+ended=0: one live spawn of each kind per server. Ended rows release that slot.
+raid_participation, encounters.raid_spawn_id and both queue triggers are unchanged.
+
+ex_raids stores ex_raid_id TEXT PRIMARY KEY NOT NULL (send ID), owner_id and
+identity_id TEXT NOT NULL; nullable integer shiny (0/1), level (1-40), iv_attack,
+iv_defense and iv_stamina (0-15); hours integer NOT NULL (1-24); nullable guild_id
+TEXT (NULL means all servers, no FK); servers and spawned integers NOT NULL >=1;
+skipped TEXT NOT NULL checked with json_valid (reason-to-count object); and
+created_at REAL NOT NULL, indexed by ex_raids_created_at. NULL locks mean rolled;
+zero shiny and IV locks are valid. Numeric checks require stored integer types.
+The sender's ID and aggregate counts are retained, never a player, profile or
+participant column. Deleting a guild cascades its spawns and preserves send history.
+
+This is additive. Older code refuses schema 31 through open_db's newer-schema
+guard. Rollback needs a compatible backup, never a live user_version decrement.
+Verification: test_ex_raid_schema and the ticket-named schema/raid/deletion regressions.
+
+
+## EX-Raid send
+`services.raids.ex_commit` is an additive schema-0031 service inside the caller's
+active writer transaction. Producers are owner-confirmed EX-Raid drafts; consumers
+are raid joins, announcements and owner history. It checks the owner's exclusion
+in the admin guild first, then the send ID: its owner gets the stored row with
+status sent and replayed true, without validation, targeting or another spawn;
+another owner gets invalid. Unknown identities, invalid locks and non-integer or
+out-of-range hours return invalid without writes. Locks are nullable: shiny accepts
+bool or integer 0/1, level requires integer 1-40, IVs integer 0-15; other booleans
+are invalid. Hours require an integer 1-24, excluding bool.
+
+`ex_target(conn, guild_id, now, checked)` and commit share one read of target guild
+settings with a live-EX flag (kind ex, ended=0, expires_at>now). NULL guild_id means
+all persisted guilds. Unknown one-server targets return unknown_server. In order,
+guards count raids_off, no_channel, no_permission (including bot absent),
+channel_changed and active (live EX only). The synchronous checked(guild_id,
+raid_channel_id) callback resolves cached permissions inside the transaction;
+no Discord I/O occurs. Preview returns status ok, servers, spawning and skipped
+(reason-to-count dict), writing nothing. Commit re-evaluates the same guards.
+
+With no eligible server, commit returns status nothing, servers and skipped,
+without settlement or any other writes. Otherwise three set-based statements
+settle all targeted overdue spawns with expire's effects: delete their queued and
+revealed encounters and participation, and mark the spawns ended. Other encounter
+states and live spawns, including World Legendaries, survive. Commit inserts one
+ex_raids aggregate send record and one batched insertion of EX spawns, each with
+its checked channel, ex_raid_id, pending post state, NULL spawned_by_profile_id,
+and the same expires_at = now + hours*3600. It returns status sent, replayed false
+and the stored row. A raised failure rolls the caller's whole transaction back.
+There is no cooldown read, mod_audit or action_receipts write.
+
+`ex_lookup(conn, send_id)` returns the stored dict or None. `ex_history(conn,
+offset)` returns (up to ten newest rows, total), ordered by created_at descending
+then ex_raid_id descending. Both decode skipped JSON. Verification: test_ex_raid,
+test_raids, test_admin_force_raid and test_ex_raid_schema; writer hold evidence
+and the live-count deployment gate are recorded separately (EXR-4, G-B).

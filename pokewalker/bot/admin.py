@@ -10,7 +10,7 @@ import discord
 from discord import app_commands
 
 from pokewalker.config import snowflake
-from pokewalker.bot import admin_gift
+from pokewalker.bot import admin_ex_raid, admin_gift
 from pokewalker.db import open_reader, with_receipt
 from pokewalker.services import cooldowns
 from pokewalker.services.profiles import restrictions
@@ -45,6 +45,7 @@ class Admin(app_commands.Group):
         self.error_handler = ErrorBuffer()
         self.requests = {}
         admin_gift.attach(self)
+        admin_ex_raid.attach(self)
 
     def attach_errors(self):
         root = logging.getLogger()
@@ -97,6 +98,31 @@ class Admin(app_commands.Group):
                    server_id: str | None = None, user_id: str | None = None):
         if await self.authorize(interaction):
             await admin_gift.open(self, interaction, scope.value, server_id, user_id)
+
+    @app_commands.command(name='ex-raid', description='Preview an EX-Raid boss and optional locks')
+    async def ex_raid(self, interaction: discord.Interaction, pokemon: str,
+                      server_id: str | None = None, shiny: bool | None = None,
+                      level: app_commands.Range[int, 1, 40] | None = None,
+                      iv_attack: app_commands.Range[int, 0, 15] | None = None,
+                      iv_defense: app_commands.Range[int, 0, 15] | None = None,
+                      iv_stamina: app_commands.Range[int, 0, 15] | None = None,
+                      duration: app_commands.Range[int, 1, 24] | None = None):
+        if await self.authorize(interaction):
+            await admin_ex_raid.open(self, interaction, pokemon, server_id, shiny, level,
+                                    iv_attack, iv_defense, iv_stamina, duration)
+
+    @ex_raid.autocomplete('pokemon')
+    async def ex_raid_pokemon(self, interaction: discord.Interaction, current: str):
+        if (interaction.guild_id != self.bot.settings.admin_guild_id
+                or interaction.user.id not in self.bot.settings.owner_ids):
+            return []
+        return [app_commands.Choice(name=label, value=value)
+                for label, value in admin_ex_raid.suggest(self.bot.content, current)]
+
+    @app_commands.command(name='ex-raid-history', description='Find committed EX-Raid sends')
+    async def ex_raid_history(self, interaction: discord.Interaction, send_id: str | None = None):
+        if await self.authorize(interaction):
+            await admin_ex_raid.history(self, interaction, send_id)
 
     @app_commands.command(name='gift-history', description='Find committed EX-Gift sends')
     async def gift_history(self, interaction: discord.Interaction, send_id: str | None = None):
