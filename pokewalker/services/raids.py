@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 import json
+import logging
 from uuid import uuid4
 
 import aiohttp
@@ -12,6 +13,9 @@ from pokewalker.db import with_receipt
 from pokewalker.domain import encounters
 from pokewalker.services import profiles
 from pokewalker.services.items import active_lure, shiny_charm
+
+
+LOG = logging.getLogger(__name__)
 
 
 def _writer(conn):
@@ -329,7 +333,8 @@ async def announce(bot, spawn):
         return
     identity = next(i for i in bot.content['identities'] if i['identity_id'] == saved['identity_id'])
     until = datetime.fromtimestamp(saved['expires_at'], timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
-    embed = discord.Embed(title=f"World Legendary: {identity['name_en']}",
+    title = 'EX-Raid' if saved['kind'] == 'ex' else 'World Legendary'
+    embed = discord.Embed(title=f"{title}: {identity['name_en']}",
                           description=f"{identity['name_en']} is here! Despawns {until}. Join with /raid.")
     if identity['sprites']['normal'] is not None:
         embed.set_image(url=identity['sprites']['normal'])
@@ -340,6 +345,7 @@ async def announce(bot, spawn):
         message = await channel.send(embed=embed, nonce=nonce(saved['spawn_id']),
                                      allowed_mentions=discord.AllowedMentions.none())
     except (discord.HTTPException, discord.RateLimited, aiohttp.ClientError, OSError):
+        LOG.warning('Raid announcement post failed: %s', saved['spawn_id'])
         return
 
     async def sent(conn):
@@ -349,10 +355,14 @@ async def announce(bot, spawn):
     await bot.writer.run(sent)
 
 
-async def resume_pending(bot):
+async def resume_pending(bot, ex_raid_id=None):
     async def pending(conn):
-        async with conn.execute("SELECT * FROM world_spawns WHERE post_state='pending' AND ended=0 AND expires_at>?",
-                                (bot.walker.clock(),)) as cursor:
+        async with conn.execute("SELECT * FROM world_spawns WHERE post_state='pending' AND ended=0 AND expires_at>? "
+                                "AND (? IS NULL OR ex_raid_id=?) ORDER BY spawned_at,spawn_id",
+                                (bot.walker.clock(), ex_raid_id, ex_raid_id)) as cursor:
             return [dict(row) for row in await cursor.fetchall()]
     for spawn in await bot.writer.run(pending):
-        await announce(bot, spawn)
+        try:
+            await announce(bot, spawn)
+        except Exception:
+            LOG.warning('Raid announcement failed: %s', spawn['spawn_id'])

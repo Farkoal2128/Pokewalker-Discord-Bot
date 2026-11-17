@@ -765,3 +765,133 @@ class AdminManifestTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotEqual(bot.command_manifest_hash(123), disabled.command_manifest_hash(123))
         names = {c.name for c in bot.scope_commands(discord.Object(id=123))}
         self.assertEqual(names, {'admin'})
+
+
+class ExRaidFanoutLifecycleTests(unittest.IsolatedAsyncioTestCase):
+    asyncSetUp = ClientLifecycleTests.asyncSetUp
+
+    async def prepare_send(self):
+        await self.bot.setup_hook()
+        self.addAsyncCleanup(self.bot.drain)
+        self.bot.content = json.loads(Path('content/artifact/content.json').read_text(encoding='utf-8'))
+        self.bot.walker.clock = lambda: 1000
+        self.bot.reactions.startup_sweep = AsyncMock()
+
+        async def seed(conn):
+            await conn.executemany('INSERT INTO guilds(guild_id,raids_enabled,raid_channel_id) VALUES (?,1,?)',
+                                   [('g', '789'), ('h', '790')])
+        await self.bot.writer.run(seed)
+        self.entered = asyncio.Event()
+
+        async def slow_post(**kwargs):
+            self.entered.set()
+            await asyncio.Future()
+        self.channel = SimpleNamespace(send=AsyncMock(side_effect=slow_post))
+        self.enterContext(patch.object(self.bot, 'get_channel', Mock(return_value=self.channel)))
+        from pokewalker.services import raids
+        self.commit = lambda conn: raids.ex_commit(
+            conn, send_id='send', owner_id='owner', admin_guild_id='admin',
+            identity_id=self.bot.content['identities'][0]['identity_id'], locks={}, hours=1,
+            guild_id=None, now=1000, content=self.bot.content, checked=lambda guild, channel: channel)
+
+    async def saved_states(self):
+        from pokewalker.db import open_db
+        conn = await open_db(self.settings.db_path, allow_unpatched=self.settings.allow_unpatched_sqlite)
+        try:
+            return [row[0] for row in await conn.execute_fetchall(
+                'SELECT post_state FROM world_spawns ORDER BY post_state')]
+        finally:
+            await conn.close()
+
+    async def test_announce_ex_raid_returns_a_bot_owned_task_without_awaiting(self):
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def resume(bot, send_id):
+            self.assertIs(bot, self.bot)
+            self.assertEqual(send_id, 'send')
+            entered.set()
+            await release.wait()
+        with patch.object(self.client.raids, 'resume_pending', side_effect=resume):
+            task = self.bot.announce_ex_raid('send')
+            self.assertIsInstance(task, asyncio.Task)
+            self.assertIn(task, self.bot._raid_fanouts)
+            await asyncio.wait_for(entered.wait(), 2)
+            release.set()
+            await task
+            await asyncio.sleep(0)
+            self.assertNotIn(task, self.bot._raid_fanouts)
+        await self.bot.drain()
+
+    async def test_drain_cancels_a_fanout_blocked_on_a_slow_post(self):
+        await self.prepare_send()
+        await self.bot.writer.run(self.commit)
+        task = self.bot.announce_ex_raid('send')
+        await asyncio.wait_for(self.entered.wait(), 2)
+        self.assertEqual(await asyncio.wait_for(self.bot.drain(), 2), 0)
+        self.assertTrue(task.cancelled())
+        self.assertFalse(self.bot._raid_fanouts)
+        self.assertTrue(self.bot.writer._task.done())
+        self.assertEqual(await self.saved_states(), ['attempted', 'pending'])
+        self.channel.send.assert_awaited_once()
+
+    async def test_commit_during_drain_schedules_no_task_rows_resume_at_startup(self):
+        await self.prepare_send()
+        committing, release, closing = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        observed = []
+
+        async def commit(conn):
+            result = await self.commit(conn)
+            committing.set()
+            await release.wait()
+            return result
+
+        def after_commit(result):
+            self.assertTrue(self.bot._stopping)
+            observed.append(self.bot.announce_ex_raid(result['ex_raid_id']))
+
+        original_close = self.bot.writer.close
+
+        async def close_writer():
+            closing.set()
+            await original_close()
+        with patch.object(self.bot.writer, 'close', side_effect=close_writer):
+            saving = asyncio.create_task(self.bot.writer.run(commit, after_commit=after_commit))
+            await asyncio.wait_for(committing.wait(), 2)
+            draining = asyncio.create_task(self.bot.drain())
+            await asyncio.wait_for(closing.wait(), 2)
+            release.set()
+            self.assertEqual((await saving)['status'], 'sent')
+            self.assertEqual(await draining, 0)
+        self.assertEqual(observed, [None])
+        self.assertFalse(self.bot._raid_fanouts)
+        self.channel.send.assert_not_awaited()
+        self.assertEqual(await self.saved_states(), ['pending', 'pending'])
+
+        restarted = self.client.WalkerBot(self.settings)
+        self.addAsyncCleanup(restarted.drain)
+        await restarted.setup_hook()
+        restarted.content = self.bot.content
+        restarted.walker.clock = lambda: 1000
+        restarted.reactions.startup_sweep = AsyncMock()
+        channel = SimpleNamespace(send=AsyncMock(return_value=SimpleNamespace(id=555)))
+        with patch.object(restarted, 'get_channel', Mock(return_value=channel)):
+            await restarted.on_ready()
+        self.assertEqual(channel.send.await_count, 2)
+        self.assertFalse(restarted._raid_fanouts)
+        await restarted.drain()
+        self.assertEqual(await self.saved_states(), ['sent', 'sent'])
+
+    async def test_drain_cancels_slow_startup_recovery_later_rows_stay_pending(self):
+        await self.prepare_send()
+        await self.bot.writer.run(self.commit)
+        ready = asyncio.create_task(self.bot.on_ready())
+        await asyncio.wait_for(self.entered.wait(), 2)
+        fanout, = self.bot._raid_fanouts
+        self.assertFalse(ready.done())
+        self.assertEqual(await asyncio.wait_for(self.bot.drain(), 2), 0)
+        with self.assertRaises(asyncio.CancelledError):
+            await ready
+        self.assertTrue(fanout.cancelled())
+        self.assertFalse(self.bot._raid_fanouts)
+        self.assertTrue(self.bot.writer._task.done())
+        self.assertEqual(await self.saved_states(), ['attempted', 'pending'])

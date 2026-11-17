@@ -1243,7 +1243,7 @@ selection. Existing buttons, custom IDs, schema and ordinary catch semantics sta
 compatible. Tests: test_raids, test_walker_encounter and test_walker_router.
 Focused evidence leaves G-F2 and live Discord acceptance open.
 
-## C5: M8.2a at-most-once World Legendary announcement (additive)
+## C5: M8.2a at-most-once raid announcement (additive)
 D60 deliberately excepts D2 with one public embed, no pings and no DMs. The embed
 names the exact identity, shows its normal D48 sprite when available, and gives
 the UTC despawn time. `raids.announce(bot,spawn)` uses bot.writer and bot.walker.clock;
@@ -1254,11 +1254,25 @@ to the persisted channel only, with AllowedMentions.none() and
 enforce_nonce=true to that payload. A successful third job stores sent/message_id.
 A failure or cancellation after claiming leaves attempted, with no retry/refund,
 including a crash after Discord accepts and before its ID is saved.
-`resume_pending(bot)` announces only live, unended pending rows; attempted/sent
-rows are never sent again. Concurrent/repeated calls cannot claim twice. No live
-Discord acceptance is implied by mocked tests. Producer: raids; consumers: later
-startup recovery and ticket UI. Existing commands remain compatible. Tests:
-test_raids, test_share. G-F2 and live gates remain separate.
+The claimed row's kind selects the title: `EX-Raid: <name>` for `ex`, otherwise
+`World Legendary: <name>`. The description stays "<name> is here! Despawns <UTC>.
+Join with /raid." A failed post logs one warning containing only the spawn ID as
+context and returns with the row still attempted.
+`resume_pending(bot, ex_raid_id=None)` announces only live, unended pending rows,
+filtered to that send when an ID is given, ordered by spawned_at then spawn_id.
+Each row's Exception (including claim or sent-write failure) logs a warning with
+only its spawn ID and allows later servers to proceed; cancellation propagates.
+Attempted/sent rows are never sent again. Concurrent/repeated calls cannot claim
+twice. A spawn with a failed or skipped announcement remains joinable through /raid.
+`WalkerBot.announce_ex_raid(ex_raid_id=None)` synchronously returns a bot-owned
+fan-out task, retained until done. Startup awaits the tracked task without an ID.
+Shutdown cancels and awaits fan-outs alongside the gym sweep before closing the
+writer, within the existing drain deadline. While stopping it returns None without
+creating a task; committed pending rows resume on the next startup.
+No live Discord acceptance is implied by mocked tests. Producer: raids; consumers:
+startup recovery, EX send and ticket UI. Existing commands remain compatible.
+Tests: test_ex_raid, test_client_lifecycle, test_raids, test_share.
+G-F2 and live gates remain separate.
 
 Supervisor ruling: announce uses direct channel.send with no application deadline
 or cancellation wrapper. The application starts at most one send per spawn;
