@@ -19,17 +19,18 @@ def _writer(conn):
         raise RuntimeError('Raids require an active writer transaction')
 
 
-async def active_spawn(conn, guild_id, now):
-    async with conn.execute('SELECT * FROM world_spawns WHERE guild_id=? AND ended=0 AND expires_at>?',
-                            (str(guild_id), now)) as cursor:
-        row = await cursor.fetchone()
-    return dict(row) if row is not None else None
+async def live_spawns(conn, guild_id, now):
+    async with conn.execute('SELECT * FROM world_spawns WHERE guild_id=? AND ended=0 AND expires_at>? '
+                            'ORDER BY kind DESC', (str(guild_id), now)) as cursor:
+        return [dict(row) for row in await cursor.fetchall()]
 
 
-async def join(conn, guild_id, user_id, now, rng, content):
+async def join(conn, guild_id, user_id, spawn_id, now, rng, content):
     _writer(conn)
     guild_id, user_id = str(guild_id), str(user_id)
-    spawn = await active_spawn(conn, guild_id, now)
+    async with conn.execute('SELECT * FROM world_spawns WHERE spawn_id=? AND guild_id=? '
+                            'AND ended=0 AND expires_at>?', (spawn_id, guild_id, now)) as cursor:
+        spawn = await cursor.fetchone()
     if spawn is None:
         return {'status': 'none'}
     profile = await profiles.get_profile(conn, guild_id, user_id)
@@ -105,7 +106,8 @@ async def _refusal(conn, guild_id, now, checked_channel_id):
         return {'status': 'no_permission'}
     if guild['raid_channel_id'] != str(checked_channel_id):
         return {'status': 'channel_changed'}
-    async with conn.execute('SELECT 1 FROM world_spawns WHERE guild_id=? AND ended=0', (guild_id,)) as cursor:
+    async with conn.execute("SELECT 1 FROM world_spawns WHERE guild_id=? AND ended=0 AND kind='world'",
+                            (guild_id,)) as cursor:
         if await cursor.fetchone():
             return {'status': 'active'}
     return None

@@ -983,7 +983,9 @@ before expiry, configuration, active-spawn or inventory guards. Missing and fore
 session/profile requests both return stale. No cross-guild existence lookup occurs.
 New attempts first expire their guild's overdue spawn, then refuse raids_off,
 no_channel, no_permission, channel_changed, active, or missing in that order. Each
-refusal keeps the ticket. Success uniformly selects one Legendary identity,
+refusal keeps the ticket. The active refusal means a live World Legendary
+(kind='world') in this server; a live EX-Raid does not block a ticket.
+Success uniformly selects one Legendary identity,
 excluding Mythicals and ignoring routes, consumes one world_legendary_ticket and
 inserts a pending spawn with checked channel, content version and now+3600 expiry,
 plus one item -1 ledger line with reason wlt_use. Rollback restores every effect.
@@ -995,10 +997,14 @@ Producers: raids service; consumers: later ticket UI, raid command and sweep.
 Existing schema and ordinary encounter rules are unchanged. Tests: test_raids.
 
 ## M8.3a raid join and catch deadline (additive)
-D60/Q12 adds `raids.active_spawn(conn,guild_id,now)`, returning the server's
-unended spawn only while expires_at>now, otherwise None. No foreign-server
-existence lookup occurs. `raids.join(conn,guild_id,user_id,now,rng,content)` requires
-an active writer transaction. It returns status none without an active spawn,
+EXR-2 replaces the single-spawn lookup with `raids.live_spawns(conn,guild_id,now)`,
+returning all this server's rows with ended=0 and expires_at>now as dicts, World
+Legendary (kind='world') before EX-Raid (kind='ex'), or [] when none.
+`raids.join(conn,guild_id,user_id,spawn_id,now,rng,content)` requires an active
+writer transaction. It reads only the named spawn in this server while ended=0
+and expires_at>now. Unknown, foreign-server, ended or expired IDs return status
+none before any other check, with nothing written and no foreign-server existence
+lookup. For a valid spawn it returns
 not_enrolled without a server/user profile, or excluded for an excluded member.
 These checks precede participation/replay. Existing participation returns joined
 and its encounter_id, including NULL after profile deletion/re-enrollment, with
@@ -1279,7 +1285,9 @@ next allowed force) before any other read or write. Exactly 86400 seconds later 
 allowed. The cooldown is shared by every administrator of the server, is independent
 per server and starts only at a successful force. Then, like `spawn`, it expires the
 guild's overdue spawn and refuses raids_off (also when the guild has no row),
-no_channel, no_permission, channel_changed and active in that order; a refusal
+no_channel, no_permission, channel_changed and active in that order. The active
+refusal means a live World Legendary (kind='world') in this server; a live
+EX-Raid does not block a force-raid. A refusal
 inserts no spawn and no audit. Success selects one Legendary identity, excluding
 Mythicals and ignoring routes, exactly as `spawn` does, inserts one pending
 world_spawns row with the checked channel, content version, now+3600 expiry and
