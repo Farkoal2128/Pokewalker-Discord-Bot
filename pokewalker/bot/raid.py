@@ -40,8 +40,12 @@ def command(bot):
                 if pending is not None:
                     session = await create_session(profile['profile_id'], {})
                     return await bot.walker.pending_menu(conn, session, pending)
-            result = await raids.join(conn, guild_id, user_id, now, bot.walker.rng, bot.content)
-            refusals = {'none': 'No World Legendary is active here.', 'excluded': EXCLUDED,
+            spawns = await raids.live_spawns(conn, guild_id, now)
+            if not spawns:
+                return {'content': 'No World Legendary is active here.'}
+            result = await raids.join(conn, guild_id, user_id, spawns[0]['spawn_id'],
+                                      now, bot.walker.rng, bot.content)
+            refusals = {'excluded': EXCLUDED,
                         'not_enrolled': 'Open /walker to enroll before joining.'}
             if result['status'] in refusals:
                 return {'content': refusals[result['status']]}
