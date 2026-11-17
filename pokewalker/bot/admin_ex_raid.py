@@ -1,11 +1,45 @@
-"""EX-Raid catalog picker and private, read-only submit preview (C5)."""
+"""EX-Raid catalog picker and owner-bound, read-only draft preview (C5)."""
 
 from difflib import get_close_matches
 import unicodedata
+from types import SimpleNamespace
+from uuid import uuid4
 
 import discord
 
 from pokewalker.config import snowflake
+from pokewalker.bot import admin_gift
+from pokewalker.services import raids
+
+EXPIRED = 'This EX-Raid draft expired. Run /admin ex-raid again.'
+SKIP_LABELS = (('raids_off', 'Raids off'), ('no_channel', 'No raid channel'),
+               ('no_permission', 'No permission or bot not in server'),
+               ('channel_changed', 'Raid channel changed'), ('active', 'EX-Raid already live'))
+
+
+def attach(admin):
+    admin.ex_raid_drafts = {}
+
+
+def discard(draft):
+    if draft.state == 'sending':
+        draft.discard_pending = True
+        return
+    draft.state = 'discarded'
+    draft.__dict__.pop('result', None)
+    if draft.admin.ex_raid_drafts.get(draft.draft_id) is draft:
+        draft.admin.ex_raid_drafts.pop(draft.draft_id)
+    draft.view.stop()
+    draft.guild_id = None
+
+
+async def target_counts(admin, guild_id):
+    bot = admin.bot
+    def checked(guild_id, channel_id):
+        guild = bot.get_guild(int(guild_id))
+        return None if guild is None else raids.checked_channel(guild, guild_id, channel_id)
+    return await bot.writer.run(lambda conn: raids.ex_target(
+        conn, guild_id, bot.walker.clock(), checked))
 
 
 def _fold(text):
@@ -49,19 +83,99 @@ async def open(admin, interaction, pokemon, server_id=None, shiny=None, level=No
             'Level must be 1-40, each IV 0-15 and the duration 1-24 hours.')
         return
     try:
-        target = 'none chosen' if server_id is None else snowflake(server_id)
+        guild_id = None if server_id is None else snowflake(server_id)
     except ValueError:
         await admin.reply(interaction, 'Server ID must be a Discord ID.')
         return
-    lines = [f"EX-Raid: #{identity['species_id']:03d} {identity['name_en']}"]
-    for name, value in (('Shiny', shiny), ('Level', level), ('Attack IV', iv_attack),
-                        ('Defense IV', iv_defense), ('Stamina IV', iv_stamina)):
-        lines.append(f"{name}: {value if value is not None else 'rolled per player'}")
-    hours = 1 if duration is None else duration
-    lines.extend((f'Duration: {hours} hour' + ('s' if hours != 1 else ''), f'Target: {target}'))
-    embed = discord.Embed(title=f"EX-Raid: #{identity['species_id']:03d} {identity['name_en']}")
-    sprite = identity['sprites']['shiny' if shiny else 'normal']
-    if sprite is not None:
-        embed.set_image(url=sprite)
-    await interaction.edit_original_response(content='\n'.join(lines), embed=embed,
-        allowed_mentions=discord.AllowedMentions.none())
+    counts = None if guild_id is None else await target_counts(admin, guild_id)
+    if counts is not None and counts['status'] == 'unknown_server':
+        await admin.reply(interaction, f'The bot has no data for server {guild_id}.')
+        return
+    draft = SimpleNamespace(admin=admin, draft_id=uuid4().hex, owner_id=interaction.user.id,
+        identity=identity, locks=dict(shiny=shiny, level=level, iv_attack=iv_attack,
+            iv_defense=iv_defense, iv_stamina=iv_stamina), hours=1 if duration is None else duration,
+        guild_id=guild_id, all_servers=False, deadline=admin.bot.clock() + 900, revision=0,
+        send_id=uuid4().hex, state='editing', discard_pending=False)
+    draft.view = RaidView(draft)
+    admin.ex_raid_drafts[draft.draft_id] = draft
+    await draft.view.preview(interaction, counts)
+
+
+class RaidView(admin_gift.OwnerView):
+    def __init__(self, draft):
+        self.draft = draft
+        super().__init__(draft.admin, draft.owner_id, draft.deadline, EXPIRED)
+
+    async def on_timeout(self):
+        discard(self.draft)
+
+    async def editable(self, interaction):
+        draft = self.draft
+        if (draft.admin.ex_raid_drafts.get(draft.draft_id) is not draft
+                or draft.state == 'discarded' or draft.admin.bot.clock() >= draft.deadline):
+            discard(draft)
+            await self.refuse(interaction, EXPIRED)
+            return False
+        if draft.state != 'editing':
+            await self.refuse(interaction, 'This EX-Raid is being sent.')
+            return False
+        return True
+
+    async def interaction_check(self, interaction):
+        if not await super().interaction_check(interaction):
+            return False
+        return await self.editable(interaction)
+
+    async def action(self, interaction, action):
+        if not await self.editable(interaction):
+            return
+        draft = self.draft
+        if action == 'Cancel':
+            discard(draft)
+            await interaction.edit_original_response(content='EX-Raid draft cancelled.',
+                view=None, embed=None, allowed_mentions=discord.AllowedMentions.none())
+        elif action == 'All servers' and draft.guild_id is None and not draft.all_servers:
+            draft.all_servers = True
+            draft.revision += 1
+            await self.preview(interaction)
+
+    async def preview(self, interaction, counts=None):
+        if not await self.editable(interaction):
+            return
+        draft = self.draft
+        if counts is None and (draft.guild_id is not None or draft.all_servers):
+            counts = await target_counts(draft.admin, draft.guild_id)
+            if not await self.editable(interaction):
+                return
+        if counts is not None and counts['status'] != 'ok':
+            await self.refuse(interaction, 'The EX-Raid target is no longer available.')
+            return
+        self.clear_items()
+        for label in (['All servers'] if draft.guild_id is None and not draft.all_servers else []) + ['Cancel']:
+            item = discord.ui.Button(label=label, row=0)
+            async def callback(interaction, action=label):
+                await self.action(interaction, action)
+            item.callback = callback
+            self.add_item(item)
+        identity = draft.identity
+        title = f"EX-Raid: #{identity['species_id']:03d} {identity['name_en']}"
+        lines = [f'Send ID: {draft.send_id}', title]
+        for name, key in (('Shiny', 'shiny'), ('Level', 'level'), ('Attack IV', 'iv_attack'),
+                          ('Defense IV', 'iv_defense'), ('Stamina IV', 'iv_stamina')):
+            value = draft.locks[key]
+            lines.append(f"{name}: {value if value is not None else 'rolled per player'}")
+        target = (f'server {draft.guild_id}' if draft.guild_id is not None else
+                  'all servers' if draft.all_servers else 'none chosen: press All servers')
+        lines.extend((f'Duration: {draft.hours} hour' + ('s' if draft.hours != 1 else ''), f'Target: {target}'))
+        if counts is not None:
+            lines.extend(('Counts (provisional)', f"Targeted servers: {counts['servers']}",
+                          f"Servers that will get it: {counts['spawning']}"))
+            lines.extend(f"{label}: {counts['skipped'].get(reason, 0)}" for reason, label in SKIP_LABELS)
+            if not counts['spawning']:
+                lines.append('Nothing would spawn.')
+        embed = discord.Embed(title=title)
+        sprite = identity['sprites']['shiny' if draft.locks['shiny'] else 'normal']
+        if sprite is not None:
+            embed.set_image(url=sprite)
+        await interaction.edit_original_response(content='\n'.join(lines), embed=embed,
+            view=self, allowed_mentions=discord.AllowedMentions.none())
