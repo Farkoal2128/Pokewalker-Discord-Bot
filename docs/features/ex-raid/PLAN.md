@@ -82,9 +82,9 @@ One milestone, every row briefed. Order: schema and services (steps 2-6), announ
 
 ### 3.3 Verification decision (Decide before dispatch)
 
-AGENTS.md asks for RED, GREEN and the applicable checks; PIPELINE.md:10 is the full `test_cmd`. Rows run **focused** checks only: the modules their ticket names (`python -m unittest discover -s tests -p "test_<module>.py"`) and `git -c core.whitespace=cr-at-eol diff --cached --check` (keep existing line endings). RED evidence goes in each commit body. Ticket line: `Verification: phase=implementation; scope=focused; coverage=<ticket tests>; receipt=Tests-Focused on staged tree; boundary=final feature (G-F)`.
+AGENTS.md asks for RED, GREEN and the applicable checks; PIPELINE.md:10 is the full `test_cmd`. Rows run **focused** ticket checks: the modules named (`python -m unittest discover -s tests -p "test_<module>.py"`) and `git -c core.whitespace=cr-at-eol diff --cached --check` (keep existing line endings). RED evidence goes in each commit body. Ticket line: `Verification: phase=implementation; scope=focused; coverage=<ticket tests>; receipt=Tests-Focused on staged tree; boundary=final feature (G-F)`.
 
-No source increment: no row group serves a separate audience. The full `test_cmd` runs once, uncached (`FP_RESULT_CACHE=0`), on the settled tree at G-F. The owner's code review loop (global CLAUDE.md) runs before G-F, by the supervising session.
+No source increment: no separate audience. The full `test_cmd` runs once, uncached (`FP_RESULT_CACHE=0`), on the settled tree at G-F. The supervisor runs the owner's code review loop before G-F (global CLAUDE.md).
 
 ### 3.4 Delivery
 
@@ -124,7 +124,7 @@ Build rows are `seam`: at most 2 production files and 300 production lines; test
 | 8 | [EXR-7](tickets/EXR-7.md) catch and Back | build | seam | S | ✅ done · ace1378 · GO review r1 after fixture fix |
 | 9 | [EXR-8](tickets/EXR-8.md) `/raid` chooser, wording, description | build | seam | M | ✅ done · 6d79405 · GO review r1 after fixture fix |
 | 10 | [EXR-9](tickets/EXR-9.md) `/admin ex-raid`: options, autocomplete, validation | build | seam | M | ✅ done · 1d505ca · GO review r1 after fixture fix |
-| 11 | [EXR-10](tickets/EXR-10.md) preview draft: target, All servers, counts, Cancel | build | seam | M | pending |
+| 11 | [EXR-10](tickets/EXR-10.md) preview draft: target, All servers, counts, Cancel | build | seam | M | ✅ done · f46709c · GO review r1 after fixture fix |
 | 12 | [EXR-11](tickets/EXR-11.md) Confirm: states, commit, fan-out, receipt | build | seam | M | pending |
 | 13 | [EXR-12](tickets/EXR-12.md) `/admin ex-raid-history` | build | seam | S | pending |
 | 14 | [EXR-13](tickets/EXR-13.md) player help and the `/walker-admin raids` description | build | seam | S | pending |
