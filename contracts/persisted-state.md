@@ -951,7 +951,8 @@ D28/D60 and Q11/Q12 add migration 0015. Guilds default raids_enabled to 0
 guild_id (guild deletion cascades), the checked channel_id, pokemon_id, identity_id,
 spawned_at/expires_at UTC epoch times, content_version, nullable message_id,
 post_state (pending/attempted/sent), and ended (0/1, default 0). A partial unique
-index permits only one ended=0 spawn per guild. spawned_by_profile_id references
+index permits only one ended=0 spawn per guild and kind (world or ex; see 0031).
+spawned_by_profile_id references
 profiles ON DELETE SET NULL: deleting its creator preserves the complete spawn,
 including its destination, expiry and announcement state; it never cancels/refunds it.
 
@@ -2005,3 +2006,27 @@ This additive service contract consumes schema 0030's existing columns and
 the EX inventory helpers; no migration or domain/engine change is needed.
 Producers: services.arena and services.ex_gift; consumers: Arena combat and later
 EX-Gift/Arena screens. Tests: tests/test_ex_items.py and tests/test_arena.py.
+
+## EX-Raid schema (0031)
+Migration 0031 implements EX-Raid R4/R10 and PLAN D2. Producers are migrations and
+later owner-send writer jobs; consumers are raid spawning, join, expiry and owner
+history. Existing spawn rows become kind='world', with ex_raid_id NULL, preserving
+their other columns. world_spawns gains kind TEXT NOT NULL DEFAULT 'world', checked
+to world/ex, and nullable ex_raid_id referencing ex_raids. The old active-guild
+index is replaced by world_spawns_active_guild_kind on (guild_id,kind) WHERE
+ended=0: one live spawn of each kind per server. Ended rows release that slot.
+raid_participation, encounters.raid_spawn_id and both queue triggers are unchanged.
+
+ex_raids stores ex_raid_id TEXT PRIMARY KEY NOT NULL (send ID), owner_id and
+identity_id TEXT NOT NULL; nullable integer shiny (0/1), level (1-40), iv_attack,
+iv_defense and iv_stamina (0-15); hours integer NOT NULL (1-24); nullable guild_id
+TEXT (NULL means all servers, no FK); servers and spawned integers NOT NULL >=1;
+skipped TEXT NOT NULL checked with json_valid (reason-to-count object); and
+created_at REAL NOT NULL, indexed by ex_raids_created_at. NULL locks mean rolled;
+zero shiny and IV locks are valid. Numeric checks require stored integer types.
+The sender's ID and aggregate counts are retained, never a player, profile or
+participant column. Deleting a guild cascades its spawns and preserves send history.
+
+This is additive. Older code refuses schema 31 through open_db's newer-schema
+guard. Rollback needs a compatible backup, never a live user_version decrement.
+Verification: test_ex_raid_schema and the ticket-named schema/raid/deletion regressions.

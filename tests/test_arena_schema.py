@@ -71,7 +71,7 @@ class ArenaSchemaTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIsNone(after['guilds'][0].pop('force_raid_reset_at', 'missing'))
                 self.assertIsNone(after['profiles'][0].pop('arena_cooldown_reset_at', 'missing'))
                 self.assertEqual(after, before)
-                self.assertEqual(await self.scalar('PRAGMA user_version', conn=upgraded), 30)
+                self.assertEqual(await self.scalar('PRAGMA user_version', conn=upgraded), 31)
                 self.assertEqual(await upgraded.execute_fetchall('PRAGMA foreign_key_check'), [])
                 for table in ('arena_runs', 'arena_tickets'):
                     self.assertEqual(await self.scalar(f'SELECT count(*) FROM {table}', conn=upgraded), 0)
@@ -125,7 +125,7 @@ class ArenaSchemaTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIsNone(after['guilds'][0].pop('force_raid_reset_at', 'missing'))
                 self.assertIsNone(after['profiles'][0].pop('arena_cooldown_reset_at', 'missing'))
                 self.assertEqual(after, before)
-                self.assertEqual(await self.scalar('PRAGMA user_version', conn=upgraded), 30)
+                self.assertEqual(await self.scalar('PRAGMA user_version', conn=upgraded), 31)
                 self.assertEqual(await upgraded.execute_fetchall('PRAGMA foreign_key_check'), [])
             finally:
                 await upgraded.close()
@@ -157,7 +157,7 @@ class ArenaSchemaTests(unittest.IsolatedAsyncioTestCase):
         for _ in range(2):
             upgraded = await db.open_db(path)
             try:
-                self.assertEqual(await self.scalar('PRAGMA user_version', conn=upgraded), 30)
+                self.assertEqual(await self.scalar('PRAGMA user_version', conn=upgraded), 31)
                 after = {table: [dict(row) for row in await upgraded.execute_fetchall(
                     f'SELECT * FROM {table}')] for table in before}
                 self.assertEqual(after['arena_runs'][0].pop('x_attack_left'), 0)
@@ -217,7 +217,7 @@ class ArenaSchemaTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIsNone(after['guilds'][0].pop('force_raid_reset_at', 'missing'))
                 self.assertIsNone(after['profiles'][0].pop('arena_cooldown_reset_at', 'missing'))
                 self.assertEqual(after, before)
-                self.assertEqual(await self.scalar('PRAGMA user_version', conn=upgraded), 30)
+                self.assertEqual(await self.scalar('PRAGMA user_version', conn=upgraded), 31)
                 self.assertEqual(await upgraded.execute_fetchall('PRAGMA foreign_key_check'), [])
             finally:
                 await upgraded.close()
