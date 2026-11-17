@@ -661,6 +661,85 @@ class ExRaidCatchTests(unittest.IsolatedAsyncioTestCase):
                          [dict(pokemon_id=identity['species_id'], seen_at=self.now, caught_at=self.now)])
         return encounter
 
+    async def test_delete_data_opt_out_and_reset_during_24_h_ex_raid_keep_participation(self):
+        from pokewalker.services import deletion
+        from pokewalker.services.marker_log import State
+        await self.prepare(hours=24)
+        spawn_id, expires_at = self.spawn_row['spawn_id'], self.spawn_row['expires_at']
+        for path in ('delete-data', 'opt-out', 'reset'):
+            with self.subTest(path=path):
+                user = 'u' if path == 'delete-data' else path
+                pid = self.pid if user == 'u' else await self.profile(user, 'g')
+                if user != 'u':
+                    self.assertEqual((await self.join(spawn_id, user=user))['status'], 'new')
+                state = State(delete_ids={pid}, opted_out=True if path == 'opt-out' else None)
+                if path == 'reset':
+                    state.resets.append(dict(marker_id='reset', actor_id='owner',
+                                             reason='retention test', at=self.now))
+                await self.writer.run(lambda conn: deletion.apply(conn, {('g', user): state}))
+                self.assertEqual(await self.scalar('SELECT count(*) FROM profiles WHERE profile_id=?',
+                                                   (pid,)), 0)
+                self.assertEqual(await self.rows('SELECT guild_id,user_id,spawn_id,encounter_id '
+                                                 'FROM raid_participation WHERE user_id=?', (user,)),
+                                 [dict(guild_id='g', user_id=user, spawn_id=spawn_id, encounter_id=None)])
+        self.assertTrue(await deletion.opted_out(self.conn, 'g', 'opt-out'))
+        self.assertEqual(await self.scalar("SELECT action FROM mod_audit WHERE target_id='reset'"), 'reset')
+        retained = await self.rows('SELECT * FROM raid_participation ORDER BY user_id')
+        for now in (self.now + 3600, expires_at - 1):
+            self.assertEqual(await self.writer.run(lambda conn: self.raids().expire(conn, now)),
+                             dict(spawns=0, encounters=0, participation=0))
+            self.assertEqual(await self.rows('SELECT * FROM raid_participation ORDER BY user_id'), retained)
+        self.assertEqual(await self.writer.run(lambda conn: self.raids().expire(conn, expires_at)),
+                         dict(spawns=1, encounters=0, participation=3))
+        self.assertEqual(await self.rows('SELECT * FROM raid_participation'), [])
+
+    async def test_reenrolled_player_cannot_join_the_same_ex_raid_again(self):
+        from datetime import datetime, timezone
+        from pokewalker.services import deletion, profiles
+        from pokewalker.services.marker_log import State
+        await self.prepare(hours=24)
+        await self.writer.run(lambda conn: deletion.apply(conn, {('g', 'u'): State(delete_ids={self.pid})}))
+        enrolled = await self.writer.run(lambda conn: profiles.enroll(
+            conn, 'g', 'u', self.content['starters'][0], self.content, self.rng,
+            datetime.fromtimestamp(self.now, timezone.utc)))
+        self.assertNotEqual(enrolled['profile_id'], self.pid)
+        before = await self.snapshot()
+        rng = Mock()
+        self.assertEqual(await self.join(self.spawn_row['spawn_id'], rng=rng),
+                         dict(status='joined', encounter_id=None))
+        self.assertEqual(await self.snapshot(), before)
+        self.assertEqual(rng.mock_calls, [])
+
+    async def test_participation_removed_when_the_ex_raid_expires(self):
+        await self.prepare(hours=24)
+        expires_at = self.spawn_row['expires_at']
+        self.assertEqual(expires_at, self.now + 24 * 3600)
+        retained = await self.rows('SELECT * FROM raid_participation')
+        self.assertEqual(len(retained), 1)
+        await self.writer.run(lambda conn: self.raids().expire(conn, expires_at - 1))
+        self.assertEqual(await self.rows('SELECT * FROM raid_participation'), retained)
+        self.assertEqual(await self.writer.run(lambda conn: self.raids().expire(conn, expires_at)),
+                         dict(spawns=1, encounters=1, participation=1))
+        self.assertEqual(await self.rows('SELECT * FROM raid_participation'), [])
+        self.assertEqual(await self.scalar('SELECT ended FROM world_spawns WHERE spawn_id=?',
+                                           (self.spawn_row['spawn_id'],)), 1)
+        self.now = expires_at
+        self.assertEqual(await self.join(self.spawn_row['spawn_id']), dict(status='none'))
+
+    async def test_ex_raids_row_unchanged_by_joins_and_holds_no_participant_id(self):
+        self.assertEqual((await self.send(hours=24))['status'], 'sent')
+        before = await self.rows('SELECT * FROM ex_raids')
+        self.assertEqual(set(before[0]), {'ex_raid_id', 'owner_id', 'identity_id', 'shiny', 'level',
+                                         'iv_attack', 'iv_defense', 'iv_stamina', 'hours', 'guild_id',
+                                         'servers', 'spawned', 'skipped', 'created_at'})
+        self.assertEqual(before[0]['owner_id'], 'owner')
+        spawn_id = await self.scalar("SELECT spawn_id FROM world_spawns WHERE ex_raid_id='send'")
+        await self.profile('participant-2', 'g')
+        for user in ('u', 'participant-2'):
+            self.assertEqual((await self.join(spawn_id, user=user))['status'], 'new')
+            self.assertEqual(await self.rows('SELECT * FROM ex_raids'), before)
+        self.assertEqual(await self.scalar('SELECT count(*) FROM raid_participation'), 2)
+
     async def test_ordinary_boss_join_catch_rewards_pokedex_never_flees(self):
         await self.assert_boss('25:25')
 
