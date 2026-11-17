@@ -904,7 +904,9 @@ class RaidSpawnTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_expire_one_guild_preserves_foreign_then_all_settles_it(self):
         own = (await self.use())['spawn']
-        await self.conn.execute("INSERT INTO world_spawns SELECT 'foreign','h',channel_id,pokemon_id,identity_id,"
+        await self.conn.execute("INSERT INTO world_spawns(spawn_id,guild_id,channel_id,pokemon_id,identity_id,"
+            "spawned_at,expires_at,spawned_by_profile_id,post_state,message_id,ended,content_version) "
+            "SELECT 'foreign','h',channel_id,pokemon_id,identity_id,"
             "spawned_at,expires_at,NULL,'pending',NULL,0,content_version FROM world_spawns WHERE spawn_id=?",
             (own['spawn_id'],))
         await self.encounter(self.other, 'foreign-encounter', 'revealed', 'foreign')

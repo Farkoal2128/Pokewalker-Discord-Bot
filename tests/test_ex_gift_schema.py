@@ -64,7 +64,7 @@ class ExGiftSchemaTests(unittest.IsolatedAsyncioTestCase):
         for _ in range(2):
             upgraded = await db.open_db(path)
             try:
-                self.assertEqual(await self.scalar('PRAGMA user_version', conn=upgraded), 30)
+                self.assertEqual(await self.scalar('PRAGMA user_version', conn=upgraded), 31)
                 self.assertEqual(await self.scalar('PRAGMA foreign_keys', conn=upgraded), 1)
                 self.assertEqual([dict(row) for row in await upgraded.execute_fetchall(
                     'SELECT * FROM inbox_items ORDER BY inbox_id')], before['inbox_items'])
