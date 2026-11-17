@@ -1010,18 +1010,25 @@ These checks precede participation/replay. Existing participation returns joined
 and its encounter_id, including NULL after profile deletion/re-enrollment, with
 no new rolls or writes. New participation uses the owner-bearing
 `raid:<spawn_id>:<user_id>` receipt (action raid_join), returning new and encounter_id.
-It rolls the spawn's exact identity with the existing gender, shiny, level and IV
-helpers, consumes one remaining active Lure encounter, and saves a revealed
-Legendary/Mythical encounter with raid_spawn_id, the profile's route and the loaded
-content version. Species seen_at is inserted only when absent. Encounter, Lure,
-Pokédex, participation and receipt commit or roll back together; ordinary queue
-capacity does not apply. Producers: raids service; consumers: private raid command
-and normal catching. No migration or existing receipt-format change is required.
+It rolls the spawn's exact identity in a fixed sequence: roll_gender, roll_shiny,
+then one roll_level_ivs using raid_level_range [20, 25]. EXR-3 left-joins ex_raids
+by ex_raid_id; each non-NULL shiny, level, iv_attack, iv_defense or iv_stamina lock
+then replaces only its field (level_x2 = 2 * level). Shiny 0 and IV 0 are locks;
+gender always rolls. World spawns have no locks. With shiny locked, active_lure
+is neither read nor consumed and lure_id is NULL. With shiny open, the existing
+Lure and Shiny Charm rules apply and one remaining active Lure encounter is consumed.
+Rolls are made once at join and frozen in the revealed Legendary/Mythical encounter,
+with raid_spawn_id, the profile's route and the loaded content version. Species
+seen_at is inserted only when absent. Encounter, Lure, Pokédex, participation and
+receipt commit or roll back together; ordinary queue capacity does not apply.
+Producers: raids service and EX send locks; consumers: private raid command, normal
+catching and storage CP. This is additive; World Legendary rolls and existing
+encounters are unchanged. No migration or existing receipt-format change is required.
 `catching.throw` returns expired for an owned, currently revealed raid encounter
 whose spawn expires_at<=now, before item checks or spending, even before cleanup.
 Terminal outcomes take precedence, so a catch committed before expiry remains
 readable after expiry settlement. Ordinary catching is unchanged.
-Tests: test_raids, test_catching and test_lure. G-F2/live acceptance remain separate.
+Tests: test_ex_raid, test_raids, test_catching and test_lure. G-F2/live acceptance remain separate.
 
 
 ## M8.4 raid expiry sweep and retention (additive)
@@ -1308,7 +1315,9 @@ of level 20 (half the level-40 cap, roughly half of maximum CP). `raids.join` ro
 each participant's level from catch rule `raid_level_range` [20, 25] (whole levels,
 stored as `level_x2` 40-50) instead of `wild_level_range`; IVs, gender and shiny roll
 as before, and no level is displayed. Existing raid encounters keep their rolls.
-Ordinary wild encounters are unchanged. Tests: tests/test_raids.py, tests/test_encounters.py.
+EXR-3 allows an EX-Raid level lock of 1-40 (level_x2 2-80); open EX levels
+and World Legendary levels still roll 20-25. Ordinary wild encounters are unchanged.
+Tests: tests/test_ex_raid.py, tests/test_raids.py, tests/test_encounters.py.
 
 ## Owner amendment D70: chosen IV for Bottlecap and Vitamin (2026-11-16)
 `apply(item, ivs, index=None)` changes the IV at index, defaulting to `lowest(ivs)`.

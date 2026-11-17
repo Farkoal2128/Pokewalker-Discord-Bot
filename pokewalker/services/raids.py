@@ -28,7 +28,10 @@ async def live_spawns(conn, guild_id, now):
 async def join(conn, guild_id, user_id, spawn_id, now, rng, content):
     _writer(conn)
     guild_id, user_id = str(guild_id), str(user_id)
-    async with conn.execute('SELECT * FROM world_spawns WHERE spawn_id=? AND guild_id=? '
+    async with conn.execute('SELECT world_spawns.*,ex_raids.shiny,ex_raids.level,'
+                            'ex_raids.iv_attack,ex_raids.iv_defense,ex_raids.iv_stamina '
+                            'FROM world_spawns LEFT JOIN ex_raids USING (ex_raid_id) '
+                            'WHERE spawn_id=? AND world_spawns.guild_id=? '
                             'AND ended=0 AND expires_at>?', (spawn_id, guild_id, now)) as cursor:
         spawn = await cursor.fetchone()
     if spawn is None:
@@ -47,12 +50,18 @@ async def join(conn, guild_id, user_id, spawn_id, now, rng, content):
 
     async def compute(conn):
         identity = next(i for i in content['identities'] if i['identity_id'] == spawn['identity_id'])
-        lure_id = await active_lure(conn, pid)
+        lure_id = await active_lure(conn, pid) if spawn['shiny'] is None else None
         rules = load_table('catch')['rules']
         gender, variety = encounters.roll_gender(identity, rng)
         shiny = encounters.roll_shiny(rng, lure_id is not None, rules=rules,
                                       charm=await shiny_charm(conn, pid) == 'on')
         level_x2, ivs = encounters.roll_level_ivs(rng, rules=rules, level_range='raid_level_range')
+        if spawn['shiny'] is not None:
+            shiny = spawn['shiny']
+        if spawn['level'] is not None:
+            level_x2 = 2 * spawn['level']
+        ivs = tuple(spawn[field] if spawn[field] is not None else rolled
+                    for field, rolled in zip(('iv_attack', 'iv_defense', 'iv_stamina'), ivs))
         version, _ = profiles.content_facts(content)
         eid = str(uuid4())
         await conn.execute(
