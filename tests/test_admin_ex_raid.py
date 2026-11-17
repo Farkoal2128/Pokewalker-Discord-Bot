@@ -249,7 +249,7 @@ class RaidDraftTests(unittest.IsolatedAsyncioTestCase):
                      'Counts (provisional)', 'Targeted servers: 1', 'Servers that will get it: 1'):
             self.assertIn(text, response['content'])
         self.assertEqual(response['embed'].image.url, draft.identity['sprites']['shiny'])
-        self.assertEqual([item.label for item in draft.view.children], ['Cancel'])
+        self.assertEqual([item.label for item in draft.view.children], ['Cancel', 'Confirm'])
         self.bot.get_guild.assert_called_once_with(123)
         self.guilds[123].get_channel.assert_called_once_with(321)
 
@@ -267,7 +267,7 @@ class RaidDraftTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((draft.guild_id, draft.all_servers), (None, False))
         self.assertIn('Target: none chosen: press All servers', response['content'])
         self.assertNotIn('Counts', response['content'])
-        self.assertEqual([item.label for item in draft.view.children], ['All servers', 'Cancel'])
+        self.assertEqual([item.label for item in draft.view.children], ['All servers', 'Cancel', 'Confirm'])
         self.assertIn('rolled per player', response['content'])
         self.bot.get_guild.assert_not_called()
 
@@ -282,7 +282,7 @@ class RaidDraftTests(unittest.IsolatedAsyncioTestCase):
         for text in ('Target: all servers', 'Counts (provisional)', 'Targeted servers: 2',
                      'Servers that will get it: 1', 'Raids off: 1'):
             self.assertIn(text, response['content'])
-        self.assertEqual([item.label for item in draft.view.children], ['Cancel'])
+        self.assertEqual([item.label for item in draft.view.children], ['Cancel', 'Confirm'])
         await self.click('All servers', draft=draft, control=old_all)
         self.assertEqual(draft.revision, 1)
 
@@ -420,13 +420,22 @@ class RaidDraftTests(unittest.IsolatedAsyncioTestCase):
         for state in ('sending', 'sent', 'unregistered'):
             draft = self.draft()
             draft.state = state
+            if state == 'sent':
+                draft.result = dict(ex_raid_id=draft.send_id, hours=draft.hours,
+                    guild_id=draft.guild_id, created_at=1000, servers=1, spawned=1,
+                    skipped={}, **draft.locks)
             if state == 'unregistered':
                 draft.state = 'editing'
                 self.group.ex_raid_drafts.pop(draft.draft_id)
             with patch.object(raids, 'ex_target', side_effect=AssertionError('Stale draft counted')):
                 denied = await self.click('Cancel', draft=draft)
-            denied.edit_original_response.assert_not_awaited()
-            denied.followup.send.assert_awaited_once()
+            if state == 'sent':
+                self.assertIn(draft.send_id, denied.edit_original_response.await_args.kwargs['content'])
+                denied.followup.send.assert_not_awaited()
+                del draft.result
+            else:
+                denied.edit_original_response.assert_not_awaited()
+                denied.followup.send.assert_awaited_once()
             if state != 'unregistered':
                 draft.state = 'editing'
         self.assertEqual(await self.snapshot(), before)
@@ -480,3 +489,371 @@ class RaidDraftTests(unittest.IsolatedAsyncioTestCase):
         admin_ex_raid.discard(draft)
         self.assertFalse(hasattr(draft, 'result'))
         self.assertEqual(self.group.ex_raid_drafts, {})
+
+
+class RaidConfirmTests(unittest.IsolatedAsyncioTestCase):
+    asyncSetUp = RaidDraftTests.asyncSetUp
+    interaction = RaidDraftTests.interaction
+    cache_guild = RaidDraftTests.cache_guild
+    command = RaidDraftTests.command
+    submit = RaidDraftTests.submit
+    draft = RaidDraftTests.draft
+    control = RaidDraftTests.control
+    click = RaidDraftTests.click
+    snapshot = RaidDraftTests.snapshot
+
+    async def preview(self, **kwargs):
+        self.bot.announce_ex_raid = Mock()
+        await self.submit(**kwargs)
+        draft = self.draft()
+        self.assertIn('Confirm', [item.label for item in draft.view.children])
+        return draft, self.control('Confirm', draft)
+
+    def reply_text(self, reply):
+        call = reply.edit_original_response.await_args or reply.followup.send.await_args
+        return call.kwargs['content']
+
+    async def rows(self, sql):
+        async with self.bot.db.execute(sql) as cursor:
+            return [tuple(row) for row in await cursor.fetchall()]
+
+    async def queued(self, draft, control, *, before_queue=False):
+        entered, release = asyncio.Event(), asyncio.Event()
+        run = self.bot.writer.run
+        async def block(conn):
+            entered.set()
+            await release.wait()
+        async def queued_run(fn, **kwargs):
+            if kwargs.get('after_commit') and before_queue:
+                entered.set()
+                await release.wait()
+            elif kwargs.get('after_commit'):
+                holding = asyncio.create_task(run(block))
+                async def finish_blocker():
+                    await holding
+                self.addAsyncCleanup(finish_blocker)
+                await entered.wait()
+            return await run(fn, **kwargs)
+        patched = patch.object(self.bot.writer, 'run', side_effect=queued_run)
+        patched.start()
+        self.addCleanup(patched.stop)
+        self.addCleanup(release.set)
+        task = asyncio.create_task(self.click('Confirm', draft=draft, control=control))
+        await asyncio.wait_for(entered.wait(), 5)
+        await asyncio.sleep(0)
+        return task, release
+
+    async def test_confirm_disabled_until_target_then_sends_once_with_counts(self):
+        draft, old = await self.preview(shiny=True, level=40, iv_attack=0,
+            iv_defense=15, iv_stamina=7, duration=24)
+        self.assertTrue(old.disabled)
+        self.assertEqual(old.custom_id, f'ex_raid_confirm:{draft.draft_id}:0')
+        refused = await self.click('Confirm')
+        self.assertEqual(self.reply_text(refused), 'This preview is out of date. Nothing was sent.')
+        await self.click('All servers')
+        confirm = self.control('Confirm', draft)
+        self.assertFalse(confirm.disabled)
+        self.assertEqual(confirm.custom_id, f'ex_raid_confirm:{draft.draft_id}:1')
+        reply = await self.click('Confirm')
+        text = self.reply_text(reply)
+        for value in (draft.send_id, '#006 Charizard', 'Shiny: 1', 'Level: 40', 'Attack IV: 0',
+                      'Defense IV: 15', 'Stamina IV: 7', 'Duration: 24 hours', 'Target: all servers',
+                      'End UTC: 1970-01-02T00:16:40+00:00', 'Counts (committed)',
+                      'Targeted servers: 2', 'Servers that got it: 1', 'Raids off: 1',
+                      'No raid channel: 0', 'No permission or bot not in server: 0',
+                      'Raid channel changed: 0', 'EX-Raid already live: 0'):
+            self.assertIn(value, text)
+        self.assertIsNone(reply.edit_original_response.await_args.kwargs['view'])
+        self.assertIsNone(reply.edit_original_response.await_args.kwargs['embed'])
+        before = await self.snapshot()
+        repeated = await self.click('Confirm', control=confirm)
+        self.assertEqual(self.reply_text(repeated), text)
+        self.assertEqual(await self.snapshot(), before)
+        self.bot.announce_ex_raid.assert_called_once_with(draft.send_id)
+
+    async def test_confirm_takes_5_per_minute_token_shared_with_ex_gift(self):
+        from pokewalker.bot import admin_gift
+        draft, confirm = await self.preview(server_id='123')
+        gift = admin_gift.OwnerView(self.group, 456, 1000, 'expired')
+        self.addCleanup(gift.stop)
+        for _ in range(3):
+            press = self.interaction()
+            press.data = {'custom_id': 'gift_confirm:fixture:0'}
+            self.assertTrue(await gift.interaction_check(press))
+        self.assertEqual(len(self.group.requests[456]), 4)
+        await self.click('Confirm')
+        self.assertEqual(len(self.group.requests[456]), 5)
+        denied = await self.click('Confirm', control=confirm)
+        self.assertIn('Slow down', self.reply_text(denied))
+        self.assertNotIn(456, self.group.gift_callbacks)
+
+    async def test_stale_confirm_from_before_all_servers_is_refused(self):
+        draft, stale = await self.preview()
+        await self.click('All servers')
+        before = await self.snapshot()
+        reply = await self.click('Confirm', control=stale)
+        self.assertEqual(self.reply_text(reply), 'This preview is out of date. Nothing was sent.')
+        self.assertEqual(await self.snapshot(), before)
+        self.assertEqual(draft.state, 'editing')
+
+    async def test_retried_confirm_and_lost_ack_return_the_same_receipt(self):
+        draft, confirm = await self.preview(server_id='123')
+        failed = self.interaction()
+        failed.edit_original_response.side_effect = RuntimeError('lost ack')
+        with self.assertRaisesRegex(RuntimeError, 'lost ack'):
+            await self.click('Confirm', interaction=failed)
+        expected = failed.edit_original_response.await_args.kwargs['content']
+        for label in ('Confirm', 'Cancel'):
+            reply = await self.click(label, control=confirm if label == 'Confirm' else None)
+            self.assertEqual(self.reply_text(reply), expected)
+        self.assertEqual(await self.rows('SELECT ex_raid_id,spawned FROM ex_raids'), [(draft.send_id, 1)])
+        self.bot.announce_ex_raid.assert_called_once_with(draft.send_id)
+
+    async def test_replay_after_expiry_or_server_changes_spawns_nothing(self):
+        from pokewalker.services import raids
+        draft, confirm = await self.preview(server_id='123')
+        await self.click('Confirm')
+        saved = draft.result
+        await self.bot.db.execute('UPDATE world_spawns SET expires_at=1')
+        await self.bot.db.execute('UPDATE guilds SET raids_enabled=0')
+        await self.bot.db.commit()
+        before = await self.snapshot()
+        # Exercise service replay through Confirm, as a lost in-memory acknowledgement.
+        draft.state = 'editing'
+        with patch.object(raids, 'checked_channel', side_effect=AssertionError('Replay targeted')):
+            reply = await self.click('Confirm', control=confirm)
+        self.assertEqual(await self.snapshot(), before)
+        self.assertTrue(draft.result['replayed'])
+        self.assertIn(saved['ex_raid_id'], self.reply_text(reply))
+        self.bot.announce_ex_raid.assert_called_once_with(draft.send_id)
+
+    async def test_send_spawning_nowhere_lists_skip_reasons_writes_nothing(self):
+        draft, _ = await self.preview()
+        await self.click('All servers')
+        await self.bot.db.execute('UPDATE guilds SET raids_enabled=0')
+        await self.bot.db.commit()
+        before = await self.snapshot()
+        reply = await self.click('Confirm')
+        text = self.reply_text(reply)
+        self.assertIn('Nothing was sent: no server could get this EX-Raid.', text)
+        for reason, label in importlib.import_module('pokewalker.bot.admin_ex_raid').SKIP_LABELS:
+            self.assertIn(f'{label}: {2 if reason == "raids_off" else 0}', text)
+        self.assertEqual(await self.snapshot(), before)
+        self.assertEqual(draft.state, 'editing')
+        self.bot.announce_ex_raid.assert_not_called()
+
+    async def test_insert_failure_restores_editing_with_same_send_id(self):
+        draft, confirm = await self.preview(server_id='123')
+        before, identity = await self.snapshot(), (draft.revision, draft.send_id)
+        await self.bot.db.execute("CREATE TEMP TRIGGER fail_ex BEFORE INSERT ON world_spawns "
+            "BEGIN SELECT RAISE(ABORT,'fixture insert failure'); END")
+        reply = await self.click('Confirm')
+        self.assertEqual(self.reply_text(reply), 'Nothing was sent.')
+        self.assertEqual((draft.state, draft.revision, draft.send_id), ('editing', *identity))
+        await self.bot.db.execute('DROP TRIGGER fail_ex')
+        await self.bot.db.commit()
+        self.assertEqual(await self.snapshot(), before)
+        await self.click('Confirm', control=confirm)
+        self.assertEqual(await self.rows('SELECT ex_raid_id FROM ex_raids'), [(identity[1],)])
+
+    async def test_owner_excluded_after_preview_or_while_confirm_waits(self):
+        draft, confirm = await self.preview(server_id='123')
+        sql = "INSERT INTO restrictions(guild_id,user_id,excluded) VALUES ('123','456',1)"
+        await self.bot.db.execute(sql)
+        await self.bot.db.commit()
+        reply = await self.click('Confirm')
+        self.assertIn('Excluded', self.reply_text(reply))
+        await self.bot.db.execute('DELETE FROM restrictions')
+        await self.bot.db.commit()
+        excluded = self.group.excluded
+        async def exclude_after_check(conn, interaction):
+            result = await excluded(conn, interaction)
+            await conn.execute(sql)
+            return result
+        with patch.object(self.group, 'excluded', side_effect=exclude_after_check):
+            reply = await self.click('Confirm', control=confirm)
+        self.assertEqual(self.reply_text(reply), 'Nothing was sent.')
+        self.assertEqual(draft.state, 'editing')
+        self.assertEqual(await self.rows('SELECT * FROM ex_raids'), [])
+
+    async def test_confirm_queued_past_deadline_sends_nothing(self):
+        draft, confirm = await self.preview(server_id='123')
+        before = await self.snapshot()
+        task, release = await self.queued(draft, confirm)
+        self.clock = draft.deadline
+        release.set()
+        reply = await task
+        self.assertEqual(self.reply_text(reply), 'Nothing was sent.')
+        self.assertEqual((draft.state, self.group.ex_raid_drafts), ('discarded', {}))
+        self.assertEqual(await self.snapshot(), before)
+
+    async def test_cancel_during_commit_keeps_the_committed_send(self):
+        from pokewalker.bot.admin_ex_raid import discard
+        commit = self.bot.db.commit
+        for ending in ('discard', 'deadline'):
+            with self.subTest(ending=ending):
+                self.group.requests.clear()
+                await self.bot.db.execute('UPDATE world_spawns SET expires_at=1')
+                await commit()
+                draft, _ = await self.preview(server_id='123')
+                async def cancel_at_commit():
+                    if draft.state == 'sending':
+                        if ending == 'discard':
+                            discard(draft)
+                            self.assertTrue(draft.discard_pending)
+                        else:
+                            self.clock = draft.deadline
+                    await commit()
+                with patch.object(self.bot.db, 'commit', side_effect=cancel_at_commit):
+                    reply = await self.click('Confirm')
+                self.assertEqual(draft.state, 'discarded')
+                self.assertNotIn(draft.draft_id, self.group.ex_raid_drafts)
+                self.assertFalse(hasattr(draft, 'result'))
+                self.assertIn('Target: server 123', self.reply_text(reply))
+                self.assertIn((draft.send_id,), await self.rows('SELECT ex_raid_id FROM ex_raids'))
+                self.bot.announce_ex_raid.assert_called_once_with(draft.send_id)
+
+    async def rollback_after_service(self, ending):
+        from pokewalker.bot.admin_ex_raid import discard
+        from pokewalker.services import raids
+        draft, _ = await self.preview(server_id='123')
+        await self.bot.db.execute(
+            'INSERT INTO world_spawns(spawn_id,guild_id,channel_id,pokemon_id,identity_id,'
+            'spawned_at,expires_at,post_state,content_version,kind) '
+            "VALUES ('overdue','123','321',6,'6:6',0,999,'pending','fixture','ex')")
+        await self.bot.db.commit()
+        before = await self.snapshot()
+        send = raids.ex_commit
+        async def end_after_send(conn, **kwargs):
+            result = await send(conn, **kwargs)
+            self.assertEqual(result['status'], 'sent')
+            if ending == 'deadline':
+                self.clock = draft.deadline
+            else:
+                discard(draft)
+            return result
+        with patch.object(raids, 'ex_commit', side_effect=end_after_send):
+            reply = await self.click('Confirm')
+        self.assertEqual(self.reply_text(reply), 'Nothing was sent.')
+        self.assertEqual(await self.snapshot(), before)
+        self.assertEqual((draft.state, self.group.ex_raid_drafts), ('discarded', {}))
+        self.assertTrue(draft.view.is_finished())
+        self.bot.announce_ex_raid.assert_not_called()
+
+    async def test_deadline_during_commit_rolls_back_settlement_send_spawns(self):
+        await self.rollback_after_service('deadline')
+
+    async def test_discard_before_final_live_check_rolls_back_and_cleans_up(self):
+        await self.rollback_after_service('discard')
+
+    async def test_cancel_then_rollback_restores_revision_and_send_id(self):
+        from pokewalker.services import raids
+        draft, confirm = await self.preview(server_id='123')
+        before, identity = await self.snapshot(), (draft.revision, draft.send_id)
+        send = raids.ex_commit
+        async def broken(conn, **kwargs):
+            await send(conn, **kwargs)
+            raise RuntimeError('rollback')
+        with patch.object(raids, 'ex_commit', side_effect=broken):
+            task, release = await self.queued(draft, confirm)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+            release.set()
+            await draft.task
+        self.assertEqual((draft.state, draft.revision, draft.send_id), ('editing', *identity))
+        self.assertEqual(await self.snapshot(), before)
+        self.bot.announce_ex_raid.assert_not_called()
+
+    async def test_cancelled_callback_still_commits_and_schedules_fanout(self):
+        draft, confirm = await self.preview(server_id='123')
+        task, release = await self.queued(draft, confirm, before_queue=True)
+        while_sending = await self.click('Cancel')
+        self.assertEqual(self.reply_text(while_sending), 'This EX-Raid is being sent.')
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        release.set()
+        await draft.task
+        self.assertEqual(draft.state, 'sent')
+        self.assertEqual(await self.rows('SELECT ex_raid_id FROM ex_raids'), [(draft.send_id,)])
+        self.bot.announce_ex_raid.assert_called_once_with(draft.send_id)
+        reply = await self.click('Confirm', control=confirm)
+        self.assertIn(draft.send_id, self.reply_text(reply))
+
+    async def test_fanout_scheduled_before_receipt_survives_failed_reply(self):
+        draft, _ = await self.preview(server_id='123')
+        reply = self.interaction()
+        async def failed_reply(**kwargs):
+            self.bot.announce_ex_raid.assert_called_once_with(draft.send_id)
+            self.assertEqual(await self.rows('SELECT ex_raid_id FROM ex_raids'), [(draft.send_id,)])
+            raise RuntimeError('reply failed')
+        reply.edit_original_response.side_effect = failed_reply
+        with self.assertRaisesRegex(RuntimeError, 'reply failed'):
+            await self.click('Confirm', interaction=reply)
+        self.assertEqual(draft.state, 'sent')
+
+    async def test_confirm_through_drain_leaves_rows_pending(self):
+        from pokewalker.bot.client import WalkerBot
+        from pokewalker.services import raids
+        from pokewalker.db import open_db
+        draft, _ = await self.preview(server_id='123')
+        self.bot.announce_ex_raid = WalkerBot.announce_ex_raid.__get__(self.bot)
+        send = raids.ex_commit
+        async def during_drain(conn, **kwargs):
+            result = await send(conn, **kwargs)
+            self.bot._begin_drain()
+            return result
+        with patch.object(raids, 'ex_commit', side_effect=during_drain):
+            reply = await self.click('Confirm')
+        await self.bot.drain()
+        conn = await open_db(self.settings.db_path, allow_unpatched=True)
+        try:
+            async with conn.execute('SELECT post_state FROM world_spawns') as cursor:
+                self.assertEqual([row[0] for row in await cursor.fetchall()], ['pending'])
+        finally:
+            await conn.close()
+        self.assertIn(draft.send_id, self.reply_text(reply))
+        self.assertEqual(self.bot._raid_fanouts, set())
+
+    async def test_forged_and_other_owner_confirm_refused(self):
+        draft, confirm = await self.preview(server_id='123')
+        before = await self.snapshot()
+        self.bot._connection.store_view(draft.view, 111)
+        forged = self.interaction()
+        forged.message = SimpleNamespace(id=111, interaction_metadata=None)
+        self.bot._connection._view_store.dispatch_view(2, 'ex_raid_confirm:forged:0', forged)
+        await asyncio.sleep(0)
+        forged.response.defer.assert_not_awaited()
+        forged.edit_original_response.assert_not_awaited()
+        forged.followup.send.assert_not_awaited()
+        for owner, guild in ((457, 123), (999, 123), (456, 999), (456, None)):
+            reply = await self.click('Confirm', interaction=self.interaction(owner=owner, guild=guild))
+            self.assertIn('owner', self.reply_text(reply))
+        # A copied control cannot revive an unregistered draft.
+        self.group.ex_raid_drafts.pop(draft.draft_id)
+        reply = await self.click('Confirm', draft=draft, control=confirm)
+        self.assertIn('expired', self.reply_text(reply))
+        self.assertEqual(await self.snapshot(), before)
+
+    async def test_old_control_after_restart_cannot_send(self):
+        from pokewalker.bot.client import WalkerBot
+        draft, confirm = await self.preview(server_id='123')
+        self.bot._connection.store_view(draft.view, 111)
+        before = await self.snapshot()
+        await self.bot.drain()
+        restarted = WalkerBot(self.settings, clock=lambda: self.clock)
+        self.addAsyncCleanup(restarted.drain)
+        interaction = self.interaction()
+        interaction.message = SimpleNamespace(id=111, interaction_metadata=None)
+        restarted._connection._view_store.dispatch_view(2, confirm.custom_id, interaction)
+        await asyncio.sleep(0)
+        interaction.response.defer.assert_not_awaited()
+        interaction.edit_original_response.assert_not_awaited()
+        interaction.followup.send.assert_not_awaited()
+        from pokewalker.db import open_db
+        conn = await open_db(self.settings.db_path, allow_unpatched=True)
+        try:
+            self.assertEqual('\n'.join([line async for line in conn.iterdump()]), before)
+        finally:
+            await conn.close()

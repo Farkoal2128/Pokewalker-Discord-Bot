@@ -723,7 +723,7 @@ Existing command shapes, persisted data and lifecycle exit meanings are compatib
 Tests: test_admin.py, test_client_lifecycle.py and affected adapter/config regressions.
 Live Discord, systemd restart handling and host acceptance remain unverified.
 
-### EX-Raid manager (additive, EXR-9/EXR-10)
+### EX-Raid manager (additive, EXR-9/EXR-10/EXR-11)
 
 `/admin ex-raid pokemon:<autocomplete> [server_id] [shiny] [level] [iv_attack]
 [iv_defense] [iv_stamina] [duration]` registers only in the admin guild. Only
@@ -754,8 +754,9 @@ The private preview shows send ID, boss Dex number, name and sprite, each lock o
 "none chosen: press All servers". Without a server ID no target is selected;
 only an explicit All servers press selects every persisted server. It increments
 the revision and redraws without changing the send ID or deadline. All servers is
-shown only before a target is chosen; Cancel is always shown. Confirm arrives
-in EXR-11.
+shown only before a target is chosen; Cancel and Confirm are always shown.
+Confirm is disabled until a target is selected and uses
+`ex_raid_confirm:<draft_id>:<revision>`.
 
 Once targeted, Counts (provisional) lists targeted servers, servers that will get
 it, and counts for raids off, no raid channel, no permission or bot not in server,
@@ -765,13 +766,36 @@ and gateway-only `bot.get_guild` plus `raids.checked_channel`; previews write
 nothing, including no expiry settlement, spawn or announcement.
 
 The view subclasses EX-Gift's OwnerView: every press privately defers and checks
-the configured draft owner, admin guild, absolute deadline, shared 30-per-minute
-`admin.gift_callbacks` bucket and exclusion, then rechecks registry identity and
-editing state after awaits. Expiry refuses "This EX-Raid draft expired. Run
+the configured draft owner, admin guild, absolute deadline, bucket and exclusion,
+then rechecks registry identity and state after awaits. Expiry refuses "This EX-Raid draft expired. Run
 /admin ex-raid again." Cancel, expiry and view timeout discard the draft, stop
 the view and remove it from the registry. Discard during sending marks pending
 discard. Cancel leaves "EX-Raid draft cancelled." with no controls or embed.
 Restart leaves old controls without registered handlers or acknowledgement.
+Confirm prefixes `gift_confirm:` and `ex_raid_confirm:` share the five-per-minute
+`admin.requests` bucket; other presses share the 30-per-minute
+`admin.gift_callbacks` bucket. After inherited checks, sent drafts return their
+stored receipt; sending drafts refuse "This EX-Raid is being sent." An absent or
+discarded draft receives the expiry refusal. A missing target or stale revision
+refuses "This preview is out of date. Nothing was sent."
+
+A valid Confirm enters sending and shields settlement from callback cancellation.
+Its writer job checks registry identity, sending state, pending discard and the
+monotonic deadline before `raids.ex_commit` and again after it; losing liveness
+after the service returns rolls back all settlement and send writes. The service
+uses the UTC walker clock and the preview's gateway-only channel resolver.
+Refusal or rollback restores editing with the same revision and send ID; expiry
+or pending discard completes cleanup. The synchronous after-commit observer
+stores a sent result and schedules `bot.announce_ex_raid(ex_raid_id)` before any
+receipt, including when the callback was cancelled. A replay schedules nothing.
+
+A successful reply uses a local snapshot, with no controls or embed: send ID,
+boss, all locks, duration, target, end UTC and committed counts, including every
+skip reason. A send spawning nowhere replies "Nothing was sent: no server could
+get this EX-Raid." with skip reasons and writes nothing. Other failures reply
+"Nothing was sent." Other controls while sending refuse, and after sent return
+the same receipt. Committed sends survive failed acknowledgements and a deadline
+or discard arriving during commit; local snapshots preserve their receipt.
 No persisted draft state is added. Producers are Admin and admin_ex_raid; consumers are configured owners and explicit admin-guild
 command sync. This is additive; global commands and persisted formats are unchanged.
 Tests: test_admin_ex_raid.py and test_client_lifecycle.py. Live Discord is unverified.
