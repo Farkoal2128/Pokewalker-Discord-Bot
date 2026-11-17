@@ -11,7 +11,7 @@ Owners spawn an EX-Raid from the admin server into one server or every server: a
 
 One milestone: schema and services (2-6), announcements and player screens (7-9), admin command (10-13), help and retention text (14-15).
 
-**Non-goals:** ending an EX-Raid early (R6, §8); any option beyond R3's; a cooldown or a `mod_audit` row for EX sends (R6); extra rewards, catch-rule or `auto_send` changes (R7; C4 unchanged); retrying `attempted` announcements (R9); a persisted draft; any push, deploy, command sync or live Discord action (§3.4).
+**Non-goals:** early end (R6); options beyond R3; a cooldown or a `mod_audit` row for EX sends (R6); extra rewards, catch-rule or `auto_send` changes (R7; C4 unchanged); retrying `attempted` announcements (R9); a persisted draft; any push, deploy, command sync or live Discord action (§3.4).
 
 ## 2. Verified code map (verified at 1ac1c07)
 
@@ -129,7 +129,7 @@ Build rows are `seam`: at most 2 production files and 300 production lines; test
 | 13 | [EXR-12](tickets/EXR-12.md) `/admin ex-raid-history` | build | seam | S | ✅ done · d7ba24c · GO review r1; fixture fix |
 | 14 | [EXR-13](tickets/EXR-13.md) help and raids | build | seam | S | ✅ done · 41bbee5 · GO review r1; fixture fix |
 | 15 | [EXR-14](tickets/EXR-14.md) retention disclosure: privacy text, C3 M8.4, coverage | build | seam | S | ✅ done · 1b78be0 · GO review r1 |
-| 16 | G-F final verification and delivery decisions | 🚦 | — | — | pending |
+| 16 | G-F final verification and delivery decisions | 🚦 | — | — | ✅ 32f7b65 test_cmd PASS; main: owner |
 | 17 | G-B writer benchmark against the live guild count | 🚦 | — | — | pending |
 | 18 | G-V deployed privacy file | 🚦 | — | — | pending |
 | 19 | G-L live Discord acceptance | 🚦 | — | — | pending |
