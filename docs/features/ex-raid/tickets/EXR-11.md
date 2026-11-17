@@ -2,9 +2,9 @@
 
 **Tier:** seam (interactions; persisted state; rate limits)
 
-**Read:** PLAN D5, D6, D8; SYNTHESIS R3, R9; EXR-4, -6, -10; `bot/admin_gift.py:93-115, :141-151, :268-313` (mirrored here); `db/__init__.py:72-83, :144-155`; C5 "EX-Gift manager".
+**Read:** PLAN D5, D6, D8; SYNTHESIS R3, R9; EXR-4, -6, -10; `bot/admin_gift.py:93-115, :141-151, :268-313`; `db/__init__.py:72-83, :144-155`; C5 "EX-Gift manager".
 
-**Goal.** Confirm commits the previewed draft once, schedules announcements before the receipt, always settles the draft. C5 first.
+**Goal.** Confirm commits the draft once, schedules announcements before the receipt, always settles. C5 first.
 
 - **`bot/admin_gift.py:105`** (the only edit there): Confirm is a custom ID starting with `gift_confirm:` or `ex_raid_confirm:`, so it takes the shared 5/min token (`admin.requests`); other presses keep the 30/min bucket.
 - **Button:** `Confirm`, `custom_id=f'ex_raid_confirm:{draft_id}:{revision}'`, disabled until a target is chosen.
@@ -41,6 +41,6 @@
 
 **Verify.** Focused (staged tree; boundary G-F). `python -m unittest discover -s tests -p "test_<m>.py"` for `admin_ex_raid`, `admin_gift`, `admin`, `ex_raid`, `db`, `client_lifecycle`; `git -c core.whitespace=cr-at-eol diff --cached --check`.
 
-**Stop if.** `bot/admin_gift.py` needs more than the prefix line; `db/__init__.py`, `bot/client.py` or a service needs a change; an EX-Gift test must change; over 300 production lines.
+**Stop if.** `bot/admin_gift.py` needs more than the prefix line; `db/__init__.py`, `bot/client.py` or a service needs a change; an EX-Gift test must change; >300 production lines.
 
 **Do not touch.** `bot/admin.py`, `bot/client.py`, `services/**`, `db/**`.

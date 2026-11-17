@@ -2,7 +2,7 @@
 
 **Tier:** seam (gateway messages; persisted state)
 
-**Read:** PLAN D6; SYNTHESIS R8, R9; EXR-4; `services/raids.py:198-244`; `bot/client.py:125-133, :173-185, :220-246`; C5 "M8.2a"; `tests/test_raids.py:743-903` (announce fixtures).
+**Read:** PLAN D6; SYNTHESIS R8, R9; EXR-4; `services/raids.py:198-244`; `bot/client.py:125-133, :173-185, :220-246`; C5 "M8.2a"; `tests/test_raids.py:743-903`.
 
 **Goal.** EX spawns announce as "EX-Raid", one failing server never stops the others, and one send's announcements run as a task the bot owns. C5 first.
 
@@ -34,8 +34,8 @@ In `tests/test_client_lifecycle.py`:
 
 `tests/test_raids.py`, `tests/test_admin_force_raid.py`, `tests/test_heartbeat.py` and `tests/test_share.py` pass unchanged. No command or button is added: no manifest, subcommand-set or schema pin moves.
 
-**Verify.** Focused (`Tests-Focused` on the staged tree; boundary G-F). `python -m unittest discover -s tests -p "test_<m>.py"` for `ex_raid`, `raids`, `admin_force_raid`, `client_lifecycle`, `heartbeat`, `share`; `git -c core.whitespace=cr-at-eol diff --cached --check`.
+**Verify.** Focused (staged tree; boundary G-F). `python -m unittest discover -s tests -p "test_<m>.py"` for `ex_raid`, `raids`, `admin_force_raid`, `client_lifecycle`, `heartbeat`, `share`; `git -c core.whitespace=cr-at-eol diff --cached --check`.
 
 **Stop if.** An existing announce test must change (name it); the drain order or its 20 s bound must change; a log line would carry message text, an exception message or a user ID; over 300 production lines.
 
-**Do not touch.** `bot/bag.py:453`, `bot/admin_channels.py:463` (their `announce` calls stay), `bot/heartbeat.py`, `db/**`.
+**Do not touch.** `bot/bag.py:453`, `bot/admin_channels.py:463` `bot/heartbeat.py`, `db/**`.

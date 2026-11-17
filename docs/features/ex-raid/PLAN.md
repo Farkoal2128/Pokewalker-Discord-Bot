@@ -115,7 +115,7 @@ Build rows are `seam`: at most 2 production files and 300 production lines; test
 | Step | Ticket(s) | Kind | Tier | Effort | Status |
 |---|---|---|---|---|---|
 | 1 | G-A · G-P plan approval, Home, delivery scope | 🚦 | — | — | ✅ 2026-11-16 owner approved; Home feature/ex-raid; backup pushes of Home (standing rule); benchmark 1,000/10,000 |
-| 2 | [EXR-1](tickets/EXR-1.md) migration 0031: `ex_raids`, spawn kind, per-kind index | build | seam | M | pending |
+| 2 | [EXR-1](tickets/EXR-1.md) migration 0031: `ex_raids`, spawn kind, per-kind index | build | seam | M | ✅ done · 2a1f632 · GO review r1 |
 | 3 | [EXR-2](tickets/EXR-2.md) spawn rules per kind; `live_spawns`; `join` by spawn | build | seam | M | pending |
 | 4 | [EXR-3](tickets/EXR-3.md) locks at join | build | seam | S | pending |
 | 5 | [EXR-4](tickets/EXR-4.md) service: EX send, guards, history reads; benchmark evidence | build | seam | L | pending |

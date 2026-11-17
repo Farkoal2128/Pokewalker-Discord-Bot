@@ -2,7 +2,7 @@
 
 **Tier:** seam (slash commands; abuse controls)
 
-**Read:** PLAN D8, D9; SYNTHESIS XR-1..XR-4, XR-9, XR-11, R1-R3 and the readings of XR-2; `bot/admin.py:41-104, :223-230`; `config.py:22-25`; C5 "M4.5a owner administration", "EX-Gift manager".
+**Read:** PLAN D8, D9; SYNTHESIS XR-1..4, -9, -11, R1-R3, XR-2 readings; `bot/admin.py:41-104, :223-230`; `config.py:22-25`; C5 "M4.5a owner administration", "EX-Gift manager".
 
 **Goal.** The admin-guild command exists, its Pokémon option autocompletes over all 1,094 identities, and a valid submit replies with a private text preview. Nothing is written or sent yet (draft: EXR-10; Confirm: EXR-11). C5 first. This is the repo's first autocomplete (PLAN section 2).
 
@@ -35,7 +35,7 @@ Pins moved:
 
 Not moved: the global manifest, schema versions.
 
-**Verify.** Focused (`Tests-Focused` on the staged tree; boundary G-F). `python -m unittest discover -s tests -p "test_<m>.py"` for `admin_ex_raid`, `admin`, `admin_gift`, `cooldown_reset`, `client_lifecycle`, `deploy_script`; `git -c core.whitespace=cr-at-eol diff --cached --check`.
+**Verify.** Focused (staged tree; boundary G-F). `python -m unittest discover -s tests -p "test_<m>.py"` for `admin_ex_raid`, `admin`, `admin_gift`, `cooldown_reset`, `client_lifecycle`, `deploy_script`; `git -c core.whitespace=cr-at-eol diff --cached --check`.
 
 **Stop if.** The autocomplete method cannot bind on the group; a suggestion needs a database read; `bot/client.py` or a service needs an edit; over 300 production lines.
 

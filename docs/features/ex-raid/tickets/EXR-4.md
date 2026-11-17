@@ -2,7 +2,7 @@
 
 **Tier:** seam (persisted state; abuse controls)
 
-**Read:** PLAN D5; SYNTHESIS XR-7, XR-9, XR-10, R3 (Confirm order), R6; EXR-1, EXR-2; `services/raids.py:76-126, :163-195`; `services/ex_gift.py:85-130`; `db/__init__.py:110-131`.
+**Read:** PLAN D5; SYNTHESIS XR-7, -9, -10, R3, R6; EXR-1, -2; `services/raids.py:76-126, :163-195`; `services/ex_gift.py:85-130`; `db/__init__.py:110-131`.
 
 **Goal.** New `services/raids.py` functions beside `force_spawn`, in the caller's writer transaction. C3 first.
 
@@ -41,8 +41,8 @@
 
 **Benchmark** (evidence, not a test): an uncommitted script times one global `ex_commit` at 1,000 and 10,000 guilds (and any owner count), fresh and replacing an expired, unswept global send with 5 players joined per server; `checked` is a stub. The commit body records method and holds. Live count: G-B.
 
-**Verify.** Focused (`Tests-Focused` on the staged tree; boundary G-F). `python -m unittest discover -s tests -p "test_<m>.py"` for `ex_raid`, `raids`, `admin_force_raid`, `ex_raid_schema`; `git -c core.whitespace=cr-at-eol diff --cached --check`.
+**Verify.** Focused (staged tree; boundary G-F). `python -m unittest discover -s tests -p "test_<m>.py"` for `ex_raid`, `raids`, `admin_force_raid`, `ex_raid_schema`; `git -c core.whitespace=cr-at-eol diff --cached --check`.
 
-**Stop if.** The hold is >= 1 s (a fifth of the 5 s probe) at 1,000 guilds or the owner's count: report; the coordinator briefs batching. `spawn`, `force_spawn` or `expire` must change; over 300 production lines.
+**Stop if.** The hold is >= 1 s (a fifth of the 5 s probe) at 1,000 guilds or the owner's count: report it. `spawn`, `force_spawn` or `expire` must change; over 300 production lines.
 
 **Do not touch.** `bot/**`, migrations, other services.

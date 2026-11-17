@@ -34,7 +34,7 @@
 
 No command is added: the subcommand set (`tests/test_client_lifecycle.py:678-680`), both manifests and schema pins do not move. The buttons sit on a new view that no component-count pin covers.
 
-**Verify.** Focused (`Tests-Focused` on the staged tree; boundary G-F). `python -m unittest discover -s tests -p "test_<m>.py"` for `admin_ex_raid`, `admin`, `admin_gift`, `client_lifecycle`; `git -c core.whitespace=cr-at-eol diff --cached --check`.
+**Verify.** Focused (staged tree; boundary G-F). `python -m unittest discover -s tests -p "test_<m>.py"` for `admin_ex_raid`, `admin`, `admin_gift`, `client_lifecycle`; `git -c core.whitespace=cr-at-eol diff --cached --check`.
 
 **Stop if.** `bot/admin_gift.py` or a service needs an edit; the preview must write to count; over 300 production lines.
 
