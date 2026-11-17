@@ -677,7 +677,7 @@ class AdminManifestTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(admin.guild_only)
         self.assertEqual({c.name for c in admin.commands},
                          {'status', 'errors', 'restart', 'cooldown-user', 'cooldown-server',
-                          'gift', 'gift-history', 'ex-raid'})
+                          'gift', 'gift-history', 'ex-raid', 'ex-raid-history'})
         with self.assertLogs('pokewalker.bot.admin', 'WARNING') as captured:
             disabled = WalkerBot(self.settings(None))
         self.addAsyncCleanup(disabled.drain)

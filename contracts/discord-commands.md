@@ -864,6 +864,29 @@ Producer: Admin and its EX-Gift view; consumers: configured owners and Discord's
 component serializer. Existing commands and persisted data remain compatible;
 tests: `test_admin_gift.py`, `test_admin.py`, `test_cooldown_reset.py`, `test_db.py`.
 
+### EX-Raid history (additive, EXR-12)
+
+`/admin ex-raid-history [send_id]` registers only in the admin guild, privately
+defers and takes the shared five-per-minute owner authorization token and current
+exclusion check. It lists every configured owner's committed sends, newest first,
+ten per page, or one send by its exact 32-character lowercase hexadecimal send ID.
+Malformed or missing IDs reply "No EX-Raid send with ID <id> was committed."
+Reads use `raids.ex_history` or `raids.ex_lookup` through the writer; history never
+spawns or announces, and survives draft discard and restart.
+
+The "EX-Raid history" embed shows send ID, UTC commit time, boss (`#<dex> <name>`),
+locks or "all rolled per player", duration, target ("all servers" or "server <id>"),
+end time UTC and "Counts (committed)": targeted servers, servers spawned, and each
+skip reason with its count. Pages exceeding 4096 description characters drop each
+entry's lock line. Empty history says "No EX-Raids were sent." No player, profile
+or owner IDs appear. Prev/Next inherit EX-Gift history's opening-owner binding,
+900-second absolute expiry, shared 30-per-minute callback bucket and exclusion
+checks. Expiry says "This history expired. Run /admin ex-raid-history again."
+All replies suppress mentions. Producer: Admin and its RaidHistoryView; consumers:
+configured owners and Discord. Existing commands and persisted data remain
+compatible; only the admin-guild command manifest changes and needs explicit sync.
+Tests: `test_admin_ex_raid.py`, `test_client_lifecycle.py`.
+
 ### EX-Gift history (additive, EXG-7)
 
 `/admin gift-history [send_id]` registers only in the admin guild, defers
