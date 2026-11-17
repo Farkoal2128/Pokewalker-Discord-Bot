@@ -1,6 +1,7 @@
 """C3 EXR-2: coexistence and explicit, server-scoped raid joins on real SQLite."""
 
 import unittest
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import test_raids
@@ -855,3 +856,134 @@ class ExRaidCatchTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(sqlite3.IntegrityError):
             await test_raids.RaidSchemaTests.encounter(self, self.pid, 'fourth')
         self.assertEqual(await profiles.queue_size(self.conn, self.pid), 3)
+
+
+class ExRaidAnnouncementTests(unittest.IsolatedAsyncioTestCase):
+    asyncSetUp = ExRaidTests.asyncSetUp
+    scalar = ExRaidTests.scalar
+    rows = ExRaidTests.rows
+    raids = ExRaidTests.raids
+    profile = ExRaidTests.profile
+    join = ExRaidTests.join
+    arguments = ExRaidSendTests.arguments
+    send = ExRaidSendTests.send
+    use = ExRaidTests.use
+
+    async def pending_send(self):
+        await self.conn.execute("UPDATE guilds SET raids_enabled=1,raid_channel_id='789'")
+        await self.conn.execute("INSERT INTO guilds(guild_id,raids_enabled,raid_channel_id) VALUES ('z',1,'789')")
+        identity = next(i for i in self.content['identities'] if i['pokemon_id'] == 144)
+        await self.send(guild_id=None, identity_id=identity['identity_id'])
+        # Distinct times plus tied times exercise both ordering keys, against insertion order.
+        for guild, spawn_id, at in (('g', 'c', 900), ('h', 'b', 1000), ('z', 'a', 1000)):
+            await self.conn.execute('UPDATE world_spawns SET spawn_id=?,spawned_at=? WHERE guild_id=?',
+                                    (spawn_id, at, guild))
+        return await self.rows('SELECT * FROM world_spawns ORDER BY spawned_at,spawn_id')
+
+    async def test_ex_announcement_titled_ex_raid_for_a_legendary_boss(self):
+        spawn, *_ = await self.pending_send()
+        await self.raids().announce(self.bot, spawn)
+        kwargs = self.channel.send.await_args.kwargs
+        self.assertEqual(kwargs['embed'].title, 'EX-Raid: Articuno')
+        self.assertEqual(kwargs['embed'].description,
+                         'Articuno is here! Despawns 1970-01-01 01:16:40 UTC. Join with /raid.')
+        self.assertEqual(kwargs['allowed_mentions'].to_dict()['parse'], [])
+        self.assertEqual(kwargs['nonce'], self.raids().nonce(spawn['spawn_id']))
+        self.assertEqual(kwargs['embed'].image.url,
+                         next(i for i in self.content['identities'] if i['pokemon_id'] == 144)['sprites']['normal'])
+
+    async def test_world_legendary_announcement_title_unchanged(self):
+        spawn = (await self.use())['spawn']
+        identity = next(i for i in self.content['identities'] if i['identity_id'] == spawn['identity_id'])
+        await self.raids().announce(self.bot, spawn)
+        self.assertEqual(self.channel.send.await_args.kwargs['embed'].title,
+                         f"World Legendary: {identity['name_en']}")
+
+    async def test_fanout_announces_only_that_sends_pending_live_rows_in_order(self):
+        from unittest.mock import AsyncMock, patch
+        rows = await self.pending_send()
+        # Another send and a world spawn must not leak into this send's fan-out.
+        await self.conn.execute("INSERT INTO guilds(guild_id,raids_enabled,raid_channel_id) VALUES ('other',1,'789')")
+        await self.send(send_id='other', guild_id='other')
+        await self.use()
+        with patch.object(self.raids(), 'announce', new=AsyncMock()) as announce:
+            await self.raids().resume_pending(self.bot, 'send')
+        self.assertEqual([c.args[1]['spawn_id'] for c in announce.await_args_list],
+                         [r['spawn_id'] for r in rows])
+        await self.conn.execute("UPDATE world_spawns SET post_state='sent' WHERE spawn_id='c'")
+        await self.conn.execute("UPDATE world_spawns SET expires_at=? WHERE spawn_id='a'", (self.now,))
+        await self.conn.execute("UPDATE world_spawns SET ended=1 WHERE spawn_id='b'")
+        with patch.object(self.raids(), 'announce', new=AsyncMock()) as announce:
+            await self.raids().resume_pending(self.bot, 'send')
+        announce.assert_not_awaited()
+
+    async def test_failed_post_logged_stays_attempted_later_servers_announced(self):
+        await self.pending_send()
+        self.channel.send.side_effect = [OSError('private message user 123'),
+                                        SimpleNamespace(id=555), SimpleNamespace(id=556)]
+        with self.assertLogs('pokewalker.services.raids', 'WARNING') as logged:
+            await self.raids().resume_pending(self.bot)
+        self.assertEqual(len(logged.records), 1)
+        self.assertEqual(logged.records[0].args, ('c',))
+        self.assertIsNone(logged.records[0].exc_info)
+        self.assertNotIn('private', logged.output[0])
+        self.assertNotIn('123', logged.output[0])
+        self.assertEqual(await self.rows('SELECT spawn_id,post_state FROM world_spawns ORDER BY spawned_at,spawn_id'),
+                         [dict(spawn_id=s, post_state=p) for s, p in
+                          (('c', 'attempted'), ('a', 'sent'), ('b', 'sent'))])
+
+    async def test_failed_sent_write_logged_later_servers_announced(self):
+        await self.pending_send()
+        await self.conn.execute("CREATE TRIGGER fail_sent BEFORE UPDATE OF message_id ON world_spawns "
+                                "WHEN OLD.spawn_id='c' BEGIN SELECT RAISE(ABORT,'private sent error'); END")
+        with self.assertLogs('pokewalker.services.raids', 'WARNING') as logged:
+            await self.raids().resume_pending(self.bot, 'send')
+        self.assertEqual(len(logged.records), 1)
+        self.assertEqual(logged.records[0].args, ('c',))
+        self.assertIsNone(logged.records[0].exc_info)
+        self.assertNotIn('private sent error', logged.output[0])
+        self.assertEqual(await self.scalar("SELECT post_state FROM world_spawns WHERE spawn_id='c'"), 'attempted')
+        self.assertEqual(await self.scalar("SELECT count(*) FROM world_spawns WHERE post_state='sent'"), 2)
+        self.assertEqual(self.channel.send.await_count, 3)
+
+    async def test_resume_pending_isolates_a_failing_row(self):
+        await self.pending_send()
+        await self.conn.execute("CREATE TRIGGER fail_claim BEFORE UPDATE OF post_state ON world_spawns "
+                                "WHEN OLD.spawn_id='c' BEGIN SELECT RAISE(ABORT,'private claim error'); END")
+        with self.assertLogs('pokewalker.services.raids', 'WARNING') as logged:
+            await self.raids().resume_pending(self.bot)
+        self.assertEqual(len(logged.records), 1)
+        self.assertEqual(logged.records[0].args, ('c',))
+        self.assertIsNone(logged.records[0].exc_info)
+        self.assertNotIn('private claim error', logged.output[0])
+        self.assertEqual(await self.scalar("SELECT post_state FROM world_spawns WHERE spawn_id='c'"), 'pending')
+        self.assertEqual(self.channel.send.await_count, 2)
+
+    async def test_attempted_rows_never_retried_by_fanout_or_restart(self):
+        from pokewalker import db
+        await self.pending_send()
+        await self.conn.execute("UPDATE world_spawns SET post_state='attempted'")
+        await self.raids().resume_pending(self.bot, 'send')
+        await self.writer.close()
+        await self.conn.close()
+        self.conn = await db.open_db(self.path)
+        self.addAsyncCleanup(self.conn.close)
+        self.writer = self.bot.writer = db.Writer(self.conn)
+        self.addAsyncCleanup(self.writer.close)
+        await self.raids().resume_pending(self.bot)
+        self.channel.send.assert_not_awaited()
+
+    async def test_restart_skips_pending_rows_whose_spawn_expired(self):
+        await self.pending_send()
+        await self.conn.execute('UPDATE world_spawns SET expires_at=?', (self.now,))
+        await self.raids().resume_pending(self.bot)
+        self.channel.send.assert_not_awaited()
+        self.assertEqual(await self.scalar("SELECT count(*) FROM world_spawns WHERE post_state='pending'"), 3)
+
+    async def test_unannounced_spawn_stays_joinable(self):
+        await self.pending_send()
+        self.channel.send.side_effect = OSError('post refused')
+        with self.assertLogs('pokewalker.services.raids', 'WARNING'):
+            await self.raids().resume_pending(self.bot, 'send')
+        self.assertEqual((await self.join('c'))['status'], 'new')
+        self.assertEqual((await self.join('c'))['status'], 'joined')
