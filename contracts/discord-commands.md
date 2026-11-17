@@ -15,8 +15,10 @@ missing and foreign encounters are indistinguishable and reveal no foreign exist
 For a joined participation with NULL, missing or foreign encounter, say "You already
 joined this World Legendary; it can be joined once." No reroll or replacement occurs.
 
-Live queued/revealed encounters use render_catch with "World Legendary · ends <UTC>";
-every render_catch of a raid encounter (ball/berry select and pick included) keeps that line.
+Live queued/revealed encounters use render_catch with "EX-Raid · ends <UTC>" for
+kind=ex, otherwise "World Legendary · ends <UTC>"; every render_catch of a raid
+encounter (ball/berry select and pick included) keeps that line. Catch, confirmation
+and result tier text is "EX-Raid" for kind=ex, otherwise the existing encounter tier.
 Resolved caught/ran encounters use the existing recovery render_terminal: Done (plus
 Send for research while the caught Pokémon is owned),
 no catch controls. Each successful open persists a normal Walker session with revision
@@ -1224,19 +1226,22 @@ M8.1a guild fields. Tests: test_raids and test_admin_channels. G-F2/live gates s
 Under D60 and Q12, home Open encounter selects only ordinary queued/revealed rows.
 Back from Master Ball, shiny Run confirmation or the storage warning instead reopens
 the selected queued/revealed raid encounter owned by this profile, while its spawn in this guild
-is unexpired. It preserves the frozen encounter and selected items, uses the normal
+is unexpired. With both raid kinds joined, Back returns only to the selected raid,
+never the other one. It preserves the frozen encounter and selected items, uses the normal
 reveal handling and clears the Run, Master Ball and storage confirmation flags.
 A deleted, expired, foreign or missing selection falls through to the ordinary queue
-or home without revealing another profile's encounter. Later and the empty-queue
+or home without revealing another profile's encounter or opening the other raid,
+before and after expiry cleanup. Later and the empty-queue
 home fallback clear the Run, Master Ball and storage flags, including after a
 read-only failed confirmed throw or a confirmed throw that broke free. Ordinary Back is unchanged.
 Every home entry clears only these confirmation flags before normal terminal recovery,
 preserving unrelated selection values; a fabricated home action cannot carry them onward.
 Run and shiny Confirm Run recheck raid spawn expiry using Walker.clock() in the
 writer transaction before any resolution or receipt. At expires_at <= now they
-privately refuse with "The World Legendary left.", preserving every table and the
-revealed encounter for cleanup. A throw that catching.throw refuses as expired
-shows "The World Legendary left; this encounter expired." on the catch screen.
+privately refuse with "The EX-Raid left." for kind=ex, otherwise "The World Legendary
+left.", preserving every table and the revealed encounter for cleanup. A throw that
+catching.throw refuses as expired shows "This EX-Raid ended; this encounter expired."
+for kind=ex, otherwise "The World Legendary left; this encounter expired." on the catch screen.
 A live raid can still use the normal Run flow.
 Producer: Walker; consumers: home/catch/confirmation screens and saved session
 selection. Existing buttons, custom IDs, schema and ordinary catch semantics stay
