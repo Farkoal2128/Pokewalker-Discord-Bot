@@ -41,7 +41,19 @@ class ReadmeTests(IsolatedAsyncioTestCase):
     def test_approved_text_verbatim(self):
         content = Path('content/help.md').read_bytes()
         self.assertEqual(hashlib.sha256(content).hexdigest(),
-                         'f8af932c1bbfc7203fa33fa7291283b488416dcb60adcff1c3d9459840baa44b')
+                         '52735c96c68f24e9ea1de703db25b2d0a336571c8c0d7c6942f58ecaa920295a')
+
+    def test_help_describes_ex_raids(self):
+        pages = self.pages()
+        player = next(page for page in pages[:-1] if '**EX-Raids.**' in page)
+        for phrase in ('**EX-Raids.**', '1 to 24 hours', '/raid',
+                       'asks which one to open', 'join each'):
+            self.assertIn(phrase, player)
+        for phrase in ('owner EX-Raids', 'World Legendary spawns and EX-Raids'):
+            self.assertIn(phrase, pages[-1])
+        for page in pages[:-1]:
+            self.assertNotIn('/walker-admin', page)
+            self.assertNotIn('/admin', page)
 
     def test_help_describes_x_items(self):
         player = next(page for page in self.pages() if '**Arena.**' in page)

@@ -50,6 +50,8 @@ Buy evolution items in Bag for 500 Stardust each, or use Buy & evolve on a missi
 
 **Join a World Legendary.** Use `/raid` while one is active here to join once; use it again to reopen your saved encounter.
 
+**EX-Raids.** Bot owners can start an EX-Raid here for any Pokémon; it lasts 1 to 24 hours. Join it once with `/raid`, like a World Legendary. When both are active, `/raid` asks which one to open, and you can join each.
+
 **Trading.** In a trade channel, use `/trade member` to invite someone; they're pinged and join by using `/trade` with you as the member. Each of you offers one Pokémon, then both confirm. Favorites, your companion and gym defenders can't be traded. You can trade once per day, and Pokémon you receive count for your Pokédex.
 
 **Your privacy.** The bot reads message text only to count words and never stores it. `/walker-account privacy` explains more; `/walker-account opt-out` stops the bot reading your messages.
@@ -95,7 +97,7 @@ EX boosts arm for your next new run only. A run already in progress does not get
 
 **Gym moderation.** Members with Moderate Members can use `/walker-mod gym-recall gym reason`; completed hours are paid, while exclusion forfeits unpaid hours.
 
-**Server raids.** Manage Server can enable World Legendary spawns with `/walker-admin raids on` and a text channel, or disable them with `off`; raids start off.
+**Server raids.** Manage Server can enable World Legendary spawns with `/walker-admin raids on` and a text channel, or disable them with `off`; raids start off. The same switch covers owner EX-Raids.
 
 **Server Arena.** Manage Server can use `/walker-admin arena on|off reason`; the Arena starts on. Turning it off blocks new runs while existing runs can finish and tickets can still be redeemed. A reason is required and the change is audited.
 
@@ -104,7 +106,7 @@ EX boosts arm for your next new run only. A run already in progress does not get
 - `trade-channels add|add-all|remove|list`: choose the channels where members can trade.
 - `gyms create|remove|list|legendary`: manage this server's gyms; legendary on or off allows or blocks Legendary and Mythical defenders (blocked by default).
 - `arena on|off <reason>`: enable or disable new Arena runs in this server.
-- `raids on|off <channel>`: turn World Legendary spawns on in a text channel, or off.
+- `raids on|off <channel>`: turn raids (World Legendary spawns and EX-Raids) on in a text channel, or off.
 - `force-raid <reason>`: spawn a World Legendary in the raid channel now (once per 24 hours per server).
 - `sharing on|off`: allow or block Share buttons in this server.
 - `reset <member> <reason>`: permanently reset a member's game data in this server.

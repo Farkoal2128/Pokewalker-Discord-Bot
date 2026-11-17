@@ -1323,8 +1323,11 @@ Tests: test_gym_mod, test_mod, test_deletion. G-F2 and live acceptance remain op
 `/walker-admin raids on|off reason [channel]` is guild-only with Manage Server
 defaults and runtime checks. On requires a text channel in the interaction guild;
 missing and foreign channels receive the same refusal without cross-guild lookup.
-Off clears raids_enabled while retaining raid_channel_id; on sets both. New guilds
-remain off with no channel until configured. A stripped nonblank reason is required.
+The switch also decides whether this server receives owner EX-Raids. Its command
+description is "Enable or disable raids (World Legendary and EX-Raid) in this server".
+Off clears raids_enabled while retaining raid_channel_id; on sets both. A live raid
+runs to its expiry after off. New guilds remain off with no channel until configured.
+A stripped nonblank reason is required.
 The command defers privately before writer waits, rechecks Manage Server and actor
 exclusion inside its mutation job, and atomically audits target_kind=guild, the
 guild ID, actor, raids_on/raids_off, stripped reason and time. Refusals write nothing;
@@ -2221,3 +2224,14 @@ unlimited non-tradeable EX stock, all six items and their entry points, next-new
 boosts and voucher rewards for floors 1-80 with a start on floor 81. The gym
 sentence stays on page 3 and every page fits 4096 UTF-16 units.
 Tests: test_arena_screens.py, test_readme.py.
+
+## C5: EX-Raid player help (EXR-13, additive)
+Producer: content/help.md via bot.client.load_help; consumers: /readme players
+and server administrators. After Join a World Legendary, player help describes
+owner EX-Raids for any Pokémon, lasting 1 to 24 hours, joining once with /raid,
+and choosing and joining each when both raid kinds are active. The Server raids
+paragraph keeps its World Legendary prefix and adds that the same switch covers
+owner EX-Raids. The raids on|off list entry names World Legendary spawns and
+EX-Raids. Player pages expose neither /walker-admin nor /admin; page one stays
+verbatim and every page fits 4096 UTF-16 units. No persisted-state change.
+Tests: test_readme.py, test_admin_channels.py.
