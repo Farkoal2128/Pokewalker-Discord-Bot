@@ -580,6 +580,66 @@ IV/15".
   works. This replaces the earlier rule that the preview never shows IVs. Golden Bottlecap
   and Shiny Patch are unchanged.
 
+### Form changes and fusion (D71, D72, owner request 2026-11-17)
+
+The owner requested: "For Arceus, Silvally, Rotom, Ogerpon, Necrozma, Zygarde, and Deoxys, have
+a new menu specific to them. After catching them, when checking them in the storage, you can
+change their forms. However, for the pokemon that change stats when form changing, have them
+change at the cost of stardust, with the equivalent of 10 stardust per cp increased, and no
+cost in switching to a form that costs less cp." and "for fusion pokemon, add a separate menu
+for fusing on only the pokemon that can fuse, which lets them select from viable pokemon in
+the storage for fusion". Owner choices: all forms, including Zygarde Complete and Ultra
+Necrozma; Necrozma, Kyurem and Calyrex fuse; the partner is held and returned on unfuse;
+fusing costs the same; Ultra Necrozma needs a fused Necrozma.
+
+- **D71: Change form.** Amends D37 and D52 for these species only. Pokémon details for Deoxys
+  (Normal, Attack, Defense, Speed), Rotom (base and five appliances), Arceus (18 types),
+  Zygarde (50%, 10%, Complete), Silvally (18 types) and Ogerpon (Teal, Wellspring,
+  Hearthflame, Cornerstone masks) show Change form. Owner follow-up the same day ("what about
+  meloetta, shaymin, and other similar form/alt changes? Like the gen 5 weather trio") adds
+  Meloetta (Aria, Pirouette), Shaymin (Land, Sky), Tornadus, Thundurus, Landorus and Enamorus
+  (Incarnate, Therian), Giratina, Dialga and Palkia (Origin) and Hoopa (Confined, Unbound).
+  A final check the owner asked for ("ignore ability-switch, make one more conclusive check")
+  adds Zacian and Zamazenta (Crowned) and lets Oricorio switch freely between its four
+  catchable styles. Still excluded: ability-driven forms (Castform, Cherrim, Darmanitan Zen,
+  Aegislash, Wishiwashi, Mimikyu, Minior and similar), Mega/Primal/Gigantamax (D37), Totem
+  duplicates, fixed variants (Eternal Floette, Pikachu caps and costumes, Roaming Gimmighoul),
+  evolution branches (Lycanroc, Urshifu, Alcremie) and forms that differ only in looks. A fused Necrozma switches between its
+  fused form and Ultra Necrozma. The new form keeps the Pokémon's level, IVs, shiny, gender
+  and everything else. Gaining CP costs 10 Stardust per CP gained; the same or lower CP is
+  free. The alternate forms are never wild encounters, raid bosses or Arena enemies.
+- **D72: Fusion.** Necrozma fuses with Solgaleo (Dusk Mane) or Lunala (Dawn Wings), Kyurem
+  with Reshiram (White) or Zekrom (Black), Calyrex with Glastrier (Ice Rider) or Spectrier
+  (Shadow Rider). Fuse lists eligible partners from storage: owned, not deployed, not the
+  companion and not in a live Arena team. The partner leaves storage and is held, unchanged,
+  inside the fused Pokémon; Unfuse returns it and the default form, free, if storage has room.
+  Fusing costs like D71. A fused Pokémon cannot be traded; Legendary protection already keeps
+  it from research. Deleting the profile deletes the held partner with it.
+
+### Cosmetic looks and the Eternal tier (D73, owner request 2026-11-17)
+
+The owner requested: "run a search loop for cosmetic form changes until you can't find
+anymore, make sure there are matching sprites you can link to. Make it so cosmetic forms like
+the pikachu versions, you can't switch to them until you catch one, then any other version of
+the same pokemon can be converted into that cosmetic version." Owner choices: wild looks are
+mostly default; switching is free; ignore the Let's Go starters; Eternal Floette gets its own
+Eternal tier, rolled like one Legendary; trades unlock looks too.
+
+- **D73: Looks.** A look is a form with exactly its default's stats and types: 119 of them
+  (Unown letters, Vivillon patterns, Pikachu caps and costumes, Furfrou trims, Floette and
+  Flabébé colours, Minior meteors, seasons, and others). Every one has a normal and a shiny
+  sprite in the pinned sprite commit; Scatterbug/Spewpa patterns and Koraidon/Miraidon modes
+  have none and are left out, as are ability-tied forms, gender forms, Mothim cloaks and the
+  Let's Go starters. A look changes only the name and sprite: stats, types, tier, evolution
+  and the Pokédex use the base form. A wild Pokémon with looks wears one 10% of the time,
+  chosen evenly. Catching or receiving a Pokémon in a look unlocks it for that profile;
+  Change look then switches any Pokémon of that form to the default or an unlocked look, free.
+  Evolving keeps a look when the evolution has the same one (Flabébé to Florges colours).
+- **D73: Eternal tier.** Eternal Floette is its own encounter in the new Eternal tier. It
+  rolls in the Legendary/Mythical pool, so it is as rare as one Legendary, uses Legendary
+  catch rate, flee chance and rewards, is protected from research like one, and counts as a
+  special (boss) Arena enemy.
+
 ## Platform constraints
 
 - Reading message text needs the privileged Message Content intent. Discord reviews

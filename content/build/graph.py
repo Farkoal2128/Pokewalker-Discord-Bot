@@ -1,6 +1,6 @@
 """Build D51/D52/D53 encounter identities from one pinned CSV directory.
 
-``load_graph(directory)`` returns identities, evolution_targets, excluded, and pending lists. IDs
+``load_graph(directory)`` returns identities, evolution_targets, form_changes, looks, excluded, and pending lists. IDs
 remain distinct: identity_id is ``pokemon_id:form_id``. types are identifiers;
 gender_varieties maps male/female to the same identity fields without recursion.
 Excluded/pending rows retain source IDs and a reason. Missing columns, broken
@@ -25,6 +25,21 @@ DEFAULT_ONLY = {
     "arceus", "silvally", "ogerpon", "floette", "pikachu", "eevee", "rotom",
     "gimmighoul", "minior",
 }
+# D71/D72: alternate forms reachable only by changing form or fusing from storage.
+FORM_CHANGE = {"deoxys", "rotom", "arceus", "zygarde", "silvally", "ogerpon", "necrozma", "kyurem", "calyrex",
+               "meloetta", "shaymin", "tornadus", "thundurus", "landorus", "enamorus", "giratina",
+               "dialga", "palkia", "hoopa", "zacian", "zamazenta"}
+FORM_CHANGE_BATTLE = {"zygarde-complete", "necrozma-ultra", "meloetta-pirouette", "zacian-crowned",
+                      "zamazenta-crowned"}
+FORM_CHANGE_SKIP = {"zygarde-10-power-construct", "zygarde-50-power-construct"}
+# D73: cosmetic looks are forms with the default's stats and types. Skipped: ability-tied
+# forms, Mothim cloaks (none in the main games), Let's Go starters (owner) and forms whose
+# sprites are missing from the pinned sprite commit (Scatterbug/Spewpa patterns,
+# Koraidon/Miraidon modes; audited 2026-11-17).
+LOOK_SKIP_PREFIXES = ("scatterbug-", "spewpa-", "koraidon-", "miraidon-")
+LOOK_SKIP = {"zygarde-50-power-construct", "greninja-battle-bond", "rockruff-own-tempo", "mothim-sandy",
+             "mothim-trash", "pikachu-starter", "eevee-starter"}
+ETERNAL = {"floette-eternal"}  # D73: its own Eternal tier, rolled like one Legendary
 SEPARATE = {"wormadam", "oricorio", "pumpkaboo", "gourgeist", "ursaluna"}
 EVOLUTION_ONLY = {"lycanroc", "urshifu", "alcremie"}  # Q15: sweets and creams are evolution-only.
 GENDER = {"indeedee", "basculegion", "oinkologne"}
@@ -100,7 +115,8 @@ def load_graph(directory=CACHE_DIR):
     form_names = {int(row["pokemon_form_id"]): row for row in _read(
         directory, "pokemon_form_names", "pokemon_form_id local_language_id form_name pokemon_name")
         if row["local_language_id"] == "9"}
-    result = {"identities": [], "evolution_targets": [], "excluded": [], "pending": []}
+    result = {"identities": [], "evolution_targets": [], "form_changes": [], "looks": [], "excluded": [],
+              "pending": []}
     blocked = set()
 
     def report(category, form, reason):
@@ -112,7 +128,9 @@ def load_graph(directory=CACHE_DIR):
         tokens = form["identifier"].split("-")
         descriptor_tokens = form["form_identifier"].split("-")
         reason = None
-        if (form["is_mega"] == "1" or form["is_battle_only"] == "1"
+        if form["identifier"] in FORM_CHANGE_BATTLE:
+            pass
+        elif (form["is_mega"] == "1" or form["is_battle_only"] == "1"
                 or "mega" in tokens + descriptor_tokens
                 or {tokens[-1], descriptor_tokens[-1]} & {"gmax", "primal", "eternamax"}
                 or (int(form["pokemon_id"]), fid) == (10190, 10359)):
@@ -154,6 +172,18 @@ def load_graph(directory=CACHE_DIR):
             raise ValueError(f"pokemon {pid} requires one surviving default form")
         return defaults[0]
 
+    def add_look(form, base):
+        pid = int(form["pokemon_id"])
+        candidate = identity(form, "look")
+        if (form["identifier"] in LOOK_SKIP or form["identifier"].startswith(LOOK_SKIP_PREFIXES)
+                or form["form_identifier"] == "female" or stats[pid] != stats[base["pokemon_id"]]
+                or candidate["types"] != base["types"]):
+            return
+        result["looks"].append({"look_id": candidate["form_id"], "species_id": candidate["species_id"],
+                                "pokemon_id": pid, "base_identity_id": base["identity_id"],
+                                "form_id": candidate["form_id"], "form_key": form["form_identifier"],
+                                "name_en": candidate["name_en"]})
+
     defaults = {}
     included = set()
     for sid in species:
@@ -185,8 +215,14 @@ def load_graph(directory=CACHE_DIR):
                 "male": {key: value for key, value in base.items() if key != "gender_varieties"},
                 "female": identity(form, "form"),
             }
+        elif group in FORM_CHANGE and form["identifier"] not in FORM_CHANGE_SKIP:
+            report("excluded", form, "D71 form change; no separate encounter")
+            result["form_changes"].append({**identity(form, "form"), "form_key": descriptor})
+        elif form["identifier"] in ETERNAL:
+            result["identities"].append({**identity(form, "form"), "eternal": True})
         elif group in DEFAULT_ONLY:
             report("excluded", form, "D52 default-only policy")
+            add_look(form, defaults[sid])
         elif group in EVOLUTION_ONLY:
             report("excluded", form, "D52 evolution branch; no separate encounter")
             result["evolution_targets"].append(identity(form, "form"))
@@ -199,6 +235,7 @@ def load_graph(directory=CACHE_DIR):
             base = defaults[sid]
             if (stats[pid] == stats[base["pokemon_id"]] and candidate["types"] == base["types"]):
                 report("excluded", form, "cosmetic-equivalent; source form provenance retained")
+                add_look(form, base)
             else:
                 report("pending", form, "PENDING unclassified mechanical form")
     for sid, base in defaults.items():

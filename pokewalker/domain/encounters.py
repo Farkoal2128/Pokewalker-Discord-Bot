@@ -16,6 +16,8 @@ from types import MappingProxyType
 
 
 LEGENDARY = "Legendary/Mythical"
+ETERNAL = "Eternal"  # D73: Eternal Floette rolls in the Legendary pool and keeps its own tier.
+LOOK_PROBABILITY = 0.10  # D73: chance a wild Pokemon with cosmetic looks wears a non-default one
 MIRROR_TIERS = ("Common", "Uncommon", "Evolved")
 
 
@@ -55,7 +57,7 @@ def pick_identity(pool: Sequence[Mapping], weights: Mapping[str, float],
                   rng: random.Random) -> Mapping:
     if not pool:
         raise ValueError("identity pool is empty")
-    if pool[0]["tier"] == LEGENDARY:
+    if pool[0]["tier"] in (LEGENDARY, ETERNAL):
         return rng.choice(pool)
     values = [weights.get(identity["identity_id"], 0) for identity in pool]
     if any(not math.isfinite(w) or w < 0 for w in values) or sum(values) <= 0:
@@ -104,6 +106,13 @@ def generate(identity_pools: Mapping[str, Sequence[Mapping]], route: Mapping,
     return _spec(identity, tier, lure_active, rng, rules, charm)
 
 
+def roll_look(look_ids: Sequence[int], rng: random.Random) -> int | None:
+    """D73: none without looks (no draw); else 10% one look chosen evenly, otherwise default."""
+    if not look_ids:
+        return None
+    return rng.choice(list(look_ids)) if rng.random() < LOOK_PROBABILITY else None
+
+
 def mirror_hit(rng: random.Random, *, rules: Mapping) -> bool:
     """One Companion Mirror draw per generated encounter."""
     return rng.random() < rules["mirror_probability"]
@@ -138,7 +147,7 @@ def _spec(identity: Mapping, tier: str, lure_active: bool, rng: random.Random,
     return EncounterSpec(
         identity_id=identity["identity_id"], species_id=identity["species_id"],
         family_id=identity["family_id"], pokemon_id=variety["pokemon_id"],
-        form_id=variety["form_id"], tier=tier, gender=gender, shiny=shiny,
+        form_id=variety["form_id"], tier=ETERNAL if identity["tier"] == ETERNAL else tier, gender=gender, shiny=shiny,
         level_x2=level_x2, ivs=ivs, base_attack=variety["base_attack"],
         base_defense=variety["base_defense"], base_stamina=variety["base_stamina"],
         sprites=MappingProxyType(dict(variety["sprites"])),

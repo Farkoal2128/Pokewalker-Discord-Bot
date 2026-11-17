@@ -402,7 +402,7 @@ class LureTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual({row['effect_id']: row['remaining_encounters'] for row in effects},
                              {'active': 7, 'expired': 0, 'spent': 0})
             for table, expected in (('encounters ORDER BY encounter_id',
-                                     [row + (None,) for row in old_encounters]),
+                                     [row + (None, None) for row in old_encounters]),  # raid_spawn_id, D73 look_id
                                     ('action_receipts', old_receipts)):
                 async with conn.execute(f'SELECT * FROM {table}') as cursor:
                     self.assertEqual([tuple(row) for row in await cursor.fetchall()], expected)

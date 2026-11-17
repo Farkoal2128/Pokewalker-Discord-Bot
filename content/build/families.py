@@ -79,8 +79,10 @@ def add_families(identities, directory=CACHE_DIR):
         if sid not in species:
             raise ValueError(f"PENDING identity has unresolved species {sid}")
         metadata = species[sid]
-        legendary = metadata["is_legendary"] or metadata["is_mythical"]
-        if legendary:
+        legendary = metadata["is_legendary"] or metadata["is_mythical"] or identity.get("eternal", False)
+        if identity.get("eternal"):
+            tier = "Eternal"
+        elif legendary:
             tier = "Legendary/Mythical"
         elif metadata["role"] == "final" and metadata["family_size"] >= 2:
             tier = "Evolved"
@@ -93,7 +95,7 @@ def add_families(identities, directory=CACHE_DIR):
         if metadata["depth"] not in REWARDS:
             raise ValueError(f"PENDING undefined catch rewards at depth {metadata['depth']}")
         candy, stardust = (10, 500) if legendary else REWARDS[metadata["depth"]]
-        classification = dict(metadata, tier=tier, base_catch_rate=CATCH_RATES[tier],
+        classification = dict(metadata, tier=tier, base_catch_rate=CATCH_RATES["Legendary/Mythical" if tier == "Eternal" else tier],
                               catch_candy=candy, catch_stardust=stardust)
         for value in [identity, *identity.get("gender_varieties", {}).values()]:
             value.update(classification)

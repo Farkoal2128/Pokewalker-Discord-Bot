@@ -12,8 +12,8 @@ from pokewalker.domain.steps import accept_message
 from scripts.measure_chat_rate import MemoryHistory
 
 ROOT = Path(__file__).resolve().parents[2]
-TIERS = dict(zip(("Common", "Uncommon", "Rare", "Evolved", "Legendary/Mythical"),
-                 ("common", "uncommon", "rare", "evolved", "legendary")))
+TIERS = dict(zip(("Common", "Uncommon", "Rare", "Evolved", "Legendary/Mythical", "Eternal"),
+                 ("common", "uncommon", "rare", "evolved", "legendary", "legendary")))  # D73: Eternal rolls as one
 
 
 ARENA_RUNS = ((0, 10), (0, 20), (0, 30), (0, 40), (40, 40), (40, 60), (40, 80), (40, 100))

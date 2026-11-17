@@ -44,6 +44,7 @@ class PokemonFormTests(unittest.IsolatedAsyncioTestCase):
                 after = dict((await upgraded.execute_fetchall('SELECT * FROM pokemon'))[0])
                 self.assertIn('form_id', after)
                 self.assertIsNone(after.pop('form_id'))
+                self.assertIsNone(after.pop('look_id', 'missing'))  # D73
                 self.assertEqual(after, before)
                 self.assertEqual(await upgraded.execute_fetchall('PRAGMA foreign_key_check'), [])
                 self.assertEqual((await upgraded.execute_fetchall('PRAGMA user_version'))[0][0],

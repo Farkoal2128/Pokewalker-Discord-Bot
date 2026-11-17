@@ -72,7 +72,7 @@ def boss_cap(floor, rules):
 
 def is_special(identity, rules):
     special = rules["special"]
-    return (identity["is_legendary"] or identity["is_mythical"] or
+    return (identity["is_legendary"] or identity["is_mythical"] or identity.get("tier") == "Eternal" or  # D73
             identity["species_id"] in special["ultra_beast_species"] or
             identity["species_id"] in special["paradox_species"])
 

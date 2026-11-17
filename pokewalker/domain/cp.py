@@ -56,9 +56,9 @@ def catch_probability(bcr: float, level_x2: int, ball: float, berry: float, *,
 
 def flees_after_failure(tier: str, shiny: bool, rng: random.Random, *, rules: Mapping) -> bool:
     """Only call after an ordinary failed throw; Master Ball bypasses this path."""
-    if tier not in {"Common", "Uncommon", "Rare", "Evolved", "Legendary/Mythical"}:
+    if tier not in {"Common", "Uncommon", "Rare", "Evolved", "Legendary/Mythical", "Eternal"}:
         raise ValueError("unknown encounter tier")
     probability = (rules["shiny_flee_probability"] if shiny else
-                   rules["legendary_flee_probability"] if tier == "Legendary/Mythical" else
+                   rules["legendary_flee_probability"] if tier in ("Legendary/Mythical", "Eternal") else
                    rules["flee_probability"])
     return probability > 0 and rng.random() < probability

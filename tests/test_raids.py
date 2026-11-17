@@ -446,6 +446,7 @@ class RaidSchemaTests(unittest.IsolatedAsyncioTestCase):
                                  len(list(db.MIGRATIONS.glob('[0-9][0-9][0-9][0-9]_*.sql'))))
                 after = dict((await upgraded.execute_fetchall("SELECT * FROM encounters"))[0])
                 self.assertEqual(after.pop("raid_spawn_id", "missing"), None)
+                self.assertIsNone(after.pop("look_id", "missing"))  # D73
                 self.assertEqual(after, before)
                 self.assertEqual(await profiles.queue_size(upgraded, "legacy"), 1)
                 self.assertEqual(await upgraded.execute_fetchall("PRAGMA foreign_key_check"), [])

@@ -40,7 +40,8 @@ def content_facts(content):
     if _FACTS[0] is not content:
         pools = defaultdict(list)
         for identity in content["identities"]:
-            pools[identity["tier"]].append(identity)
+            # D73: Eternal identities roll in the Legendary pool.
+            pools["Legendary/Mythical" if identity["tier"] == "Eternal" else identity["tier"]].append(identity)
         version = hashlib.sha256(json.dumps(content, sort_keys=True, separators=(",", ":"))
                                  .encode()).hexdigest()
         _FACTS = (content, version, pools)

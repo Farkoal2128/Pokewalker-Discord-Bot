@@ -4,7 +4,12 @@ import json
 from uuid import uuid4
 
 from pokewalker.db import with_receipt
-from pokewalker.services import profiles, storage
+from pokewalker.services import forms, profiles, storage
+
+
+def rare(identity):
+    """Legendary, Mythical or D73 Eternal: never auto-researched, single send needs the unlock."""
+    return identity["is_legendary"] or identity["is_mythical"] or identity.get("tier") == "Eternal"
 
 
 def protected_reason(identity, pokemon, profile, arena_team=frozenset()):
@@ -13,7 +18,7 @@ def protected_reason(identity, pokemon, profile, arena_team=frozenset()):
                               ("favorite", pokemon["favorite"]),
                               ("companion", pokemon["pokemon_uid"] == profile["companion_uid"]),
                               ("shiny", pokemon["shiny"]),
-                              ("legendary_or_mythical", identity["is_legendary"] or identity["is_mythical"])):
+                              ("legendary_or_mythical", rare(identity))):
         if protected:
             return reason
     return None
@@ -68,6 +73,8 @@ async def send(conn, session, picks, preview, now, content):
         pokemon = await storage.detail(conn, profile["profile_id"], uid)
         if pokemon is None or pokemon["revision"] != revision:
             return changed
+        if await forms.fusion_of(conn, uid) is not None:  # D72: a fused Pokemon holds its partner
+            return changed
         identity, _ = storage.identify(content, pokemon)
         reason = protected_reason(identity, pokemon, profile, arena_team)
         if reason is not None and not (len(picks) == 1 and saved.get("single")
@@ -97,10 +104,12 @@ async def send_pending(conn, profile_id, encounter, key, content):
 
     async def compute(conn):
         await conn.execute("INSERT INTO pokemon(pokemon_uid,profile_id,pokemon_id,level_x2,iv_attack,iv_defense,"
-                           "iv_stamina,gender,shiny,origin,source_encounter_id,content_version,caught_at,state,revision) "
+                           "iv_stamina,gender,shiny,origin,source_encounter_id,content_version,caught_at,state,revision,"
+                           "look_id) "
                            "SELECT ?,profile_id,pokemon_id,level_x2,iv_attack,iv_defense,iv_stamina,gender,shiny,"
-                           "'catch',encounter_id,content_version,resolved_at,'sent',1 FROM encounters WHERE encounter_id=?",
-                           (str(uuid4()), encounter["encounter_id"]))
+                           "'catch',encounter_id,content_version,resolved_at,'sent',1,look_id FROM encounters "
+                           "WHERE encounter_id=?", (str(uuid4()), encounter["encounter_id"]))
+        await forms.unlock(conn, profile_id, dict(encounter).get("look_id"), encounter["resolved_at"])
         family = identity["family_id"]
         await conn.execute("INSERT INTO candy VALUES (?,?,1) ON CONFLICT(profile_id,family_id) "
                            "DO UPDATE SET quantity=quantity+1", (profile_id, family))
@@ -124,7 +133,7 @@ async def auto_send(conn, now, content):
         if (await profiles.restrictions(conn, row["guild_id"], row["user_id"])).excluded:
             continue
         identity, _ = storage.identify(content, row)
-        if identity["is_legendary"] or identity["is_mythical"]:
+        if rare(identity):
             continue
         result = await send_pending(conn, row["profile_id"], row, f"research:auto:{row['encounter_id']}", content)
         if result["status"] == "sent":
@@ -149,7 +158,7 @@ async def send_pending_reviewed(conn, session, picks, preview, now, content):
     if encounter is None or picks != [[f"pending:{encounter['encounter_id']}", encounter["revision"]]]:
         return changed
     identity, _ = storage.identify(content, encounter)
-    if ((encounter["shiny"] or identity["is_legendary"] or identity["is_mythical"])
+    if ((encounter["shiny"] or rare(identity))
             and not (saved.get("single") and preview.get("unlocked"))):
         return changed
     return await send_pending(conn, profile["profile_id"], encounter, key, content)

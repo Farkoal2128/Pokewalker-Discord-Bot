@@ -34,6 +34,8 @@ Buy evolution items in Bag for 500 Stardust each, or use Buy & evolve on a missi
 **Star Piece.** Activate one from Bag for 1.5× Stardust on your next 10 catch or find Stardust rewards.
 
 **Vitamins and Bottlecaps.** Use one from a Pokémon's details and pick the IV: the screen shows a meter for each IV, red, yellow or green as it fills. A Vitamin raises it by 1 and a Bottlecap raises it to the max, which can raise its CP and Appraisal stars. Neither works once all its IVs are perfect. Buy Vitamins in Bag for 5,000 Stardust each; Bottlecaps come from gym survivor rewards.
+**Forms and fusion.** Arceus, Silvally, Rotom, Ogerpon, Zygarde, Deoxys, Meloetta, Shaymin, Giratina, Dialga, Palkia, Hoopa, Tornadus, Thundurus, Landorus, Enamorus, Zacian, Zamazenta and Oricorio can change form from their details. Gaining CP costs 10 Stardust per CP; the same or lower CP is free. Necrozma, Kyurem and Calyrex can fuse with a partner from storage (Solgaleo or Lunala, Reshiram or Zekrom, Glastrier or Spectrier); the partner comes back when you unfuse. A fused Necrozma can become Ultra Necrozma.
+**Looks.** Some wild Pokémon wear a different look, like Unown letters, Vivillon patterns or Pikachu caps. Catching or trading for one unlocks that look; then Change look in any matching Pokémon's details switches it for free. Eternal Floette is an Eternal-tier find, as rare as a Legendary.
 **Trade up.** In Bag, trade 2 Poké Balls for 1 Great Ball, or 2 Great Balls for 1 Ultra Ball.
 
 <!-- page -->

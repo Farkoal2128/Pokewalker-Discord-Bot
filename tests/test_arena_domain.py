@@ -61,7 +61,7 @@ class ArenaDomainTests(unittest.TestCase):
 
     def test_pool_sizes_match_requirement_table(self):
         for floor, entry, regular_boss, special_boss in ((1, 177, 328, 2), (5, 344, 438, 4),
-                                                        (10, 484, 965, 105), (20, 952, 966, 128)):
+                                                        (10, 484, 965, 106), (20, 952, 966, 129)):  # D73 Eternal Floette is special
             for slot, draw, size in ((0, 99, entry), (1, 99, entry),
                                      (2, 99, regular_boss), (2, 0, special_boss)):
                 with self.subTest(floor=floor, slot=slot, draw=draw):

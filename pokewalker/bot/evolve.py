@@ -6,7 +6,7 @@ import discord
 
 from content.balance import load_table
 from pokewalker.bot.screens_catch import custom_id
-from pokewalker.services import evolution as service, items, profiles, storage
+from pokewalker.services import evolution as service, forms, items, profiles, storage
 
 
 def render_options(state):
@@ -73,7 +73,8 @@ def handlers(walker):
         selection['edge_id'] = edge_id
         session['selection'] = json.dumps(selection)
         _, sprite = storage.identify(walker.bot.content, {**pokemon,
-            'pokemon_id': quote['target']['pokemon_id'], 'form_id': quote['target']['form_id']})
+            'pokemon_id': quote['target']['pokemon_id'], 'form_id': quote['target']['form_id'],
+            'look_id': forms.carried_look(walker.bot.content, pokemon, quote['target'])})
         profile = await profiles.get_profile(conn, session['guild_id'], session['user_id'])
         return render_quote({'session': session, 'quote': quote, 'sprite': sprite,
                              'item_name': item_name(quote['item']), 'stardust': profile['stardust'],

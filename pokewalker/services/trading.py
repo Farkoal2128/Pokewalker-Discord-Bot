@@ -3,7 +3,7 @@
 import math
 from uuid import uuid4
 
-from pokewalker.services import milestones, profiles, research, storage
+from pokewalker.services import forms, milestones, profiles, research, storage
 
 TRADE_SECONDS = 900
 CAP_SECONDS = 86400
@@ -13,7 +13,8 @@ REFUSED = ('deployed', 'favorite', 'companion', 'in_arena')
 # identity gives the same answer as the real one: only identity-free reasons refuse a trade.
 _NEUTRAL = {'is_legendary': False, 'is_mythical': False}
 _TRADABLE = ("state='owned' AND favorite=0 AND gym_deployment_id IS NULL "
-             'AND pokemon_uid IS NOT (SELECT companion_uid FROM profiles WHERE profile_id=:pid)')
+             'AND pokemon_uid IS NOT (SELECT companion_uid FROM profiles WHERE profile_id=:pid) '
+             'AND pokemon_uid NOT IN (SELECT pokemon_uid FROM fusions)')  # D72
 
 
 def _writer(conn):
@@ -219,13 +220,14 @@ async def _swap(conn, trade_id, sides, pokemon, now, content):
         receiver = sides[1 - side['side']]['profile_id']
         async with conn.execute("UPDATE pokemon SET profile_id=?,revision=revision+1 WHERE pokemon_uid=? "
                                 "AND profile_id=? AND revision=? AND state='owned' AND favorite=0 "
-                                'AND gym_deployment_id IS NULL',
+                                'AND gym_deployment_id IS NULL AND pokemon_uid NOT IN (SELECT pokemon_uid FROM fusions)',
                                 (receiver, side['pokemon_uid'], side['profile_id'],
                                  side['pokemon_revision'])) as cursor:
             if cursor.rowcount != 1:
                 raise RuntimeError('Trade owner guard refused the swap')
         await conn.execute('UPDATE encounters SET acknowledged_at=? WHERE encounter_id=? AND acknowledged_at IS NULL',
                            (now, row['source_encounter_id']))
+        await forms.unlock(conn, receiver, row['look_id'], now)  # D73: a traded-in look unlocks too
     receivers = [sides[1 - side['side']]['profile_id'] for side in sides]
     for receiver, row in zip(receivers, pokemon):
         await conn.execute('INSERT INTO pokedex(profile_id,pokemon_id,seen_at,caught_at) VALUES (?,?,?,?) '

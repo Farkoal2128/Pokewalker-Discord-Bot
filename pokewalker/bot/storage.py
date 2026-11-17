@@ -10,7 +10,7 @@ from pokewalker.bot.screens_catch import custom_id
 from pokewalker.bot import share
 from pokewalker.domain.cp import appraisal
 from pokewalker.services import storage as service
-from pokewalker.services import profiles, research, capacity, evolution, iv_items
+from pokewalker.services import profiles, research, capacity, evolution, iv_items, forms
 from pokewalker.services import ex_gift as ex_gift_service
 
 
@@ -55,6 +55,8 @@ def render_detail(state):
             + f"\nCP {state['cp']} · HP {state['hp']} · Appraisal: {stars} stars"
             + f"\nTypes: {' / '.join(str(item).title() for item in identity['types'])}"
             + f"\nCaught: {caught}\nFavorite: {'Yes' if pokemon['favorite'] else 'No'}")
+    if state.get("fused_with"):
+        text += f"\nFused with {state['fused_with']}"
     if state.get("protection") == "deployed":
         text += (f"\nDeployed at {state.get('gym_name', 'a gym')} — recall it to send, power up, evolve or set companion")
     embed = discord.Embed(title="Pokémon details", description=text)
@@ -64,6 +66,14 @@ def render_detail(state):
     for label, action in (("Unfavorite" if pokemon["favorite"] else "Favorite", "storage_favorite"),
                           ("Back", "storage_back")):
         view.add_item(discord.ui.Button(label=label, custom_id=custom_id(state, action), row=0))
+    # D71/D72/D73: Change form, Fuse, Unfuse, Change look.
+    for label, action, shown in (("Change form", "form_menu", state.get("form_options")),
+                                 ("Fuse", "fuse_menu", state.get("can_fuse")),
+                                 ("Unfuse", "unfuse_preview", state.get("fused_with")),
+                                 ("Change look", "look_menu", state.get("has_looks"))):
+        if shown:
+            view.add_item(discord.ui.Button(label=label, custom_id=custom_id(state, action), row=0,
+                                           disabled=state.get("protection") == "deployed"))
     for label, action in (("Send for research", "storage_send"), ("Power up", "power_up"),
                           ("Set companion", "companion"), ("Share", "share"), ("Evolve", "evolve")):
         if action == 'share' and not state.get('share_allowed'):
@@ -74,7 +84,8 @@ def render_detail(state):
                                        disabled=(state.get("protection") == "deployed"
                                                  and action in ("storage_send", "power_up", "evolve", "companion"))
                                        or (action == "storage_send"
-                                                 and state.get("protection", "favorite") in ("favorite", "companion")), row=1))
+                                                 and (state.get("protection", "favorite") in ("favorite", "companion")
+                                                      or bool(state.get("fused_with")))), row=1))
     # Owner amendment 2026-11-12: Bottlecap and Vitamin.
     perfect = iv_items.perfect(pokemon)
     for item, label in (("bottlecap", "Use Bottlecap"), ("vitamin", "Use Vitamin")):
@@ -178,7 +189,8 @@ def handlers(walker):
     async def show_detail(conn, session, pokemon):
         selection = json.loads(session["selection"])
         selection.update(pokemon_uid=pokemon["pokemon_uid"], pokemon_revision=pokemon["revision"])
-        for key in ("iv_item", "iv_stat", "ex_back", "ex_item", "ex_preview"):
+        for key in ("iv_item", "iv_stat", "ex_back", "ex_item", "ex_preview", "form_target", "fuse_partner",
+                    "fuse_partner_revision"):
             selection.pop(key, None)
         session["selection"] = json.dumps(selection)
         item = item_state(pokemon)
@@ -192,7 +204,12 @@ def handlers(walker):
                 gym = await cursor.fetchone()
                 if gym is not None:
                     gym_name = gym["name"]
+        fusion = await forms.fusion_of(conn, pokemon["pokemon_uid"])
         return render_detail({"session": session, **item,
+                              "form_options": bool(forms.options(walker.bot.content, pokemon, fusion)),
+                              "can_fuse": forms.can_fuse(walker.bot.content, pokemon, fusion),
+                              "has_looks": bool(forms.looks_of(walker.bot.content, pokemon)),
+                              "fused_with": fusion and service.identify(walker.bot.content, fusion["partner"])[0]["name_en"],
                               "gym_name": gym_name,
                               "iv_items": await iv_items.held(conn, session["profile_id"]),
                               "ex_items": await ex_gift_service.held(conn, session["profile_id"]),

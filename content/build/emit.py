@@ -98,10 +98,10 @@ def qualifying_families(artifact):
 
 
 def validate_artifact(artifact):
-    records = [*artifact["identities"], *artifact["evolution_targets"]]
+    records = [*artifact["identities"], *artifact["evolution_targets"], *artifact["form_changes"]]
     endpoints = {value["identity_id"] for identity in records
                  for value in [identity, *identity.get("gender_varieties", {}).values()]}
-    for target in artifact["evolution_targets"]:
+    for target in [*artifact["evolution_targets"], *artifact["form_changes"]]:
         if set(target.get("sprites", {})) != set(SPRITE_PATHS):
             raise ValueError(f"target {target['identity_id']} missing sprite keys")
     for source, edges in artifact["evolutions"].items():
@@ -113,7 +113,7 @@ def validate_artifact(artifact):
                     or edge["to_identity_id"] not in endpoints):
                 raise ValueError(f"unresolved evolution endpoint: {edge['edge_id']}")
     for identity in artifact["identities"]:
-        if identity["tier"] != "Legendary/Mythical" and not any(
+        if identity["tier"] not in ("Legendary/Mythical", "Eternal") and not any(
                 route["weights"][identity["identity_id"]] > 0 for route in artifact["routes"].values()):
             raise ValueError(f"identity {identity['identity_id']} has no route; update routes.json")
     starters = artifact["starters"]
@@ -134,8 +134,10 @@ def build_content(directory=CACHE_DIR, balance_directory=ROOT / "content/balance
     graph = load_graph(directory)
     identities = graph["identities"]
     targets = graph["evolution_targets"]
-    add_stats(identities + targets, directory)
-    add_families(identities + targets, directory)
+    changes = graph["form_changes"]
+    looks = graph["looks"]
+    add_stats(identities + targets + changes, directory)
+    add_families(identities + targets + changes, directory)
     species = load_families(directory)
     rows = _index(_read(directory, "pokemon_species",
                         "id identifier gender_rate has_gender_differences habitat_id generation_id"))
@@ -155,10 +157,12 @@ def build_content(directory=CACHE_DIR, balance_directory=ROOT / "content/balance
                         gender_rate=4 if row["identifier"] in GENDER else rate,
                         has_gender_differences=row["has_gender_differences"] == "1")
         families[str(metadata["family_id"])].append(sid)
-    for identity in identities + targets:
+    for identity in identities + targets + changes:
         for value in [identity, *identity.get("gender_varieties", {}).values()]:
             value.update(species[value["species_id"]])
             value["sprites"] = sprites(value)
+    for look in looks:
+        look["sprites"] = sprites({**look, "has_gender_differences": False})
 
     edges, evolution_items, type_chart = load_evolutions(directory, identities, targets, species)
     evolutions = defaultdict(list)
@@ -176,7 +180,7 @@ def build_content(directory=CACHE_DIR, balance_directory=ROOT / "content/balance
         counts = Counter(i["tier"] for i in identities if weights[i["identity_id"]] > 0)
         routes[route["id"]] = {"weights": weights, "eligible_counts": {tier: counts[tier] for tier in CATCH_RATES}}
     artifact = {"schema_version": 1, "identities": identities,
-                "evolution_targets": targets, "evolutions": dict(evolutions),
+                "evolution_targets": targets, "form_changes": changes, "looks": looks, "evolutions": dict(evolutions),
                 "evolution_items": evolution_items, "type_chart": type_chart,
                 "species": {str(sid): value for sid, value in species.items()},
                 "families": {fid: sorted(members) for fid, members in families.items()},
@@ -217,7 +221,7 @@ def build_content(directory=CACHE_DIR, balance_directory=ROOT / "content/balance
             pending.append({"reason": f"PENDING {key}: expected flag count differs"})
     validate_artifact(artifact)
     counts = {"species": len(species), "identities": len(identities),
-              "evolution_targets": len(targets), "evolution_edges": len(edges),
+              "evolution_targets": len(targets), "form_changes": len(changes), "looks": len(looks), "evolution_edges": len(edges),
               "evolution_items": len(evolution_items),
               "regional_identities": sum(i["kind"] == "regional" for i in identities),
               "legendary_species": sum(i["is_legendary"] for i in species.values()),

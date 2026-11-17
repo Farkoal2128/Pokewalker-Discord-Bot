@@ -270,6 +270,8 @@ def _battle_snapshot(pokemon, content, multipliers):
     snapshot = {key: pokemon[key] for key in ('pokemon_uid', 'pokemon_id', 'form_id', 'revision', 'content_version',
                                              'level_x2', 'iv_attack', 'iv_defense', 'iv_stamina', 'gender', 'shiny')}
     snapshot.update(combatant=asdict(combatant), cp=cp(base, ivs, pokemon['level_x2'], multipliers=multipliers))
+    if dict(pokemon).get('look_id'):  # D73: results show the look's sprite with its name
+        snapshot['look_id'] = pokemon['look_id']
     return combatant, snapshot
 
 

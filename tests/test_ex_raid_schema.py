@@ -56,8 +56,14 @@ class ExRaidSchemaTests(unittest.IsolatedAsyncioTestCase):
                 "ORDER BY name")]
         finally:
             await old.close()
+        through31 = Path(self.temp.name) / 'schema31'  # later migrations (D73 looks) may alter encounters
+        through31.mkdir()
+        for migration in db.MIGRATIONS.glob('[0-9][0-9][0-9][0-9]_*.sql'):
+            if int(migration.name[:4]) <= 31:
+                shutil.copyfile(migration, through31 / migration.name)
         for _ in range(2):
-            upgraded = await db.open_db(path)
+            with patch.object(db, 'MIGRATIONS', through31):
+                upgraded = await db.open_db(path)
             try:
                 self.assertEqual(await self.scalar('PRAGMA user_version', conn=upgraded), 31)
                 self.assertEqual(await self.scalar('PRAGMA foreign_keys', conn=upgraded), 1)

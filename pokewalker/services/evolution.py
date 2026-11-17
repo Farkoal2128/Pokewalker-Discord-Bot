@@ -3,7 +3,7 @@ import json
 
 from pokewalker.db import with_receipt
 from pokewalker.domain.cp import cp
-from pokewalker.services import profiles, storage
+from pokewalker.services import forms, profiles, storage
 from pokewalker.services.milestones import check_and_award
 
 
@@ -75,8 +75,10 @@ async def evolve(conn, session, pokemon_uid, edge_id, expected_revision, content
     family = storage.identify(content, pokemon)[0]['family_id']
 
     async def compute(conn):
-        await conn.execute('UPDATE pokemon SET pokemon_id=?,form_id=?,revision=revision+1 WHERE pokemon_uid=?',
-                           (price['target']['pokemon_id'], price['target']['form_id'], pokemon_uid))
+        look_id = forms.carried_look(content, pokemon, price['target'])  # D73: kept and unlocked
+        await conn.execute('UPDATE pokemon SET pokemon_id=?,form_id=?,look_id=?,revision=revision+1 WHERE pokemon_uid=?',
+                           (price['target']['pokemon_id'], price['target']['form_id'], look_id, pokemon_uid))
+        await forms.unlock(conn, pid, look_id, now)
         await conn.execute('UPDATE candy SET quantity=quantity-? WHERE profile_id=? AND family_id=?',
                            (price['candy_cost'], pid, family))
         lines = [dict(profile_id=pid, resource='candy', resource_id=str(family),

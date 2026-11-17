@@ -192,15 +192,15 @@ class BalanceTableTests(unittest.TestCase):
         milestones = self.load("milestones")["ultra_beast_first_catches"]
         self.assertEqual(species, sorted(row["species_id"] for row in milestones))
 
-    def test_arena_special_identities_total_128_regular_966(self):
+    def test_arena_special_identities_total_129_regular_966(self):
         rules = self.load("arena")["rules"]["special"]
         listed = set(rules["ultra_beast_species"]) | set(rules["paradox_species"])
         artifact = json.loads((Path(__file__).parents[1] /
                                "content/artifact/content.json").read_bytes())
         special = [identity for identity in artifact["identities"]
                    if identity["is_legendary"] or identity["is_mythical"] or
-                   identity["species_id"] in listed]
-        self.assertEqual(len(special), 128)
+                   identity.get("tier") == "Eternal" or identity["species_id"] in listed]  # D73
+        self.assertEqual(len(special), 129)
         self.assertEqual(len(artifact["identities"]) - len(special), 966)
 
     def test_arena_schedule_gives_each_floor_at_most_one_known_tier(self):

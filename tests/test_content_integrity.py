@@ -48,6 +48,8 @@ class ContentIntegrityTests(unittest.TestCase):
         lines = artifact["milestones"]["evolution_lines"]["families"]
         counts = {
             "evolution_targets": len(artifact["evolution_targets"]),
+            "form_changes": len(artifact["form_changes"]),
+            "looks": len(artifact["looks"]),
             "evolution_edges": sum(map(len, artifact["evolutions"].values())),
             "evolution_items": len(artifact["evolution_items"]),
             "species": len(artifact["species"]),
@@ -62,8 +64,8 @@ class ContentIntegrityTests(unittest.TestCase):
         self.assertEqual(self.manifest["schema_version"], 1)
         self.assertEqual(counts, self.manifest["counts"])
         self.assertEqual(counts, {
-            "evolution_targets": 65, "evolution_edges": 587, "evolution_items": 50,
-            "species": 1025, "identities": 1094, "regional_identities": 57,
+            "evolution_targets": 65, "form_changes": 66, "looks": 119, "evolution_edges": 587, "evolution_items": 50,
+            "species": 1025, "identities": 1095, "regional_identities": 57,
             "legendary_species": 71, "mythical_species": 23,
             "evolution_line_families": 340, "evolution_line_species": 824,
         })

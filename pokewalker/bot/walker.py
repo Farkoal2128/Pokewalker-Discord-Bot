@@ -15,7 +15,8 @@ from discord import app_commands
 from content.balance import load_table
 from pokewalker.bot import screens, storage
 from pokewalker.bot import research, powerup, pokedex
-from pokewalker.bot import evolve, gyms, iv_items, arena, ex_gift
+from pokewalker.bot import evolve, gyms, iv_items, arena, ex_gift, forms
+from pokewalker.services import forms as form_service
 from pokewalker.bot import milestones, bag, route, share, trade, raid
 from pokewalker.services import arena as arena_service
 from pokewalker.services import ex_gift as ex_gift_service
@@ -79,6 +80,7 @@ class Walker:
         self.handlers.update(research.handlers(self))
         self.handlers.update(powerup.handlers(self))
         self.handlers.update(iv_items.handlers(self))
+        self.handlers.update(forms.handlers(self))
         self.handlers.update(evolve.handlers(self))
         self.handlers.update(pokedex.handlers(self))
         self.handlers.update(milestones.handlers(self))
@@ -276,12 +278,18 @@ class Walker:
 
     async def store(self, conn, session, encounter_id):
         await conn.execute("INSERT INTO pokemon(pokemon_uid,profile_id,pokemon_id,level_x2,iv_attack,iv_defense,"
-                           "iv_stamina,gender,shiny,origin,source_encounter_id,content_version,caught_at) "
+                           "iv_stamina,gender,shiny,origin,source_encounter_id,content_version,caught_at,look_id) "
                            "SELECT ?,profile_id,pokemon_id,level_x2,iv_attack,iv_defense,iv_stamina,gender,shiny,"
-                           "'catch',encounter_id,content_version,resolved_at FROM encounters WHERE encounter_id=? "
+                           "'catch',encounter_id,content_version,resolved_at,look_id FROM encounters WHERE encounter_id=? "
                            "AND profile_id=? AND state='caught' AND acknowledged_at IS NULL AND NOT EXISTS "
                            "(SELECT 1 FROM pokemon WHERE source_encounter_id=encounters.encounter_id)",
                            (str(uuid4()), encounter_id, session["profile_id"]))
+        # D73: catching a look unlocks it.
+        async with conn.execute("SELECT look_id,resolved_at FROM encounters WHERE encounter_id=? AND profile_id=?",
+                                (encounter_id, session["profile_id"])) as cursor:
+            row = await cursor.fetchone()
+        if row is not None:
+            await form_service.unlock(conn, session["profile_id"], row["look_id"], row["resolved_at"])
 
     async def pending_menu(self, conn, session, encounter_id, notice=None):
         quote = await capacity.quote(conn, session["profile_id"], "storage")

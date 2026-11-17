@@ -1324,6 +1324,52 @@ EXR-3 allows an EX-Raid level lock of 1-40 (level_x2 2-80); open EX levels
 and World Legendary levels still roll 20-25. Ordinary wild encounters are unchanged.
 Tests: tests/test_ex_raid.py, tests/test_raids.py, tests/test_encounters.py.
 
+## Owner amendment D73: looks and the Eternal tier (2026-11-17), migration 0033
+The artifact gains `looks`: 119 records {look_id (= form_id), species_id, pokemon_id,
+base_identity_id, form_id, form_key, name_en, sprites}. Eternal Floette joins `identities`
+(kind form, `eternal: true`, tier "Eternal", Legendary catch values); content_facts pools it
+with Legendary/Mythical and its encounters keep tier Eternal.
+
+Migration 0033 adds nullable `look_id` to encounters and pokemon and
+`look_unlocks(profile_id REFERENCES profiles ON DELETE CASCADE, look_id, unlocked_at,
+PRIMARY KEY(profile_id, look_id))`. A wild encounter whose identity has looks draws
+`roll_look` (10%, then even choice; no draw without looks). Storing a catch or an
+auto-research copies look_id and unlocks it; a trade unlocks the received look for the
+receiver. `storage.identify` returns the look's name_en and sprite. Evolution sets look_id
+to the target's look with the same form_key, else NULL. `forms.set_look(conn, session, uid,
+expected_revision, look_id, content)` (receipt `look:<uid>:<revision>`, action look) sets
+None or an unlocked look of the same identity and bumps revision; anything else is refused.
+
+## Owner amendment D71/D72: form changes and fusions (2026-11-17), migration 0032
+The content artifact gains `form_changes`: 66 identities (kind form, plus `form_key`, the
+PokéAPI form identifier) for Deoxys, Rotom, Arceus, Zygarde, Silvally, Ogerpon, Necrozma,
+Kyurem, Calyrex, Meloetta, Shaymin, Tornadus, Thundurus, Landorus, Enamorus, Giratina,
+Dialga, Palkia, Hoopa, Zacian and Zamazenta (Crowned). Oricorio switches among its four
+catchable style identities. They are excluded from encounters (manifest reason "D71 form change; no
+separate encounter"); `storage.identify` resolves them. Zygarde power-construct duplicates,
+Mega Zygarde and Arceus Unknown stay excluded.
+
+Migration 0032 adds `fusions(pokemon_uid TEXT PRIMARY KEY REFERENCES pokemon ON DELETE
+CASCADE, partner_uid TEXT NOT NULL UNIQUE, partner TEXT NOT NULL CHECK(json_valid(partner)),
+fused_at REAL NOT NULL)`. `services.forms`:
+- `change(conn, session, uid, expected_revision, identity_id, content, multipliers)`,
+  receipt `form:<uid>:<revision>` action form_change.
+- `fuse(conn, session, uid, expected_revision, partner_uid, partner_revision, content,
+  multipliers, now)`, receipt `fuse:<uid>:<revision>` action fuse.
+- `unfuse(conn, session, uid, expected_revision, content, now)`, receipt
+  `unfuse:<uid>:<revision>` action unfuse.
+Each requires a writer transaction and returns {status, pokemon}. Refusals write nothing:
+stale session or Pokemon, excluded, deployed, a revision other than expected, a target not
+offered or a partner not eligible (refused or stale), insufficient Stardust, full storage
+(unfuse). Cost is max(0, CP after − CP before) × 10 Stardust, one `stardust` ledger line of
+−cost with reason form_change or fuse when above 0. Success sets pokemon_id and form_id and
+bumps revision. Fuse stores the partner row as JSON and deletes it from pokemon; unfuse
+reinserts it under the same uid for the fused Pokemon's owner, revision + 1, with
+source_encounter_id cleared when that encounter is gone, and restores the default form.
+Trading treats a fused Pokemon as untradable, and research refuses to send one. Deleting the
+partner row cascades its ended `gym_deployments` rows (gym battles keep NULL links); this is
+accepted: no currency or Pokemon is lost, only older reward labels name "a gym".
+
 ## Owner amendment D70: chosen IV for Bottlecap and Vitamin (2026-11-16)
 `apply(item, ivs, index=None)` changes the IV at index, defaulting to `lowest(ivs)`.
 `quote(..., multipliers, stat=None)` and `use(..., multipliers, stat=None)` take an

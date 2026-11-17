@@ -44,7 +44,7 @@ class SuggestTests(unittest.TestCase):
 
     def test_suggest_ignores_case_and_accents_and_finds_forms(self):
         content = catalog()
-        self.assertEqual(len(content['identities']), 1094)
+        self.assertEqual(len(content['identities']), 1095)  # D73 adds Eternal Floette
         for text in ('FLABEBE', 'flabébé'):
             names = [label for label, _ in self.suggest(text, content)]
             self.assertTrue(any('Flabébé' in name for name in names))

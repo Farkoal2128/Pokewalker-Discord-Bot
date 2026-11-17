@@ -78,13 +78,15 @@ async def spawn_encounter(conn, profile, content, rng, at, channel_id=None, mess
     if spec is None:
         spec = encounters.generate(pools, content["routes"][profile["route_id"]], lure_id is not None, rng,
                                    chances=chances, rules=rules, charm=charm)
+    look_id = encounters.roll_look([look["look_id"] for look in content.get("looks", [])
+                                    if look["base_identity_id"] == spec.identity_id], rng)
     eid = str(uuid4())
     await conn.execute(
         "INSERT INTO encounters(encounter_id,profile_id,source_channel_id,source_message_id,"
         "pokemon_id,level_x2,iv_attack,iv_defense,iv_stamina,gender,shiny,tier,route_id,lure_id,"
-        "content_version,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "content_version,created_at,look_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (eid, pid, channel_id, message_id, spec.pokemon_id, spec.level_x2, *spec.ivs,
-         spec.gender or "genderless", spec.shiny, spec.tier, profile["route_id"], lure_id, version, at))
+         spec.gender or "genderless", spec.shiny, spec.tier, profile["route_id"], lure_id, version, at, look_id))
     if lure_id is not None or mirror_id is not None:
         await conn.execute('UPDATE active_effects SET remaining_encounters=remaining_encounters-1 '
                            'WHERE effect_id=?', (lure_id or mirror_id,))

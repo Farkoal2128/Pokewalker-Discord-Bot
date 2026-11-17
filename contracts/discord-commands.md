@@ -1644,6 +1644,44 @@ deploy installer runs it automatically). The ticket path, existing commands and
 persisted formats remain compatible. Tests: tests/test_admin_force_raid.py;
 test_raids, test_admin_channels and test_readme stay green.
 
+## Owner amendment D73: Change look (2026-11-17)
+Pokemon details row 0 gains `Change look` (`look_menu`) when its form has looks, disabled while
+deployed. The private `Change look` screen reads "Pick a look. Looks are free; catch or trade
+for a Pokémon wearing a look to unlock it. Unlocked <k> of <n>." with selects `look_pick` and,
+past 25 options, `look_pick_more`: the default look (its base name) and every unlocked look,
+minus the current one, then Back (`storage_detail`). Picking applies at once and returns the
+updated details, whose name and sprite show the look. Encounter and details screens show a
+look's name and sprite and the Eternal tier as "Eternal". Tests: tests/test_looks.py.
+
+## Owner amendment D71/D72: Change form and Fuse (2026-11-17)
+Pokemon details row 0 gains, after Favorite and Back: `Change form` (`form_menu`) when D71
+offers at least one other form; `Fuse` (`fuse_menu`) for an unfused Necrozma, Kyurem or
+Calyrex; `Unfuse` (`unfuse_preview`) for a fused one. Each is disabled while deployed. A
+fused Pokemon's details add the line "Fused with <Partner>".
+
+Change form, private, titled `Change form`: "Pick a form. Gaining CP costs 10 Stardust per
+CP; the same or lower CP is free. Have <N> Stardust." A select (`form_pick`) lists every
+other form: label "<Form name> · CP <cp>", description "<Types> · <cost> Stardust" or
+"<Types> · Free". Picking one saves `form_target` and adds "<Form name>: CP <a> → <b> ·
+costs <cost> Stardust" (or "· free") with Confirm (`form_confirm`, disabled when Stardust is
+short) and Back (`storage_detail`).
+
+Fuse, private, titled `Fuse`: "Pick a partner from storage. It is held inside the fused
+Pokémon and comes back when you unfuse. Have <N> Stardust." The select (`fuse_pick`) lists
+up to 25 eligible partners, highest CP first: label "<Partner> · CP <cp>", description
+"→ <Fused name> · CP <after> · <cost> Stardust" or "· Free". With none the text says "No
+Pokémon in storage can fuse with it." and there is no select. Picking saves `fuse_partner`
+and `fuse_partner_revision` and adds "Fuse with <Partner>: <Fused name> · CP <a> → <b> ·
+costs <cost> Stardust" (or "· free") with Confirm (`fuse_confirm`) and Back.
+
+Unfuse, private, titled `Unfuse`: "<Partner> returns to storage. CP <a> → <b> · free" with
+Confirm (`unfuse_confirm`) and Back. Confirms return the updated details.
+
+Refusals are private and spend nothing: short Stardust "Not enough Stardust. Nothing was
+spent.", deployed "Recall it from the gym first", full storage on unfuse "Storage is full.
+Make room before unfusing.", a confirm without its pick "Pick a form first." or "Pick a
+partner first.", and every other refusal the reopen text. Tests: tests/test_forms.py.
+
 ## Owner amendment D70: choose the IV for Bottlecap and Vitamin (2026-11-16)
 Supersedes the preview layout above. The `Use Bottlecap` and `Use Vitamin` preview
 description starts with three meters, each a bold label line (`**Attack**`, `**Defense**`,
