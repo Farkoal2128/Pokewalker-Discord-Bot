@@ -340,6 +340,7 @@ async def announce(bot, spawn):
         embed.set_image(url=identity['sprites']['normal'])
     channel = bot.get_channel(int(saved['channel_id']))
     if channel is None:
+        LOG.warning('Raid announcement post failed: %s', saved['spawn_id'])
         return
     try:
         message = await channel.send(embed=embed, nonce=nonce(saved['spawn_id']),

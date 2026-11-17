@@ -1011,6 +1011,16 @@ class ExRaidAnnouncementTests(unittest.IsolatedAsyncioTestCase):
                          [dict(spawn_id=s, post_state=p) for s, p in
                           (('c', 'attempted'), ('a', 'sent'), ('b', 'sent'))])
 
+    async def test_missing_channel_logged_stays_attempted_later_servers_announced(self):
+        await self.pending_send()
+        self.bot.get_channel.side_effect = [None, self.channel, self.channel]
+        with self.assertLogs('pokewalker.services.raids', 'WARNING') as logged:
+            await self.raids().resume_pending(self.bot)
+        self.assertEqual([r.args for r in logged.records], [('c',)])
+        self.assertEqual(await self.rows('SELECT spawn_id,post_state FROM world_spawns ORDER BY spawned_at,spawn_id'),
+                         [dict(spawn_id=s, post_state=p) for s, p in
+                          (('c', 'attempted'), ('a', 'sent'), ('b', 'sent'))])
+
     async def test_failed_sent_write_logged_later_servers_announced(self):
         await self.pending_send()
         await self.conn.execute("CREATE TRIGGER fail_sent BEFORE UPDATE OF message_id ON world_spawns "

@@ -1,6 +1,7 @@
 """EX-Raid catalog picker and owner-bound send manager (C5)."""
 
 import asyncio
+import logging
 from datetime import datetime, timezone
 from difflib import get_close_matches
 import re
@@ -15,6 +16,9 @@ from pokewalker.bot import admin_gift
 from pokewalker.services import raids
 
 EXPIRED = 'This EX-Raid draft expired. Run /admin ex-raid again.'
+LOG = logging.getLogger(__name__)
+LOCKS = (('Shiny', 'shiny'), ('Level', 'level'), ('Attack IV', 'iv_attack'),
+         ('Defense IV', 'iv_defense'), ('Stamina IV', 'iv_stamina'))
 SKIP_LABELS = (('raids_off', 'Raids off'), ('no_channel', 'No raid channel'),
                ('no_permission', 'No permission or bot not in server'),
                ('channel_changed', 'Raid channel changed'), ('active', 'EX-Raid already live'))
@@ -56,7 +60,7 @@ def suggest(content, text):
     identities = content['identities']
     query = _fold(text)
     names = [_fold(i['name_en']) for i in identities]
-    ranked = [i for i in identities if str(i['species_id']) == query.lstrip('0')]
+    ranked = [i for i in identities if str(i['species_id']) == query.lstrip('#').lstrip('0')]
     ranked.extend(i for i, name in zip(identities, names) if name.startswith(query))
     ranked.extend(i for i, name in zip(identities, names) if query in name)
     close = get_close_matches(query, names, n=25)
@@ -176,8 +180,7 @@ class RaidView(admin_gift.OwnerView):
         identity = draft.identity
         title = f"EX-Raid: #{identity['species_id']:03d} {identity['name_en']}"
         lines = [f'Send ID: {draft.send_id}', title]
-        for name, key in (('Shiny', 'shiny'), ('Level', 'level'), ('Attack IV', 'iv_attack'),
-                          ('Defense IV', 'iv_defense'), ('Stamina IV', 'iv_stamina')):
+        for name, key in LOCKS:
             value = draft.locks[key]
             lines.append(f"{name}: {value if value is not None else 'rolled per player'}")
         target = (f'server {draft.guild_id}' if draft.guild_id is not None else
@@ -201,17 +204,11 @@ class RaidView(admin_gift.OwnerView):
         identity = self.draft.identity
         lines = [f"Send ID: {result['ex_raid_id']}",
                  f"EX-Raid: #{identity['species_id']:03d} {identity['name_en']}"]
-        for name, key in (('Shiny', 'shiny'), ('Level', 'level'), ('Attack IV', 'iv_attack'),
-                          ('Defense IV', 'iv_defense'), ('Stamina IV', 'iv_stamina')):
+        for name, key in LOCKS:
             value = result[key]
             lines.append(f"{name}: {value if value is not None else 'rolled per player'}")
-        hours, guild_id = result['hours'], result['guild_id']
-        end = datetime.fromtimestamp(result['created_at'] + hours * 3600, timezone.utc).isoformat()
-        lines.extend((f'Duration: {hours} hour' + ('s' if hours != 1 else ''),
-            f'Target: {"all servers" if guild_id is None else f"server {guild_id}"}',
-            f'End UTC: {end}', 'Counts (committed)', f"Targeted servers: {result['servers']}",
-            f"Servers that got it: {result['spawned']}"))
-        lines.extend(f"{label}: {result['skipped'].get(reason, 0)}" for reason, label in SKIP_LABELS)
+        end = datetime.fromtimestamp(result['created_at'] + result['hours'] * 3600, timezone.utc).isoformat()
+        lines.extend(committed_lines(result, end))
         await interaction.edit_original_response(content='\n'.join(lines), view=None, embed=None,
             allowed_mentions=discord.AllowedMentions.none())
 
@@ -251,8 +248,10 @@ class RaidView(admin_gift.OwnerView):
                     draft.discard_pending = True
             except admin_gift._Expired:
                 draft.discard_pending = True
-            except (Exception, asyncio.CancelledError):
+            except asyncio.CancelledError:
                 pass
+            except Exception as error:  # the owner sees "Nothing was sent."; no error text is logged
+                LOG.error('EX-Raid confirm failed: %s (%s)', draft.send_id, type(error).__name__)
             finally:
                 if draft.state == 'sending':
                     draft.state = 'editing'
@@ -286,6 +285,15 @@ async def history(admin, interaction, send_id):
     await show_history(interaction, [row], admin.bot.content)
 
 
+def committed_lines(row, end):
+    hours, guild_id = row['hours'], row['guild_id']
+    return [f'Duration: {hours} hour' + ('s' if hours != 1 else ''),
+            f'Target: {"all servers" if guild_id is None else f"server {guild_id}"}',
+            f'End UTC: {end}', 'Counts (committed)', f"Targeted servers: {row['servers']}",
+            f"Servers that got it: {row['spawned']}",
+            *(f"{label}: {row['skipped'].get(reason, 0)}" for reason, label in SKIP_LABELS)]
+
+
 def history_text(rows, content, *, compact=False):
     identities = {i['identity_id']: i for i in content['identities']}
     entries = []
@@ -297,17 +305,9 @@ def history_text(rows, content, *, compact=False):
         lines = [f"Send ID: {row['ex_raid_id']}", stamp,
                  f"#{identity['species_id']:03d} {identity['name_en']}"]
         if not compact:
-            locks = [f'{name}: {row[key]}' for name, key in
-                     (('Shiny', 'shiny'), ('Level', 'level'), ('Attack IV', 'iv_attack'),
-                      ('Defense IV', 'iv_defense'), ('Stamina IV', 'iv_stamina'))
-                     if row[key] is not None]
+            locks = [f'{name}: {row[key]}' for name, key in LOCKS if row[key] is not None]
             lines.append(', '.join(locks) or 'all rolled per player')
-        hours, guild_id = row['hours'], row['guild_id']
-        lines.extend((f'Duration: {hours} hour' + ('s' if hours != 1 else ''),
-            f'Target: {"all servers" if guild_id is None else f"server {guild_id}"}',
-            f'End UTC: {end}', 'Counts (committed)', f"Targeted servers: {row['servers']}",
-            f"Servers that got it: {row['spawned']}"))
-        lines.extend(f"{label}: {row['skipped'].get(reason, 0)}" for reason, label in SKIP_LABELS)
+        lines.extend(committed_lines(row, end))
         entries.append('\n'.join(lines))
     return '\n\n'.join(entries) or 'No EX-Raids were sent.'
 
@@ -322,8 +322,11 @@ async def show_history(interaction, rows, content, *, view=None):
 
 
 class RaidHistoryView(admin_gift.HistoryView):
-    async def page(self, interaction, offset):
+    def __init__(self, admin, owner_id):
+        super().__init__(admin, owner_id)
         self.expired = 'This history expired. Run /admin ex-raid-history again.'
+
+    async def page(self, interaction, offset):
         rows, total = await self.admin.bot.writer.run(lambda conn: raids.ex_history(conn, offset))
         if self.is_finished() or self.admin.bot.clock() >= self.deadline:
             await self.on_timeout()
