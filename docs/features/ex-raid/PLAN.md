@@ -122,7 +122,7 @@ Build rows are `seam`: at most 2 production files and 300 production lines; test
 | 6 | [EXR-5](tickets/EXR-5.md) EX catch coverage | build | seam | M | ✅ done · 7fb5b16 · GO review r1 after fixture fix |
 | 7 | [EXR-6](tickets/EXR-6.md) announcements: EX title, failure isolation, bot-owned fan-out | build | seam | M | ✅ done · 3ec402e · GO review r1 |
 | 8 | [EXR-7](tickets/EXR-7.md) catch and Back | build | seam | S | ✅ done · ace1378 · GO review r1 after fixture fix |
-| 9 | [EXR-8](tickets/EXR-8.md) `/raid` chooser, wording, description | build | seam | M | pending |
+| 9 | [EXR-8](tickets/EXR-8.md) `/raid` chooser, wording, description | build | seam | M | ✅ done · 6d79405 · GO review r1 after fixture fix |
 | 10 | [EXR-9](tickets/EXR-9.md) `/admin ex-raid`: options, autocomplete, validation | build | seam | M | pending |
 | 11 | [EXR-10](tickets/EXR-10.md) preview draft: target, All servers, counts, Cancel | build | seam | M | pending |
 | 12 | [EXR-11](tickets/EXR-11.md) Confirm: states, commit, fan-out, receipt | build | seam | M | pending |
@@ -136,7 +136,7 @@ Build rows are `seam`: at most 2 production files and 300 production lines; test
 
 ## 5. Briefs
 
-SYNTHESIS §7 by ticket: Autocomplete, Submit, omitted duration: EXR-9. Target: EXR-10 (Confirm side: EXR-11). Bosses, pending catches, expiry of one kind, long-duration overlap, sweep expiry, raids off mid-raid: EXR-5 (and EXR-2). Locks: EXR-3. Duration bounds, shared `expires_at`, global send, settlement, coexistence: EXR-4 (ticket and force-raid beside an EX-Raid: EXR-2). `/raid` cases: EXR-8. Back: EXR-7. Wording: EXR-6, EXR-7, EXR-8, EXR-13. Confirm: EXR-11 (replay also EXR-4; history recovery EXR-12). Fan-out: EXR-6, EXR-11. Benchmark: EXR-4, G-B. Retention: EXR-14, G-V. Migration: EXR-1.
+SYNTHESIS §7 by ticket: Autocomplete, Submit, omitted duration: EXR-9. Target: EXR-10 (Confirm side: EXR-11). Bosses, pending catches, expiry of one kind, long-duration overlap, sweep expiry, raids off mid-raid: EXR-5 (and EXR-2). Locks: EXR-3. Duration bounds, shared `expires_at`, global send, settlement, coexistence: EXR-4 (ticket and force-raid beside an EX-Raid: EXR-2). Wording: EXR-6, EXR-7, EXR-8, EXR-13. Confirm: EXR-11 (replay also EXR-4; history recovery EXR-12). Fan-out: EXR-6, EXR-11. Benchmark: EXR-4, G-B. Retention: EXR-14, G-V. Migration: EXR-1.
 
 **G-A · G-P (owner).** Asks: approve this plan; assign Home `feature/ex-raid`, cut from `main` at `1ac1c07` (`git branch --list feature/ex-raid` is empty today); choose the delivery and push scope of §3.4; optionally give the expected guild count for EXR-4's benchmark (default 1,000 and 10,000). Stop if: `git rev-parse --short main` is no longer `1ac1c07` (re-verify the map with `git diff 1ac1c07..main -- pokewalker tests contracts content/help.md`).
 
