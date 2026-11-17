@@ -1,6 +1,6 @@
 # Plan: ex-raid — owner-spawned EX-Raids beside World Legendaries
 
-**Status:** approved at G-A 2026-11-16; ready to drive
+**Status:** approved at G-A 2026-11-16; driving
 **Home:** feature/ex-raid · cut from `main` at `1ac1c07` (G-A 2026-11-16)
 **Review:** 2026-11-16 · Codex `gpt-6-astra`, 3 rounds, GO (Must 0, Should 0); log in SYNTHESIS §10
 **Inputs:** [SYNTHESIS.md](SYNTHESIS.md), owner-approved 2026-11-16 after three review rounds (Must 0): XR-1..XR-11 and their recorded readings are owner rulings, R1..R10 the accepted design, §7 the acceptance cases · [PIPELINE.md](../../../PIPELINE.md) · `AGENTS.md` · `rules/*.md` · precedent [ex-gift](../ex-gift/PLAN.md)
@@ -118,7 +118,7 @@ Build rows are `seam`: at most 2 production files and 300 production lines; test
 | 2 | [EXR-1](tickets/EXR-1.md) migration 0031: `ex_raids`, spawn kind, per-kind index | build | seam | M | ✅ done · 2a1f632 · GO review r1 |
 | 3 | [EXR-2](tickets/EXR-2.md) spawn rules per kind; `live_spawns`; `join` by spawn | build | seam | M | ✅ done · 2c66972 · GO review r1 |
 | 4 | [EXR-3](tickets/EXR-3.md) locks at join | build | seam | S | ✅ done · 79d1b7c · GO review r1 |
-| 5 | [EXR-4](tickets/EXR-4.md) service: EX send, guards, history reads; benchmark evidence | build | seam | L | pending |
+| 5 | [EXR-4](tickets/EXR-4.md) service: EX send, guards, history reads; benchmark evidence | build | seam | L | ✅ done · 875b154 · GO review r1 |
 | 6 | [EXR-5](tickets/EXR-5.md) coverage: EX encounters through the catch path (tests only) | build | seam | M | pending |
 | 7 | [EXR-6](tickets/EXR-6.md) announcements: EX title, failure isolation, bot-owned fan-out | build | seam | M | pending |
 | 8 | [EXR-7](tickets/EXR-7.md) catch screens say EX-Raid; Back with both raids | build | seam | S | pending |
