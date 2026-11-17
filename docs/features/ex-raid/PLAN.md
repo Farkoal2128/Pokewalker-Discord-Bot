@@ -126,7 +126,7 @@ Build rows are `seam`: at most 2 production files and 300 production lines; test
 | 10 | [EXR-9](tickets/EXR-9.md) `/admin ex-raid`: options, autocomplete, validation | build | seam | M | ✅ done · 1d505ca · GO review r1 after fixture fix |
 | 11 | [EXR-10](tickets/EXR-10.md) preview draft: target, All servers, counts, Cancel | build | seam | M | ✅ done · f46709c · GO review r1 after fixture fix |
 | 12 | [EXR-11](tickets/EXR-11.md) Confirm: states, commit, fan-out, receipt | build | seam | M | ✅ done · 6f7a87a · GO review r1 after fixture fix |
-| 13 | [EXR-12](tickets/EXR-12.md) `/admin ex-raid-history` | build | seam | S | pending |
+| 13 | [EXR-12](tickets/EXR-12.md) `/admin ex-raid-history` | build | seam | S | ✅ done · d7ba24c · GO review r1; fixture fix |
 | 14 | [EXR-13](tickets/EXR-13.md) player help and the `/walker-admin raids` description | build | seam | S | pending |
 | 15 | [EXR-14](tickets/EXR-14.md) retention disclosure: privacy text, C3 M8.4, coverage | build | seam | S | pending |
 | 16 | G-F final verification and delivery decisions | 🚦 | — | — | pending |
