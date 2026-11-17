@@ -119,7 +119,7 @@ Build rows are `seam`: at most 2 production files and 300 production lines; test
 | 3 | [EXR-2](tickets/EXR-2.md) spawn rules per kind; `live_spawns`; `join` by spawn | build | seam | M | ✅ done · 2c66972 · GO review r1 |
 | 4 | [EXR-3](tickets/EXR-3.md) locks at join | build | seam | S | ✅ done · 79d1b7c · GO review r1 |
 | 5 | [EXR-4](tickets/EXR-4.md) service: EX send, guards, history reads; benchmark evidence | build | seam | L | ✅ done · 875b154 · GO review r1 |
-| 6 | [EXR-5](tickets/EXR-5.md) coverage: EX encounters through the catch path (tests only) | build | seam | M | pending |
+| 6 | [EXR-5](tickets/EXR-5.md) EX catch coverage | build | seam | M | ❌ blocked: fixture CHECK error r0 |
 | 7 | [EXR-6](tickets/EXR-6.md) announcements: EX title, failure isolation, bot-owned fan-out | build | seam | M | pending |
 | 8 | [EXR-7](tickets/EXR-7.md) catch screens say EX-Raid; Back with both raids | build | seam | S | pending |
 | 9 | [EXR-8](tickets/EXR-8.md) `/raid` chooser, wording, description | build | seam | M | pending |

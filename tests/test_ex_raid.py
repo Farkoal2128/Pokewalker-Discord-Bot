@@ -578,3 +578,280 @@ class ExRaidSendTests(unittest.IsolatedAsyncioTestCase):
     async def test_requires_writer_transaction(self):
         with self.assertRaisesRegex(RuntimeError, 'transaction'):
             await self.raids().ex_commit(self.conn, **self.arguments())
+
+
+class ExRaidCatchTests(unittest.IsolatedAsyncioTestCase):
+    asyncSetUp = ExRaidTests.asyncSetUp
+    profile = ExRaidTests.profile
+    scalar = ExRaidTests.scalar
+    rows = ExRaidTests.rows
+    raids = ExRaidTests.raids
+    join = ExRaidTests.join
+    use = ExRaidTests.use
+    ticket = ExRaidTests.ticket
+    arguments = ExRaidSendTests.arguments
+    send = ExRaidSendTests.send
+    snapshot = ExRaidSendTests.snapshot
+    throw = test_raids.RaidJoinTests.throw
+    client = test_raids.RaidSweepTests.client
+
+    async def prepare(self, identity_id='25:25', *, locks=None, hours=1, rng=None):
+        import json
+        send_id = f"send-{await self.scalar('SELECT count(*) FROM ex_raids')}"
+        result = await self.send(send_id=send_id, identity_id=identity_id,
+                                 locks={'shiny': False} if locks is None else locks, hours=hours)
+        self.assertEqual(result['status'], 'sent')
+        self.spawn_row, = await self.rows('SELECT * FROM world_spawns WHERE ex_raid_id=?', (send_id,))
+        joined = await self.join(self.spawn_row['spawn_id'], rng=rng)
+        self.assertEqual(joined['status'], 'new')
+        encounter, = await self.rows('SELECT * FROM encounters WHERE encounter_id=?', (joined['encounter_id'],))
+        await self.conn.executemany('INSERT OR IGNORE INTO inventory VALUES (?,?,?)',
+                                    [(self.pid, 'poke_ball', 10), (self.pid, 'razz_berry', 3)])
+        session = {**self.session, 'selection': json.dumps(dict(
+            encounter_id=encounter['encounter_id'], encounter_revision=0,
+            ball='poke_ball', berry='razz_berry'))}
+        return encounter, session
+
+    async def assert_boss(self, identity_id, *, gender=None, locks=None):
+        import random
+        from content.balance import load_table
+        from pokewalker.domain.cp import cp, catch_probability
+        from pokewalker.services import storage
+        rng = Mock(wraps=random.Random(6))
+        rng.random.return_value = .25 if gender == 'female' else .75
+        encounter, session = await self.prepare(identity_id, locks=locks, rng=rng)
+        selected = next(i for i in self.content['identities'] if i['identity_id'] == identity_id)
+        identity = selected['gender_varieties'][gender] if gender else selected
+        self.assertEqual(self.spawn_row['identity_id'], identity_id)
+        self.assertEqual(encounter['pokemon_id'], identity['pokemon_id'])
+        if gender:
+            self.assertEqual(encounter['gender'], gender)
+        self.assertEqual(encounter['tier'], 'Legendary/Mythical')
+        multipliers = load_table('cpm')['multipliers']
+        shown = storage.stats(self.content, encounter, multipliers)
+        self.assertEqual(shown['identity']['identity_id'], identity['identity_id'])
+        self.assertEqual(shown['cp'], cp(
+            [identity[k] for k in ('base_attack', 'base_defense', 'base_stamina')],
+            [encounter[k] for k in ('iv_attack', 'iv_defense', 'iv_stamina')],
+            encounter['level_x2'], multipliers=multipliers))
+        self.assertEqual(await self.rows('SELECT * FROM pokedex WHERE profile_id=?', (self.pid,)),
+                         [dict(profile_id=self.pid, pokemon_id=identity['species_id'],
+                               seen_at=self.now, caught_at=None)])
+        rules = load_table('catch')['rules']
+        self.assertEqual(rules['legendary_flee_probability'], 0)
+        failed, rolls = await self.throw(session, 1)
+        self.assertEqual(failed.status, 'revealed')
+        rolls.random.assert_called_once_with()
+        attempt, = await self.rows('SELECT p,success,fled FROM catch_attempts')
+        self.assertEqual(attempt, dict(p=catch_probability(
+            identity['base_catch_rate'], encounter['level_x2'], rules['ball_multipliers']['poke_ball'],
+            rules['berry_multipliers']['razz_berry'], multipliers=multipliers), success=0, fled=0))
+        dust = await self.scalar('SELECT stardust FROM profiles WHERE profile_id=?', (self.pid,))
+        result, _ = await self.throw(session)
+        self.assertEqual(result.status, 'caught')
+        self.assertEqual(result.encounter['pokemon_id'], identity['pokemon_id'])
+        self.assertEqual((result.candy, result.stardust), (identity['catch_candy'], identity['catch_stardust']))
+        self.assertEqual(await self.scalar('SELECT quantity FROM candy WHERE profile_id=? AND family_id=?',
+                                          (self.pid, identity['family_id'])), identity['catch_candy'])
+        self.assertEqual(await self.scalar('SELECT stardust FROM profiles WHERE profile_id=?', (self.pid,)),
+                         dust + identity['catch_stardust'])
+        self.assertEqual(await self.rows('SELECT pokemon_id,seen_at,caught_at FROM pokedex WHERE profile_id=?',
+                                        (self.pid,)),
+                         [dict(pokemon_id=identity['species_id'], seen_at=self.now, caught_at=self.now)])
+        return encounter
+
+    async def test_ordinary_boss_join_catch_rewards_pokedex_never_flees(self):
+        await self.assert_boss('25:25')
+
+    async def test_mythical_boss_end_to_end(self):
+        await self.assert_boss('151:151')
+
+    async def test_regional_form_boss_keeps_its_form(self):
+        await self.assert_boss('10100:10202')
+
+    async def test_gender_variety_boss_stores_the_rolled_variety(self):
+        await self.assert_boss('876:876', gender='female')
+
+    async def test_locked_level_sets_cp_and_catch_chance(self):
+        encounter = await self.assert_boss('25:25', locks=dict(
+            shiny=False, level=40, iv_attack=0, iv_defense=15, iv_stamina=7))
+        self.assertEqual((encounter['level_x2'], encounter['iv_attack'], encounter['iv_defense'],
+                          encounter['iv_stamina']), (80, 0, 15, 7))
+
+    async def test_master_ball_catches_and_full_storage_waits_like_any_catch(self):
+        import json
+        from pokewalker.services import catching
+        encounter, session = await self.prepare()
+        await self.conn.execute('UPDATE profiles SET storage_limit=250 WHERE profile_id=?', (self.pid,))
+        await self.conn.executemany(
+            'INSERT INTO pokemon(pokemon_uid,profile_id,pokemon_id,level_x2,iv_attack,iv_defense,'
+            'iv_stamina,gender,shiny,origin,content_version,caught_at) '
+            "SELECT ?,profile_id,pokemon_id,level_x2,iv_attack,iv_defense,iv_stamina,gender,shiny,"
+            "'starter',content_version,0 FROM encounters WHERE encounter_id=?",
+            [(f'full-{i}', encounter['encounter_id']) for i in range(250)])
+        await self.conn.execute("INSERT INTO inventory VALUES (?,'master_ball',1)", (self.pid,))
+        selection = json.loads(session['selection'])
+        selection.update(ball='master_ball', berry=None)
+        session['selection'] = json.dumps(selection)
+        rolls = Mock()
+        async def master():
+            return await self.writer.run(lambda conn: catching.throw(
+                conn, encounter['encounter_id'], session, selection['encounter_revision'],
+                rolls, self.now, content=self.content, guaranteed=True))
+        before = await self.snapshot()
+        self.assertEqual((await master()).status, 'storage_full')
+        self.assertEqual(await self.snapshot(), before)
+        rolls.random.assert_not_called()
+        selection['storage_confirm'] = encounter['revision']
+        session['selection'] = json.dumps(selection)
+        result = await master()
+        self.assertEqual(result.status, 'caught')
+        self.assertIsNone(result.pokemon)
+        self.assertEqual(await self.scalar("SELECT quantity FROM inventory WHERE item_id='master_ball'"), 0)
+        self.assertEqual(await self.scalar("SELECT count(*) FROM pokemon WHERE state='owned'"), 250)
+        self.assertEqual(await self.rows('SELECT * FROM pokemon WHERE source_encounter_id=?',
+                                        (encounter['encounter_id'],)), [])
+        self.assertEqual(await self.rows('SELECT p,success,fled FROM catch_attempts'),
+                         [dict(p=1.0, success=1, fled=0)])
+        rolls.random.assert_not_called()
+
+    async def test_unconfirmed_ordinary_ex_catch_is_auto_sent_after_900_s(self):
+        from pokewalker.services import research
+        encounter, session = await self.prepare()
+        self.assertEqual((await self.throw(session))[0].status, 'caught')
+        before = await self.snapshot()
+        async def auto(now):
+            return await self.writer.run(lambda conn: research.auto_send(conn, now, self.content))
+        self.assertEqual(await auto(self.now + 899), 0)
+        self.assertEqual(await self.snapshot(), before)
+        self.assertEqual(await auto(self.now + 900), 1)
+        pokemon, = await self.rows('SELECT * FROM pokemon WHERE source_encounter_id=?',
+                                   (encounter['encounter_id'],))
+        self.assertEqual((pokemon['state'], pokemon['pokemon_id']), ('sent', encounter['pokemon_id']))
+        self.assertEqual(await self.scalar('SELECT acknowledged_at FROM encounters'), self.now + 900)
+        family = next(i['family_id'] for i in self.content['identities'] if i['identity_id'] == '25:25')
+        candy = next(r['quantity'] for r in before['candy'] if r['family_id'] == family)
+        self.assertEqual(await self.scalar('SELECT quantity FROM candy WHERE family_id=?', (family,)), candy + 1)
+        self.assertEqual(await self.rows('SELECT delta,reason FROM resource_ledger WHERE receipt_key=?',
+                                        (f"research:auto:{encounter['encounter_id']}",)),
+                         [dict(delta=1, reason='research_send')])
+        after = await self.snapshot()
+        self.assertEqual(await auto(self.now + 901), 0)
+        self.assertEqual(await self.snapshot(), after)
+
+    async def test_shiny_legendary_and_mythical_ex_catches_are_never_auto_sent(self):
+        from pokewalker.services import research
+        for identity_id, shiny in (('25:25', True), ('144:144', False), ('151:151', False)):
+            with self.subTest(identity=identity_id, shiny=shiny):
+                encounter, session = await self.prepare(identity_id, locks={'shiny': shiny})
+                self.assertEqual((await self.throw(session))[0].status, 'caught')
+                before = await self.snapshot()
+                for elapsed in (900, 86400, 172800):
+                    self.assertEqual(await self.writer.run(lambda conn: research.auto_send(
+                        conn, self.now + elapsed, self.content)), 0)
+                    self.assertEqual(await self.snapshot(), before)
+                self.now = self.spawn_row['expires_at']
+                await self.writer.run(lambda conn: self.raids().expire(conn, self.now))
+
+    async def test_catch_committed_before_expiry_stays_readable_after_cleanup(self):
+        encounter, session = await self.prepare('151:151')
+        self.now = self.spawn_row['expires_at'] - 1
+        result, _ = await self.throw(session)
+        self.assertEqual(result.status, 'caught')
+        before = await self.snapshot()
+        self.now += 1
+        await self.client()._sweep_once()
+        for table in ('encounters', 'pokemon', 'catch_attempts', 'pokedex', 'candy', 'resource_ledger'):
+            self.assertEqual(await self.rows(f'SELECT * FROM {table}'), before[table], table)
+        self.assertEqual(await self.scalar('SELECT ended FROM world_spawns'), 1)
+        self.assertEqual(await self.rows('SELECT * FROM raid_participation'), [])
+        before = await self.snapshot()
+        replay, rolls = await self.throw(session)
+        self.assertEqual(replay, result)
+        self.assertEqual(replay.encounter['encounter_id'], encounter['encounter_id'])
+        self.assertEqual(await self.snapshot(), before)
+        rolls.random.assert_not_called()
+
+    async def test_throw_at_expiry_is_refused_and_spends_nothing(self):
+        _, session = await self.prepare()
+        self.now = self.spawn_row['expires_at']
+        before, writes = await self.snapshot(), self.conn.total_changes
+        result, rolls = await self.throw(session)
+        self.assertEqual(result.status, 'expired')
+        self.assertEqual(await self.snapshot(), before)
+        self.assertEqual(self.conn.total_changes, writes)
+        rolls.random.assert_not_called()
+
+    async def test_world_legendary_spawns_expires_and_respawns_beside_a_24_h_ex_raid(self):
+        await self.prepare(hours=24)
+        ex = dict(self.spawn_row)
+        bot = self.client()
+        first = await self.use()
+        self.assertEqual(first['status'], 'spawned')
+        self.assertEqual(await self.ticket(), 0)
+        world = first['spawn']
+        self.assertEqual(world['expires_at'], self.now + 3600)
+        self.assertEqual((await self.join(world['spawn_id']))['status'], 'new')
+        self.now = world['expires_at']
+        await bot._sweep_once()
+        self.assertEqual(await self.rows('SELECT ended FROM world_spawns WHERE spawn_id=?',
+                                        (world['spawn_id'],)), [dict(ended=1)])
+        self.assertEqual(await self.rows('SELECT * FROM world_spawns WHERE spawn_id=?', (ex['spawn_id'],)), [ex])
+        second = await self.writer.run(lambda conn: self.raids().force_spawn(
+            conn, 'g', 'moderator', 'coverage', self.now, self.rng, self.content, '789'))
+        self.assertEqual(second['status'], 'spawned')
+        self.assertNotEqual(second['spawn']['spawn_id'], world['spawn_id'])
+        self.assertEqual([s['kind'] for s in await self.raids().live_spawns(self.conn, 'g', self.now)], ['world', 'ex'])
+        self.assertEqual(await self.rows('SELECT * FROM world_spawns WHERE spawn_id=?', (ex['spawn_id'],)), [ex])
+        self.now = second['spawn']['expires_at']
+        await bot._sweep_once()
+        self.assertEqual(await self.raids().live_spawns(self.conn, 'g', self.now), [ex])
+        self.assertEqual((await self.join(ex['spawn_id']))['status'], 'joined')
+
+    async def test_sweep_ends_ex_raid_at_exactly_expires_at(self):
+        encounter, _ = await self.prepare(hours=24)
+        bot = self.client()
+        self.now = self.spawn_row['expires_at'] - 1
+        await bot._sweep_once()
+        self.assertEqual(await self.raids().live_spawns(self.conn, 'g', self.now), [self.spawn_row])
+        self.assertEqual(await self.scalar('SELECT encounter_id FROM raid_participation'), encounter['encounter_id'])
+        self.assertEqual(await self.scalar('SELECT state FROM encounters'), 'revealed')
+        self.now += 1
+        await bot._sweep_once()
+        self.assertEqual(await self.scalar('SELECT ended FROM world_spawns'), 1)
+        self.assertEqual(await self.raids().live_spawns(self.conn, 'g', self.now), [])
+        self.assertEqual(await self.rows('SELECT * FROM encounters'), [])
+        self.assertEqual(await self.rows('SELECT * FROM raid_participation'), [])
+        self.assertEqual(await self.join(self.spawn_row['spawn_id']), {'status': 'none'})
+
+    async def test_raids_off_mid_raid_keeps_the_live_ex_raid_and_skips_new_ones(self):
+        await self.prepare(hours=24)
+        await self.conn.execute("UPDATE guilds SET raids_enabled=0 WHERE guild_id='g'")
+        self.now += 7200
+        bot = self.client()
+        await bot._sweep_once()
+        self.assertEqual(await self.raids().live_spawns(self.conn, 'g', self.now), [self.spawn_row])
+        self.assertEqual((await self.join(self.spawn_row['spawn_id']))['status'], 'joined')
+        before = await self.snapshot()
+        result = await self.send(send_id='off-send')
+        self.assertEqual((result['status'], result['skipped']), ('nothing', {'raids_off': 1}))
+        self.assertEqual(await self.snapshot(), before)
+        self.assertEqual(await self.use(), {'status': 'raids_off'})
+        self.assertEqual(await self.ticket(), 1)
+        self.assertEqual(await self.rows('SELECT * FROM world_spawns'), [self.spawn_row])
+        self.now = self.spawn_row['expires_at']
+        await bot._sweep_once()
+        self.assertEqual(await self.scalar('SELECT ended FROM world_spawns'), 1)
+
+    async def test_ex_encounter_stays_outside_the_three_encounter_queue(self):
+        import sqlite3
+        from pokewalker.services import profiles
+        for n in range(3):
+            await test_raids.RaidSchemaTests.encounter(self, self.pid, f'queued-{n}')
+        encounter, _ = await self.prepare(hours=24)
+        self.assertEqual(await profiles.queue_size(self.conn, self.pid), 3)
+        self.assertEqual(await self.scalar('SELECT count(*) FROM encounters'), 4)
+        self.assertEqual(encounter['raid_spawn_id'], self.spawn_row['spawn_id'])
+        with self.assertRaises(sqlite3.IntegrityError):
+            await test_raids.RaidSchemaTests.encounter(self, self.pid, 'fourth')
+        self.assertEqual(await profiles.queue_size(self.conn, self.pid), 3)
