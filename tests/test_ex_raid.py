@@ -326,3 +326,255 @@ class ExRaidLockTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await self.scalar(f'SELECT count(*) FROM {table}'), 0)
         self.assertEqual(await self.scalar('SELECT remaining_encounters FROM active_effects'), 2)
         self.assertEqual((await self.join('ex'))['status'], 'new')
+
+
+class ExRaidSendTests(unittest.IsolatedAsyncioTestCase):
+    asyncSetUp = ExRaidTests.asyncSetUp
+    scalar = ExRaidTests.scalar
+    rows = ExRaidTests.rows
+    raids = ExRaidTests.raids
+    profile = ExRaidTests.profile
+    spawn = ExRaidTests.spawn
+    join = ExRaidTests.join
+    encounter = test_raids.RaidSpawnTests.encounter
+
+    def arguments(self, **changes):
+        identity = next(i for i in self.content['identities'] if i['pokemon_id'] == 25)
+        return dict(dict(send_id='send', owner_id='owner', admin_guild_id='admin',
+                         identity_id=identity['identity_id'], locks={}, hours=1,
+                         guild_id='g', now=self.now, content=self.content,
+                         checked=lambda guild, channel: channel), **changes)
+
+    async def send(self, **changes):
+        args = self.arguments(**changes)
+        return await self.writer.run(lambda conn: self.raids().ex_commit(conn, **args))
+
+    async def target(self, guild='g', checked=None):
+        return await self.raids().ex_target(
+            self.conn, guild, self.now, checked or (lambda guild, channel: channel))
+
+    async def snapshot(self):
+        tables = await self.rows("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+        return {t['name']: await self.rows(f"SELECT * FROM {t['name']}") for t in tables}
+
+    async def unchanged_send(self, expected, **changes):
+        before, writes = await self.snapshot(), self.conn.total_changes
+        self.assertEqual(await self.send(**changes), expected)
+        self.assertEqual(await self.snapshot(), before)
+        self.assertEqual(self.conn.total_changes, writes)
+
+    async def test_one_server_send_spawns_ex_row_ordinary_mythical_form(self):
+        identities = [next(i for i in self.content['identities'] if i['pokemon_id'] == n)
+                      for n in (25, 151)]
+        identities.append(next(i for i in self.content['identities'] if i['pokemon_id'] != i['species_id']))
+        locks = dict(shiny=False, level=40, iv_attack=0, iv_defense=15, iv_stamina=7)
+        for index, identity in enumerate(identities):
+            with self.subTest(identity=identity['identity_id']):
+                await self.conn.execute('UPDATE world_spawns SET ended=1')
+                result = await self.send(send_id=f'send-{index}', identity_id=identity['identity_id'], locks=locks)
+                self.assertEqual((result['status'], result['replayed']), ('sent', False))
+                self.assertEqual({k: result[k] for k in locks}, locks)
+                self.assertEqual((result['owner_id'], result['guild_id'], result['servers'],
+                                  result['spawned'], result['skipped']), ('owner', 'g', 1, 1, {}))
+                row, = await self.rows('SELECT * FROM world_spawns WHERE ex_raid_id=?', (result['ex_raid_id'],))
+                from pokewalker.services import profiles
+                self.assertEqual((row['kind'], row['identity_id'], row['pokemon_id'], row['guild_id'],
+                                  row['channel_id'], row['spawned_at'], row['expires_at'], row['post_state'],
+                                  row['spawned_by_profile_id'], row['message_id'], row['ended'], row['content_version']),
+                                 ('ex', identity['identity_id'], identity['pokemon_id'], 'g', '789', self.now,
+                                  self.now + 3600, 'pending', None, None, 0, profiles.content_facts(self.content)[0]))
+
+    async def test_hours_1_and_24_ok_0_25_bool_text_invalid(self):
+        for hours in (0, 25, True, False, '1', 1.0, None):
+            with self.subTest(hours=hours):
+                await self.unchanged_send({'status': 'invalid'}, hours=hours)
+        for hours in (1, 24):
+            await self.conn.execute('UPDATE world_spawns SET ended=1')
+            self.assertEqual((await self.send(send_id=str(hours), hours=hours))['hours'], hours)
+            self.assertEqual(await self.scalar('SELECT expires_at FROM world_spawns WHERE ended=0'),
+                             self.now + hours * 3600)
+
+    async def test_global_send_shares_one_expires_at(self):
+        await self.conn.execute("UPDATE guilds SET raids_enabled=1,raid_channel_id='456'")
+        result = await self.send(guild_id=None, hours=24)
+        self.assertEqual((result['guild_id'], result['servers'], result['spawned'], result['skipped']),
+                         (None, 2, 2, {}))
+        self.assertEqual(await self.rows('SELECT DISTINCT expires_at FROM world_spawns'),
+                         [dict(expires_at=self.now + 24 * 3600)])
+        self.assertEqual(await self.rows('SELECT DISTINCT ex_raid_id FROM world_spawns'), [dict(ex_raid_id='send')])
+
+    async def test_global_send_counts_each_skip_reason(self):
+        for guild in ('off', 'missing', 'permission', 'changed', 'active', 'absent'):
+            await self.conn.execute("INSERT INTO guilds(guild_id,raids_enabled,raid_channel_id) VALUES (?,1,'789')", (guild,))
+            await self.spawn(f'ex-{guild}', guild=guild)
+        await self.conn.execute("UPDATE guilds SET raids_enabled=0,raid_channel_id=NULL WHERE guild_id='off'")
+        await self.conn.execute("UPDATE guilds SET raid_channel_id=NULL WHERE guild_id='missing'")
+        def checked(guild, channel):
+            return None if guild in ('permission', 'absent') else '999' if guild == 'changed' else channel
+        checked = Mock(side_effect=checked)
+        expected = dict(status='ok', servers=8, spawning=1,
+                        skipped=dict(raids_off=2, no_channel=1, no_permission=2, channel_changed=1, active=1))
+        before, writes = await self.snapshot(), self.conn.total_changes
+        self.assertEqual(await self.target(None, checked), expected)
+        self.assertEqual(await self.snapshot(), before)
+        self.assertEqual(self.conn.total_changes, writes)
+        self.assertEqual({c.args[0] for c in checked.call_args_list},
+                         {'g', 'permission', 'absent', 'changed', 'active'})
+        result = await self.send(guild_id=None, checked=checked)
+        self.assertEqual((result['servers'], result['spawned'], result['skipped']),
+                         (expected['servers'], expected['spawning'], expected['skipped']))
+        self.assertEqual(await self.scalar("SELECT count(*) FROM world_spawns WHERE ex_raid_id='send'"), 1)
+
+    async def test_one_server_skipped_writes_nothing_returns_reason(self):
+        for sql, checked, reason in (
+                ("UPDATE guilds SET raids_enabled=0,raid_channel_id=NULL WHERE guild_id='g'", '789', 'raids_off'),
+                ("UPDATE guilds SET raids_enabled=1 WHERE guild_id='g'", '789', 'no_channel'),
+                ("UPDATE guilds SET raid_channel_id='789' WHERE guild_id='g'", None, 'no_permission'),
+                ("UPDATE guilds SET raid_channel_id='789' WHERE guild_id='g'", '999', 'channel_changed')):
+            await self.conn.execute(sql)
+            await self.unchanged_send(dict(status='nothing', servers=1, skipped={reason: 1}),
+                                      checked=lambda g, c: checked)
+        await self.spawn()
+        await self.unchanged_send(dict(status='nothing', servers=1, skipped={'active': 1}))
+        before = await self.snapshot()
+        self.assertEqual(await self.target('unknown'), {'status': 'unknown_server'})
+        await self.unchanged_send({'status': 'unknown_server'}, guild_id='unknown')
+        self.assertEqual(await self.snapshot(), before)
+
+    async def test_global_send_all_skipped_writes_nothing(self):
+        await self.conn.execute('UPDATE guilds SET raids_enabled=0')
+        await self.unchanged_send(dict(status='nothing', servers=2, skipped={'raids_off': 2}), guild_id=None)
+        await self.conn.execute('DELETE FROM profiles')
+        await self.conn.execute('DELETE FROM guilds')
+        await self.unchanged_send(dict(status='nothing', servers=0, skipped={}), guild_id=None)
+
+    async def test_live_world_legendary_is_no_guard_and_is_untouched(self):
+        await self.spawn('world', kind='world')
+        await self.join('world')
+        before = await self.snapshot()
+        self.assertEqual((await self.send())['status'], 'sent')
+        after = await self.snapshot()
+        self.assertEqual([r for r in after['world_spawns'] if r['kind'] == 'world'], before['world_spawns'])
+        for table in ('encounters', 'raid_participation', 'action_receipts', 'inventory'):
+            self.assertEqual(after[table], before[table])
+
+    async def overdue(self):
+        for spawn_id, kind, guild in (('ex', 'ex', 'g'), ('world', 'world', 'g'), ('foreign', 'ex', 'h')):
+            await self.spawn(spawn_id, kind=kind, guild=guild, expires_at=self.now)
+            for index, state in enumerate(('queued', 'revealed', 'caught', 'ran')):
+                user = f'{spawn_id}-{index}'
+                pid = await self.profile(user, guild)
+                eid = f'enc-{user}'
+                await self.encounter(pid, eid, state, spawn_id)
+                await self.conn.execute('INSERT INTO raid_participation VALUES (?,?,?,?,0)',
+                                        (guild, user, spawn_id, eid))
+
+    async def test_overdue_unswept_ex_raid_is_settled_and_replaced(self):
+        await self.overdue()
+        await self.conn.execute('SAVEPOINT reference_expiry')
+        await self.raids().expire(self.conn, self.now, 'g')
+        expected = await self.snapshot()
+        await self.conn.execute('ROLLBACK TO reference_expiry')
+        await self.conn.execute('RELEASE reference_expiry')
+        result = await self.send()
+        self.assertEqual(result['status'], 'sent')
+        actual = await self.snapshot()
+        actual['world_spawns'] = [r for r in actual['world_spawns'] if r['ex_raid_id'] != 'send']
+        actual['ex_raids'] = []
+        self.assertEqual(actual, expected)
+
+    async def test_refused_send_with_overdue_rows_writes_nothing(self):
+        await self.overdue()
+        await self.conn.execute("UPDATE guilds SET raids_enabled=0 WHERE guild_id='g'")
+        await self.unchanged_send(dict(status='nothing', servers=1, skipped={'raids_off': 1}))
+
+    async def test_settings_changed_after_preview_judged_at_commit(self):
+        self.assertEqual(await self.target(), dict(status='ok', servers=1, spawning=1, skipped={}))
+        await self.conn.execute("UPDATE guilds SET raid_channel_id='999' WHERE guild_id='g'")
+        await self.unchanged_send(dict(status='nothing', servers=1, skipped={'channel_changed': 1}),
+                                  checked=lambda g, c: '789')
+        await self.conn.execute("UPDATE guilds SET raids_enabled=0 WHERE guild_id='g'")
+        await self.unchanged_send(dict(status='nothing', servers=1, skipped={'raids_off': 1}))
+        await self.conn.execute("UPDATE guilds SET raids_enabled=1 WHERE guild_id='g'")
+        await self.conn.execute("INSERT INTO guilds(guild_id,raids_enabled,raid_channel_id) VALUES ('new',1,'123')")
+        self.assertEqual((await self.send(guild_id=None))['spawned'], 2)
+
+    async def test_same_send_id_returns_recorded_result_spawns_nothing(self):
+        result = await self.send()
+        await self.conn.execute('UPDATE world_spawns SET ended=1')
+        await self.conn.execute('UPDATE guilds SET raids_enabled=0')
+        await self.unchanged_send(dict(result, replayed=True), identity_id='unknown', locks={'level': 0},
+                                  hours=0, guild_id='unknown', checked=Mock(side_effect=AssertionError('targeted')))
+
+    async def test_other_owners_send_id_invalid(self):
+        await self.send()
+        await self.unchanged_send({'status': 'invalid'}, owner_id='other', checked=Mock(side_effect=AssertionError('targeted')))
+
+    async def test_excluded_owner_refused_before_lookup(self):
+        from unittest.mock import patch
+        await self.send()
+        await self.conn.execute("INSERT INTO guilds(guild_id) VALUES ('admin')")
+        await self.conn.execute("INSERT INTO restrictions(guild_id,user_id,excluded) VALUES ('admin','owner',1)")
+        with patch.object(self.raids(), 'ex_lookup', side_effect=AssertionError('looked up')):
+            await self.unchanged_send({'status': 'excluded'})
+            await self.unchanged_send({'status': 'excluded'}, send_id='new')
+
+    async def test_unknown_identity_or_bad_lock_invalid_nothing_written(self):
+        await self.unchanged_send({'status': 'invalid'}, identity_id='unknown')
+        for locks in (None, [], {'unexpected': 1}):
+            await self.unchanged_send({'status': 'invalid'}, locks=locks)
+        for field, bad in (('shiny', (2, -1, '1', 1.0)), ('level', (0, 41, True, '1', 1.0)),
+                           ('iv_attack', (-1, 16, True, '0', 0.0)),
+                           ('iv_defense', (-1, 16, False, '0', 0.0)),
+                           ('iv_stamina', (-1, 16, True, '0', 0.0))):
+            for value in bad:
+                with self.subTest(field=field, value=value):
+                    await self.unchanged_send({'status': 'invalid'}, locks={field: value})
+        result = await self.send(locks=dict(shiny=1, level=1, iv_attack=15, iv_defense=None, iv_stamina=0))
+        self.assertEqual((result['shiny'], result['level'], result['iv_defense']), (1, 1, None))
+
+    async def test_insert_failure_part_way_rolls_back_everything(self):
+        import sqlite3
+        await self.overdue()
+        await self.conn.execute("UPDATE guilds SET raids_enabled=1,raid_channel_id='789'")
+        await self.conn.execute("CREATE TRIGGER fail_second BEFORE INSERT ON world_spawns "
+                                "WHEN NEW.kind='ex' AND NEW.guild_id='h' "
+                                "BEGIN SELECT RAISE(ABORT,'second spawn failed'); END")
+        before = await self.snapshot()
+        with self.assertRaisesRegex(sqlite3.IntegrityError, 'second spawn failed'):
+            await self.send(guild_id=None)
+        self.assertEqual(await self.snapshot(), before)
+        await self.conn.execute('DROP TRIGGER fail_second')
+        self.assertEqual((await self.send(guild_id=None))['spawned'], 2)
+
+    async def test_no_mod_audit_and_force_raid_cooldown_ignored(self):
+        await self.conn.execute("INSERT INTO mod_audit(guild_id,actor_id,target_kind,target_id,action,reason,created_at) "
+                                "VALUES ('g','mod','guild','g','force_raid','fixture',?)", (self.now,))
+        statements = []
+        await self.conn.set_trace_callback(statements.append)
+        try:
+            self.assertEqual((await self.send())['status'], 'sent')
+        finally:
+            await self.conn.set_trace_callback(None)
+        self.assertFalse(any('mod_audit' in s or 'action_receipts' in s or 'force_raid_reset_at' in s for s in statements))
+        self.assertEqual(await self.scalar('SELECT count(*) FROM mod_audit'), 1)
+        self.assertEqual(await self.scalar('SELECT count(*) FROM action_receipts'), 0)
+
+    async def test_history_newest_first_paged_and_lookup(self):
+        self.assertIsNone(await self.raids().ex_lookup(self.conn, 'unknown'))
+        self.assertEqual(await self.raids().ex_history(self.conn, 0), ([], 0))
+        results = []
+        for index in range(13):
+            await self.conn.execute('UPDATE world_spawns SET ended=1')
+            result = await self.send(send_id=f'send-{index:02}', now=self.now + index // 2, guild_id=None)
+            self.assertEqual(result['skipped'], {'raids_off': 1})
+            results.append({k: v for k, v in result.items() if k not in ('status', 'replayed')})
+        expected = list(reversed(results))
+        self.assertEqual(await self.raids().ex_history(self.conn, 0), (expected[:10], 13))
+        self.assertEqual(await self.raids().ex_history(self.conn, 10), (expected[10:], 13))
+        self.assertEqual(await self.raids().ex_history(self.conn, 20), ([], 13))
+        self.assertEqual(await self.raids().ex_lookup(self.conn, 'send-04'), results[4])
+
+    async def test_requires_writer_transaction(self):
+        with self.assertRaisesRegex(RuntimeError, 'transaction'):
+            await self.raids().ex_commit(self.conn, **self.arguments())

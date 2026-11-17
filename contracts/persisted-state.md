@@ -2047,3 +2047,41 @@ participant column. Deleting a guild cascades its spawns and preserves send hist
 This is additive. Older code refuses schema 31 through open_db's newer-schema
 guard. Rollback needs a compatible backup, never a live user_version decrement.
 Verification: test_ex_raid_schema and the ticket-named schema/raid/deletion regressions.
+
+
+## EX-Raid send
+`services.raids.ex_commit` is an additive schema-0031 service inside the caller's
+active writer transaction. Producers are owner-confirmed EX-Raid drafts; consumers
+are raid joins, announcements and owner history. It checks the owner's exclusion
+in the admin guild first, then the send ID: its owner gets the stored row with
+status sent and replayed true, without validation, targeting or another spawn;
+another owner gets invalid. Unknown identities, invalid locks and non-integer or
+out-of-range hours return invalid without writes. Locks are nullable: shiny accepts
+bool or integer 0/1, level requires integer 1-40, IVs integer 0-15; other booleans
+are invalid. Hours require an integer 1-24, excluding bool.
+
+`ex_target(conn, guild_id, now, checked)` and commit share one read of target guild
+settings with a live-EX flag (kind ex, ended=0, expires_at>now). NULL guild_id means
+all persisted guilds. Unknown one-server targets return unknown_server. In order,
+guards count raids_off, no_channel, no_permission (including bot absent),
+channel_changed and active (live EX only). The synchronous checked(guild_id,
+raid_channel_id) callback resolves cached permissions inside the transaction;
+no Discord I/O occurs. Preview returns status ok, servers, spawning and skipped
+(reason-to-count dict), writing nothing. Commit re-evaluates the same guards.
+
+With no eligible server, commit returns status nothing, servers and skipped,
+without settlement or any other writes. Otherwise three set-based statements
+settle all targeted overdue spawns with expire's effects: delete their queued and
+revealed encounters and participation, and mark the spawns ended. Other encounter
+states and live spawns, including World Legendaries, survive. Commit inserts one
+ex_raids aggregate send record and one batched insertion of EX spawns, each with
+its checked channel, ex_raid_id, pending post state, NULL spawned_by_profile_id,
+and the same expires_at = now + hours*3600. It returns status sent, replayed false
+and the stored row. A raised failure rolls the caller's whole transaction back.
+There is no cooldown read, mod_audit or action_receipts write.
+
+`ex_lookup(conn, send_id)` returns the stored dict or None. `ex_history(conn,
+offset)` returns (up to ten newest rows, total), ordered by created_at descending
+then ex_raid_id descending. Both decode skipped JSON. Verification: test_ex_raid,
+test_raids, test_admin_force_raid and test_ex_raid_schema; writer hold evidence
+and the live-count deployment gate are recorded separately (EXR-4, G-B).
