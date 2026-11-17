@@ -1037,7 +1037,10 @@ then `research.auto_send`, in the same writer transaction on each existing
 60-second sweep. All receive
 one UTC epoch `now` from `walker.clock`; the bot monotonic clock is not used.
 Expiry deletes queued/revealed raid encounters and participation, including the
-server/user/spawn record retained after delete-data. A deleted spender leaves
+server/user/spawn record retained after delete-data, opt-out or reset until
+that spawn's own `expires_at`: at most 60 minutes for a World Legendary and
+at most 24 hours for an EX-Raid. `ex_raids` holds aggregate counts and the
+sending owner's ID, never a participant's ID. A deleted spender leaves
 NULL attribution on the preserved spawn history; species, times, channel and
 announcement state remain. Ended history no longer blocks a new spawn.
 Deleting unfinished encounters cascades catch attempts, but preserves previously
@@ -1047,9 +1050,11 @@ for cleanup with no terminal recovery result. Ordinary queue entries are unchang
 A catch committed before expiry keeps its Pokemon, rewards, terminal encounter
 and recovery/acknowledgement path. No schema or receipt format changes.
 Producer: client sweep and raids.expire; consumers: catching, walker recovery,
-queue and deletion. Tests: test_raids plus walker acknowledgement, deletion and
-gym regressions. G-F2 remains pending until the owner commits the privacy
-retention disclosure; this contract is not runtime privacy text or live evidence.
+queue and deletion. Tests: test_raids and test_ex_raid plus walker acknowledgement,
+deletion and gym regressions. The repository disclosure is
+`docs/features/pokewalker-bot/privacy.md`; the configured runtime file and the
+running bot's reply are checked separately at delivery (EX-Raid G-V).
+This contract is not runtime privacy text or live evidence.
 
 ## Trading schema (0018, additive)
 The owner's trading requirement (R0-R5, docs/features/pokemon-trading/PLAN.md

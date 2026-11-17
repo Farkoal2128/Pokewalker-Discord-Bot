@@ -89,6 +89,13 @@ class AccountTests(unittest.IsolatedAsyncioTestCase):
     def records(self):
         return [json.loads(line) for line in self.path.read_text().splitlines()]
 
+    def test_repository_privacy_text_discloses_raid_retention(self):
+        text = Path("docs/features/pokewalker-bot/privacy.md").read_text(encoding="utf-8")
+        raids = next(paragraph for paragraph in text.split("\n\n")
+                     if paragraph.startswith("**Raids.**"))
+        self.assertIn("at most 60 minutes for a World Legendary, at most 24 hours for an EX-Raid", raids)
+        self.assertFalse(raids.endswith("at most 60 minutes."))
+
     async def test_privacy_replies_owner_text_for_excluded_too(self):
         for excluded in (False, True):
             if excluded:
