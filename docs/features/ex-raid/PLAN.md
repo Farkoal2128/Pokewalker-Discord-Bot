@@ -82,7 +82,7 @@ One milestone, every row briefed. Order: schema and services (steps 2-6), announ
 
 ### 3.3 Verification decision (Decide before dispatch)
 
-No owner/repo conflict: AGENTS.md asks for RED, GREEN and the applicable checks; PIPELINE.md:10 is the full `test_cmd`. Rows run **focused** checks only: the modules their ticket names (`python -m unittest discover -s tests -p "test_<module>.py"`) and `git -c core.whitespace=cr-at-eol diff --cached --check` (keep existing line endings). RED evidence goes in each commit body. Ticket line: `Verification: phase=implementation; scope=focused; coverage=<ticket tests>; receipt=Tests-Focused on staged tree; boundary=final feature (G-F)`.
+AGENTS.md asks for RED, GREEN and the applicable checks; PIPELINE.md:10 is the full `test_cmd`. Rows run **focused** checks only: the modules their ticket names (`python -m unittest discover -s tests -p "test_<module>.py"`) and `git -c core.whitespace=cr-at-eol diff --cached --check` (keep existing line endings). RED evidence goes in each commit body. Ticket line: `Verification: phase=implementation; scope=focused; coverage=<ticket tests>; receipt=Tests-Focused on staged tree; boundary=final feature (G-F)`.
 
 No source increment: no row group serves a separate audience. The full `test_cmd` runs once, uncached (`FP_RESULT_CACHE=0`), on the settled tree at G-F. The owner's code review loop (global CLAUDE.md) runs before G-F, by the supervising session.
 
@@ -121,7 +121,7 @@ Build rows are `seam`: at most 2 production files and 300 production lines; test
 | 5 | [EXR-4](tickets/EXR-4.md) service: EX send, guards, history reads; benchmark evidence | build | seam | L | ✅ done · 875b154 · GO review r1 |
 | 6 | [EXR-5](tickets/EXR-5.md) EX catch coverage | build | seam | M | ✅ done · 7fb5b16 · GO review r1 after fixture fix |
 | 7 | [EXR-6](tickets/EXR-6.md) announcements: EX title, failure isolation, bot-owned fan-out | build | seam | M | ✅ done · 3ec402e · GO review r1 |
-| 8 | [EXR-7](tickets/EXR-7.md) catch and Back | build | seam | S | ❌ blocked: Back fixture errors r1 |
+| 8 | [EXR-7](tickets/EXR-7.md) catch and Back | build | seam | S | ✅ done · ace1378 · GO review r1 after fixture fix |
 | 9 | [EXR-8](tickets/EXR-8.md) `/raid` chooser, wording, description | build | seam | M | pending |
 | 10 | [EXR-9](tickets/EXR-9.md) `/admin ex-raid`: options, autocomplete, validation | build | seam | M | pending |
 | 11 | [EXR-10](tickets/EXR-10.md) preview draft: target, All servers, counts, Cancel | build | seam | M | pending |
