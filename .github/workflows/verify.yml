@@ -13,11 +13,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
+      # setup-python links the runner's system SQLite, which lacks the WAL-reset fix
+      # open_db requires (contracts/persisted-state.md); uv's managed CPython bundles
+      # its own SQLite, the same interpreter source as the local .venv.
+      - uses: astral-sh/setup-uv@v6
+      - name: Managed Python with bundled SQLite
+        run: |
+          uv venv --managed-python --seed --python 3.12.14 .venv
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
       - name: Install locked dependencies
         run: python -m pip install -r requirements.lock
+      - name: Check SQLite has the WAL-reset fix
+        run: python -c "import sqlite3; from pokewalker.db import check_sqlite_version as ok; print('SQLite', sqlite3.sqlite_version); assert ok(sqlite3.sqlite_version_info)"
       - name: Framework tests
         run: python -m unittest discover -s tests -p "test_*.py"
       - name: Framework verification
