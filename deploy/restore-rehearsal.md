@@ -58,6 +58,11 @@ See [ADR 0001](../docs/decisions/0001-application-stack.md) and
   Check sanitized journald output, per-unit rate limits and permissions with no secrets.
 - [ ] Measure synchronous=FULL write latency at the measured chat rate. Exercise
   readiness failure and rollback, including exit 50 staying stopped for a newer schema.
+- [ ] D74: on an upgrade, confirm the `migrate` step runs as `pokewalker` with
+  `SQLITE_TMPDIR=/var/lib/pokewalker` after the backup and before start, and record its
+  line (converted to incremental auto-vacuum, or skipped and why); a failed `migrate`
+  rolls back (20/50). After the deploy, list `/opt/pokewalker/releases`: only the new,
+  the previous and the newest other complete release remain.
   Restore SQLite only through the explicit owner-selected `--restore-db` path.
 
 ## ADR deletion and restore cases

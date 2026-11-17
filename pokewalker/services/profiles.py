@@ -64,10 +64,10 @@ async def get_profile(conn, guild_id, user_id):
 
 
 async def lifetime_steps_c(conn, profile_id) -> int:
-    """Lifetime awarded hundredths for one server-scoped profile, including zero awards."""
-    async with conn.execute("SELECT coalesce(sum(awarded_c),0) FROM step_events WHERE profile_id=?",
-                            (profile_id,)) as cursor:
-        return (await cursor.fetchone())[0]
+    """Lifetime awarded hundredths for one server-scoped profile (D74 counter)."""
+    async with conn.execute("SELECT steps_total_c FROM profiles WHERE profile_id=?", (profile_id,)) as cursor:
+        row = await cursor.fetchone()
+    return row[0] if row is not None else 0
 
 
 async def restrictions(conn, guild_id, user_id):

@@ -218,7 +218,8 @@ async def start(conn, session, team, now, rng, content, multipliers, skip=0, vou
 
     result = await with_receipt(conn, key, 'arena_start', compute,
                                 profile_id=session['profile_id'])
-    # The run is attached after the receipt so receipts stay small (never pruned).
+    # The run is attached after the receipt so receipts stay small; D74 cleanup deletes a run's
+    # fight/use/heal receipts only once a newer run supersedes it.
     return {**result, 'run': await _latest_run(conn, session['profile_id'])} if result['status'] == 'started' else result
 
 

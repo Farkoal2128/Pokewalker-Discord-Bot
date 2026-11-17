@@ -136,6 +136,9 @@ async def credit_message(conn, profile, words, created_at, message_id, channel_i
     await conn.execute(
         "UPDATE step_events SET accepted_words=?,discarded_words=?,awarded_c=?,reason=? WHERE message_id=?",
         (decision.accepted_words, decision.discarded_words, decision.awarded_c, decision.reason, mid))
+    if decision.awarded_c:  # D74: the lifetime total outlives step records pruned after a day
+        await conn.execute("UPDATE profiles SET steps_total_c=steps_total_c+? WHERE profile_id=?",
+                           (decision.awarded_c, pid))
     size = await queue_size(conn, pid)
     meter = current["encounter_meter_c"]
     first, cap = None, limits()['encounter_queue']  # the 0015 queue triggers must match this value

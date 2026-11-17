@@ -70,10 +70,13 @@ class ArenaSchemaTests(unittest.IsolatedAsyncioTestCase):
                 # D67 reset timestamps start empty for existing rows.
                 self.assertIsNone(after['guilds'][0].pop('force_raid_reset_at', 'missing'))
                 self.assertIsNone(after['profiles'][0].pop('arena_cooldown_reset_at', 'missing'))
+                # D74 lifetime counters backfill to 0 for a profile with no steps or catches.
+                self.assertEqual((after['profiles'][0].pop('catch_total', 'missing'),
+                                  after['profiles'][0].pop('steps_total_c', 'missing')), (0, 0))
                 for row in after.get('pokemon', []):  # D73 looks start empty
                     self.assertIsNone(row.pop('look_id', 'missing'))
                 self.assertEqual(after, before)
-                self.assertEqual(await self.scalar('PRAGMA user_version', conn=upgraded), 33)
+                self.assertEqual(await self.scalar('PRAGMA user_version', conn=upgraded), 34)
                 self.assertEqual(await upgraded.execute_fetchall('PRAGMA foreign_key_check'), [])
                 for table in ('arena_runs', 'arena_tickets'):
                     self.assertEqual(await self.scalar(f'SELECT count(*) FROM {table}', conn=upgraded), 0)
@@ -126,10 +129,13 @@ class ArenaSchemaTests(unittest.IsolatedAsyncioTestCase):
                 # D67 reset timestamps start empty for existing rows.
                 self.assertIsNone(after['guilds'][0].pop('force_raid_reset_at', 'missing'))
                 self.assertIsNone(after['profiles'][0].pop('arena_cooldown_reset_at', 'missing'))
+                # D74 lifetime counters backfill to 0 for a profile with no steps or catches.
+                self.assertEqual((after['profiles'][0].pop('catch_total', 'missing'),
+                                  after['profiles'][0].pop('steps_total_c', 'missing')), (0, 0))
                 for row in after.get('pokemon', []):  # D73 looks start empty
                     self.assertIsNone(row.pop('look_id', 'missing'))
                 self.assertEqual(after, before)
-                self.assertEqual(await self.scalar('PRAGMA user_version', conn=upgraded), 33)
+                self.assertEqual(await self.scalar('PRAGMA user_version', conn=upgraded), 34)
                 self.assertEqual(await upgraded.execute_fetchall('PRAGMA foreign_key_check'), [])
             finally:
                 await upgraded.close()
@@ -161,7 +167,7 @@ class ArenaSchemaTests(unittest.IsolatedAsyncioTestCase):
         for _ in range(2):
             upgraded = await db.open_db(path)
             try:
-                self.assertEqual(await self.scalar('PRAGMA user_version', conn=upgraded), 33)
+                self.assertEqual(await self.scalar('PRAGMA user_version', conn=upgraded), 34)
                 after = {table: [dict(row) for row in await upgraded.execute_fetchall(
                     f'SELECT * FROM {table}')] for table in before}
                 self.assertEqual(after['arena_runs'][0].pop('x_attack_left'), 0)
@@ -173,6 +179,9 @@ class ArenaSchemaTests(unittest.IsolatedAsyncioTestCase):
                 # D67 reset timestamps start empty for existing rows.
                 self.assertIsNone(after['guilds'][0].pop('force_raid_reset_at', 'missing'))
                 self.assertIsNone(after['profiles'][0].pop('arena_cooldown_reset_at', 'missing'))
+                # D74 lifetime counters backfill to 0 for a profile with no steps or catches.
+                self.assertEqual((after['profiles'][0].pop('catch_total', 'missing'),
+                                  after['profiles'][0].pop('steps_total_c', 'missing')), (0, 0))
                 for row in after.get('pokemon', []):  # D73 looks start empty
                     self.assertIsNone(row.pop('look_id', 'missing'))
                 self.assertEqual(after, before)
@@ -222,10 +231,13 @@ class ArenaSchemaTests(unittest.IsolatedAsyncioTestCase):
                 # D67 reset timestamps start empty for existing rows.
                 self.assertIsNone(after['guilds'][0].pop('force_raid_reset_at', 'missing'))
                 self.assertIsNone(after['profiles'][0].pop('arena_cooldown_reset_at', 'missing'))
+                # D74 lifetime counters backfill to 0 for a profile with no steps or catches.
+                self.assertEqual((after['profiles'][0].pop('catch_total', 'missing'),
+                                  after['profiles'][0].pop('steps_total_c', 'missing')), (0, 0))
                 for row in after.get('pokemon', []):  # D73 looks start empty
                     self.assertIsNone(row.pop('look_id', 'missing'))
                 self.assertEqual(after, before)
-                self.assertEqual(await self.scalar('PRAGMA user_version', conn=upgraded), 33)
+                self.assertEqual(await self.scalar('PRAGMA user_version', conn=upgraded), 34)
                 self.assertEqual(await upgraded.execute_fetchall('PRAGMA foreign_key_check'), [])
             finally:
                 await upgraded.close()

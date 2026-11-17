@@ -83,6 +83,8 @@ class CapacityTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(after.pop('arena_stop_pct', 'missing'), 50)
                 self.assertEqual(after.pop('arena_auto_order', 'missing'), 0)
                 self.assertIsNone(after.pop('arena_cooldown_reset_at', 'missing'))
+                # D74 lifetime counters backfill to 0 for a profile with no steps or catches.
+                self.assertEqual((after.pop('catch_total', 'missing'), after.pop('steps_total_c', 'missing')), (0, 0))
                 self.assertEqual(after.pop('ex_attack_armed'), 0)
                 self.assertEqual(after.pop('ex_defense_armed'), 0)
                 self.assertEqual(after, before)

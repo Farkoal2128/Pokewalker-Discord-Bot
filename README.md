@@ -196,8 +196,12 @@ BACKUP_MONITOR_URL=https://hc-ping.com/<your-check-uuid>
 
 Deploys run as root from **your own clone** (never from `/srv/pokewalker/src`, which
 `pokewalker-deploy` can change). They build the release as `pokewalker-deploy`, make it
-root-owned, check the configuration as the bot user, take a backup when upgrading, switch the
-`current` link, and wait for the bot to report ready, rolling back if it doesn't. The simplest
+root-owned, check the configuration as the bot user, take a backup when upgrading, run
+`python -m pokewalker migrate` as the bot user while the bot is stopped (upgrades only: it applies
+database migrations and, once, converts the database to incremental auto-vacuum when there is
+enough free disk, printing what it did or a warning), switch the `current` link, and wait for the
+bot to report ready, rolling back if it doesn't. After a successful deploy only the new release,
+the previous one and the newest other complete one stay in `/opt/pokewalker/releases`. The simplest
 way is to re-run the installer, which deploys your clone's `HEAD`:
 
 ```bash

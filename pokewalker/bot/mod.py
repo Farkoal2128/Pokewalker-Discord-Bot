@@ -173,15 +173,13 @@ class WalkerMod(app_commands.Group):
             flags = await profiles.restrictions(conn, interaction.guild_id, member.id)
             pid, now = profile["profile_id"] if profile else None, time.time()
             async with conn.execute("SELECT coalesce(sum(CASE WHEN created_at>=? AND created_at<=? THEN awarded_c END),0),"
-                                    "coalesce(sum(awarded_c),0),"
                                     "coalesce(sum(CASE WHEN created_at>=? AND created_at<=? AND "
                                     "reason IN ('minimum','cooldown','minute_cap','duplicate','credited') "
                                     "THEN discarded_words END),0) "
                                     "FROM step_events WHERE profile_id=?", (now - 3600, now, now - 3600, now, pid)) as cursor:
-                hour, total, discarded = await cursor.fetchone()
-            async with conn.execute("SELECT count(*) FROM catch_attempts a JOIN encounters e USING(encounter_id) "
-                                    "WHERE e.profile_id=? AND a.success=1", (pid,)) as cursor:
-                catches = (await cursor.fetchone())[0]
+                hour, discarded = await cursor.fetchone()
+            # D74: lifetime counters; cleanup prunes step records and throws.
+            total, catches = (profile["steps_total_c"], profile["catch_total"]) if profile else (0, 0)
             gym_now = self.bot.walker.clock()
             await gyms.settle(conn, gym_now, self.bot.walker.rng, self.bot.content)
             async with conn.execute("SELECT g.name,d.deployed_at FROM gym_deployments d "

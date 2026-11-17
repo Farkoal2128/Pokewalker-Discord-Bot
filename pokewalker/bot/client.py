@@ -14,7 +14,7 @@ import discord
 from discord import app_commands
 
 from pokewalker.config import Settings, snowflake
-from pokewalker.db import Writer, open_db
+from pokewalker.db import Writer, migrate, open_db
 from pokewalker.bot.admin_channels import WalkerAdmin
 from pokewalker.bot.admin_trade_channels import TradeChannels
 from pokewalker.bot.mod import WalkerMod
@@ -23,7 +23,7 @@ from pokewalker.bot.checkin import command as checkin_command
 from pokewalker.bot.raid import command as raid_command
 from pokewalker.bot.trade import command as trade_command
 from pokewalker.bot.heartbeat import Heartbeat
-from pokewalker.services import gyms, raids, research, trading
+from pokewalker.services import cleanup, gyms, raids, research, trading
 from pokewalker.services.reactions import ReactionService
 from pokewalker.services.deletion import replay_markers
 from pokewalker.bot import admin, messages
@@ -130,6 +130,7 @@ class WalkerBot(discord.Client):
         self.reactions = None
         self._reaction_sweep = None
         self._gym_sweep = None
+        self._cleanup_resume = None  # D74 leftover-receipt position, in memory only
         self._raid_fanouts = set()
         self.heartbeat = Heartbeat(self)
 
@@ -205,12 +206,24 @@ class WalkerBot(discord.Client):
             await conn.execute('DELETE FROM sessions WHERE expires_at<=?', (now - 86400,))
         await self.writer.run(settle)
 
+    async def _cleanup_once(self):
+        # D74: its own writer job after the sweep, so neither failure rolls back the other.
+        async def job(conn):
+            resume = await cleanup.sweep(conn, self.walker.clock(), self._cleanup_resume)
+            await cleanup.reclaim(conn)
+            return resume
+        self._cleanup_resume = await self.writer.run(job)  # kept only once the job commits
+
     async def _gym_sweep_loop(self):
         while True:
             try:
                 await self._sweep_once()
             except Exception:
                 LOG.exception("Gym settlement sweep failed")
+            try:
+                await self._cleanup_once()
+            except Exception:
+                LOG.exception("Cleanup sweep failed")
             await asyncio.sleep(60)
 
     async def on_message(self, message):
@@ -340,6 +353,7 @@ def main(argv=None):
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("run")
     commands.add_parser("check-config")
+    commands.add_parser("migrate")
     sync = commands.add_parser("sync-commands")
     scope = sync.add_mutually_exclusive_group(required=True)
     scope.add_argument("--guild", type=snowflake)
@@ -353,6 +367,8 @@ def main(argv=None):
         load_content(settings.content_path)
         print("Configuration and content hash valid")
         return 0
+    if args.command == "migrate":
+        return asyncio.run(migrate(settings.db_path, allow_unpatched=settings.allow_unpatched_sqlite))
     bot = WalkerBot(settings)
     if args.command == "sync-commands":
         print(f"Command manifest SHA256: {bot.command_manifest_hash(args.guild)}")

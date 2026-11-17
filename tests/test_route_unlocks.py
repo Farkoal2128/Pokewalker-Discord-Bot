@@ -123,7 +123,8 @@ class RouteUnlockTests(unittest.IsolatedAsyncioTestCase):
         session = await self.ready()
         for index, route in enumerate(load_table('routes')['routes'][2:]):
             with self.subTest(route=route['id']):
-                await self.writer.run(lambda conn: conn.execute('DELETE FROM step_events'))
+                await self.writer.run(lambda conn: conn.executescript(
+                    'DELETE FROM step_events; UPDATE profiles SET steps_total_c=0;'))  # D74 counter
                 await self.seed_steps(route['unlock_steps'] * 100 - 1, message_id=f'boundary-{index}')
                 refused = await self.click(session, 'route_pick', [route['id']])
                 self.assertIn('Walk 1 more steps', refused.followup.send.await_args.args[0])

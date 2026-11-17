@@ -121,11 +121,11 @@ async def send_pending(conn, profile_id, encounter, key, content):
 
 
 async def auto_send(conn, now, content):
-    # shortcut: full encounters scan per tick, add an index if the sweep slows.
+    # D74: `resolved_at<=?-900` lets this use the partial encounters_unclaimed index.
     async with conn.execute("SELECT encounters.*,profiles.guild_id,profiles.user_id FROM encounters "
                             "JOIN profiles ON profiles.profile_id=encounters.profile_id "
                             "WHERE encounters.state='caught' AND acknowledged_at IS NULL AND shiny=0 "
-                            "AND resolved_at+900<=? AND NOT EXISTS "
+                            "AND resolved_at<=?-900 AND NOT EXISTS "
                             "(SELECT 1 FROM pokemon WHERE source_encounter_id=encounters.encounter_id)", (now,)) as cursor:
         rows = await cursor.fetchall()
     count = 0

@@ -8,10 +8,18 @@ exit meanings or retention is a compatibility change requiring requirement revie
 ## Paths and identity handoff
 
 Releases live at `/opt/pokewalker/releases/<sha>`; `current` selects a completed
-release. Root serializes deploys with `/run/pokewalker-deploy/lock` in a root-owned
+release. D74 release retention: after a successful activation the deploy keeps the new
+release, the previous one and the newest other release with `.complete` (by mtime;
+two in all on a redeploy of the same sha) and removes every other `releases/` entry
+named as a 40-hex sha (either case) or such a sha plus `.root`, incomplete builds and
+orphaned `.root` copies included, never a kept release's `.root`. A failed removal
+warns and never fails the deploy; rollback and failure exits prune nothing. Root serializes deploys with `/run/pokewalker-deploy/lock` in a root-owned
 0700 directory under trusted `/run`; an existing lock is root-owned 0600, regular
 and not a symlink. Build runs as `pokewalker-deploy`, without bot/backup credentials.
-Configuration checks run as `pokewalker` with the bot unit properties:
+Configuration checks, and the D74 upgrade `migrate` step that writes the database,
+run as `pokewalker` with the bot unit properties plus
+`Environment=SQLITE_TMPDIR=/var/lib/pokewalker` (VACUUM's temporary files stay on the
+database's filesystem):
 `EnvironmentFile=/etc/pokewalker/runtime.env`,
 `LoadCredential=discord_token:/etc/pokewalker/credentials/discord_token`,
 `LoadCredential=heartbeat_url:/etc/pokewalker/credentials/heartbeat_url`,
@@ -96,7 +104,7 @@ log, replaying exact deleted profile IDs (D28), never a re-enrolled profile's ID
 | Process | Exit meanings |
 | --- | --- |
 | Bot | 0 clean stop; 1 writer died after a failed rollback (heartbeat drains, systemd restarts); 75 deliberate owner restart (`Restart=on-failure`, never success status 75) |
-| Deploy | 0 ready; 10 preflight refused; 20 previous release restored or first-deploy readiness failed; 30 recovery failed; 40 unusable snapshot, previous release restarted if possible; 50 newer DB schema, stay stopped and print this run's recovery snapshot |
+| Deploy | 0 ready; 10 preflight refused; 20 previous release restored or first-deploy readiness failed (also a failed `migrate` that applied nothing the previous release lacks); 30 recovery failed; 40 unusable snapshot, previous release restarted if possible; 50 newer DB schema, stay stopped and print this run's recovery snapshot (also a failed `migrate`, activation or start after `migrate` applied a migration the previous release lacks) |
 | Backup | 0 all stages succeeded; 1 snapshot failed; else 2 upload failed; else 3 prune failed |
 | Prune | 0 complete; 1 any local/remote selection or deletion failed |
 
@@ -106,6 +114,16 @@ absent, an upgrade skips `backup.sh` and instead copies the stopped database wit
 SQLite `.backup` to `/var/lib/pokewalker-backup/pre-deploy/<sha>-<UTC time>.sqlite3` (the
 recovery snapshot), printing that path; a failed copy restarts the previous release (40). Readiness rollback checks schema compatibility before
 starting old code. SQLite restore occurs only with explicit `--restore-db`.
+
+D74 upgrade migrations: on an upgrade (a previous release and an existing database;
+never on a first install), with the bot stopped, after the snapshot/backup and any
+`--restore-db`, the deploy runs `as_bot <release> -m pokewalker migrate` (the release's
+own Python and patched SQLite) before activation. Upgrade migrations therefore run
+before bot start and outside the 60-second readiness wait; bot start still applies any
+pending migrations (a first install). `migrate` converts the database to incremental
+auto-vacuum once with VACUUM when at least 3x (database + WAL) is free; too little space
+or a VACUUM failure prints a warning, exits 0 and is retried by the next deploy, since
+the bot works in either mode. A non-zero `migrate` exit takes the rollback path (20/50).
 
 ## Verification
 

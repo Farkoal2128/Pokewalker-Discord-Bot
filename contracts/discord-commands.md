@@ -127,7 +127,9 @@ using private follow-ups as needed; failures never report success before commit.
 Status returns enrollment, effective pause/until, exclusion, share ban, credited
 steps (hundredths divided by 100) for the last hour and total, base steps discarded
 by anti-farming in the last hour, unresolved queue size, successful catches and
-last five user audit actions. Per the owner-approved metric correction, discarded
+last five user audit actions. D74: the total reads `profiles.steps_total_c` and
+"Catches: N" reads the lifetime counter `profiles.catch_total` (0 for an unenrolled
+member), so both keep their meaning after cleanup prunes old step records and throws. Per the owner-approved metric correction, discarded
 base steps sum `discarded_words` only for `minimum`, `cooldown`, `minute_cap`,
 `duplicate` and `credited` (including partial repeat/message-cap discards); paused
 and missing-timestamp discards are excluded. The metric uses the current profile,
@@ -177,6 +179,12 @@ production clients or persisted formats change.
   The CLI prints the selected command manifest SHA256 before confirmation. It
   authenticates without connecting the Gateway; reconnects never synchronize.
   `run` starts the Gateway; `check-config` validates without network access.
+- D74: `migrate` opens the configured database, applies pending migrations, and,
+  when the file is not yet in incremental auto-vacuum mode, checkpoints the WAL and,
+  with at least 3x (database + WAL) free space, converts it with
+  `PRAGMA auto_vacuum=INCREMENTAL; VACUUM`, printing what it did. Too little space
+  or a VACUUM failure prints a warning and exits 0; a migration failure exits
+  non-zero. The deploy runs it with the bot stopped; it never connects to Discord.
 
 ## Compatibility and verification
 M1.4b creates one `ReactionService` after database setup. The first Gateway ready
@@ -290,8 +298,10 @@ delete-data explanation, without creating a session or changing reactions.
 Other users get a UUID session for the interaction guild/user, optional profile,
 revision zero and a 15-minute expiry. Opening marks every remaining profile reaction
 for removal in the same writer job; reconciliation happens after commit and never
-reveals or consumes an encounter. Legacy rows without an encounter ID use the public
-`ReactionService.reconcile_message(message_id)` seam; completed removals remain retired.
+reveals or consumes an encounter. Every row, legacy or detached by D74 cleanup (no
+encounter ID) or not, is reconciled through the public
+`ReactionService.reconcile_message(message_id)` seam with its stored message ID;
+completed removals remain retired.
 
 The one generic `WalkerItem` wraps both selects and buttons with the existing ID
 grammar. Each callback acknowledges the update before waiting on the writer.
@@ -406,9 +416,14 @@ ledger reward lines, never cached session data, current balances or receipt rewa
 snapshots. Its controls are Done (`ack`) and, while the Pokémon is owned or pending, Send for
 research (`catch_send`); normal result screens dispatch the
 same action. The recovered encounter ID is persisted in session selection.
+D74: recovery of an unacknowledged result lasts one day for fled/ran results and for
+catches already stored or sent (cleanup then deletes the encounter); a catch waiting
+for storage stays recoverable until handled.
 
 The router's existing owner/guild, exclusion, expiry and revision checks apply.
-`ack` validates the selected encounter belongs to the profile and is terminal,
+`ack` validates the selected encounter belongs to the profile and is terminal
+(D74: a selected encounter that no longer exists counts as already acknowledged and
+`ack` returns home),
 then sets its acknowledgment time only while NULL, in the same writer transaction
 as the session update. Repeated acknowledgment from another valid screen retains
 the original timestamp and cannot acknowledge the next result. It renders the next
@@ -926,7 +941,8 @@ reports exclusion-read failure without error details, secrets or paths. Other
 commands retain their writer-backed exclusion checks and fail closed.
 Credited message counters advance only from the writer's post-COMMIT observer,
 including when the waiting Gateway caller was cancelled. Failed commits, rolled
-back jobs and replayed message IDs never increment the credited count.
+back jobs and message IDs replayed within 24 hours (D74: step records are kept 24
+hours) never increment the credited count.
 
 ## M6.3b private evolution screens (additive)
 `evolve` reads the details selection's owned Pokemon UID/revision. One available
@@ -1047,7 +1063,8 @@ Live Discord acceptance remains G-6.
 ## C5: M6.7a private route unlocks (intentional v1.1 restriction)
 
 Supersedes M3.5's immediate selection of all eight routes. Lifetime progress is
-`coalesce(sum(step_events.awarded_c),0)` for the authorized profile only, in
+`profiles.steps_total_c` (D74; before migration 0034 it was
+`coalesce(sum(step_events.awarded_c),0)`, which 0034 backfills) for the authorized profile only, in
 hundredths; profiles and their steps remain isolated by server (D10, D20, D45).
 Refreshing Field and Noisy Forest are free. Rugged Road, Beautiful Beach,
 Suburban Area, Dim Cave, Blue Lake and Volcano Path unlock at 1,000 / 2,500 /

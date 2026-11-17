@@ -56,6 +56,10 @@ class ReceiptOwnerTests(unittest.IsolatedAsyncioTestCase):
 
     async def legacy_schema(self):
         # Keep real producer results while restoring every pre-0003 table and column.
+        for index in ('encounters_resolved', 'encounters_unclaimed', 'step_events_created'):
+            await self.conn.execute(f'DROP INDEX {index}')
+        for column in ('catch_total', 'steps_total_c'):
+            await self.conn.execute(f'ALTER TABLE profiles DROP COLUMN {column}')
         for table in ('ex_gift_recipients', 'ex_items', 'ex_gifts'):
             await self.conn.execute(f'DROP TABLE {table}')
         for column in ('ex_attack_armed', 'ex_defense_armed'):

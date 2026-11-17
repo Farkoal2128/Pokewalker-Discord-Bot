@@ -214,6 +214,7 @@ class HeartbeatTests(unittest.IsolatedAsyncioTestCase):
         self.addAsyncCleanup(bot.drain)
         bot.heartbeat = self.monitor
         bot._sweep_once = AsyncMock()
+        bot._cleanup_once = AsyncMock()
         bot.writer = self.writer
         bot.reactions = SimpleNamespace(startup_sweep=AsyncMock())
         bot.is_ready = Mock(return_value=True)

@@ -128,11 +128,8 @@ class Walker:
             await interaction.edit_original_response(content=str(error))
             return
         try:
-            for reaction in pending:
-                if reaction["encounter_id"] is None:
-                    await self.bot.reactions.reconcile_message(reaction["message_id"])
-                else:
-                    await self.bot.reactions.reconcile_reaction(reaction["encounter_id"])
+            for reaction in pending:  # D74: stored rows, possibly detached by cleanup
+                await self.bot.reactions.reconcile_message(reaction["message_id"])
             rendered = await self.bot.writer.run(lambda conn: self.home(conn, session, interaction))
         except _Refused as error:
             await interaction.edit_original_response(content=str(error))
@@ -358,6 +355,11 @@ class Walker:
 
     async def ack(self, conn, session, interaction):
         encounter_id = json.loads(session["selection"]).get("encounter_id")
+        if encounter_id is not None and not await conn.execute_fetchall(
+                "SELECT 1 FROM encounters WHERE encounter_id=?", (encounter_id,)):
+            # D74: cleanup deleted it, which it does only to finished results; already done.
+            session["selection"] = "{}"
+            return await self.home(conn, session, interaction)
         state = await self.encounter_state(conn, session, encounter_id)
         if state["encounter"]["state"] not in ("caught", "fled", "ran"):
             raise _Refused(REOPEN)

@@ -367,7 +367,8 @@ class WalkerTests(unittest.IsolatedAsyncioTestCase):
         await self.seed_reaction()
         async def exclude_after_commit(encounter_id):
             await self.exclude()
-        with patch.object(self.bot.reactions, "reconcile_reaction", side_effect=exclude_after_commit):
+        # D74: /walker open reconciles every stored row by its message ID.
+        with patch.object(self.bot.reactions, "reconcile_message", side_effect=exclude_after_commit):
             interaction = self.interaction()
             await self.walker.open(interaction)
         self.assertIn("excluded", interaction.edit_original_response.await_args.kwargs["content"].lower())

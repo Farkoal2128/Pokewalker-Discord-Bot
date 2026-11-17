@@ -36,10 +36,14 @@ class ReactionService:
 
     async def reconcile_reaction(self, encounter_id):
         self._outside_writer()
-        await self._reconcile("encounter_id", encounter_id)
+        # D74: every lock is keyed by the row's stored message ID, which never changes, while
+        # cleanup may detach the row from its encounter at any time.
+        row = await self._read("encounter_id", encounter_id)
+        if row is not None:
+            await self._reconcile("message_id", row["message_id"])
 
     async def reconcile_message(self, message_id):
-        """Reconcile pending pre-0002 rows that have no encounter coordinate."""
+        """Reconcile a stored row by its message ID (legacy, detached or any other row)."""
         self._outside_writer()
         await self._reconcile("message_id", message_id)
 
@@ -53,10 +57,7 @@ class ReactionService:
                 return await cursor.fetchall()
 
         for row in await self.writer.run(pending):
-            if row["encounter_id"] is None:
-                await self._reconcile("message_id", row["message_id"])
-            else:
-                await self.reconcile_reaction(row["encounter_id"])
+            await self.reconcile_message(row["message_id"])
 
     async def _reconcile(self, column, key):
         lock_key = (column, key)
@@ -98,9 +99,7 @@ class ReactionService:
         self._outside_writer()
         for row in rows:
             # Same lock as _reconcile: an in-flight add finishes (and sees no row) before we remove.
-            key = (("message_id", row["message_id"]) if row["encounter_id"] is None
-                   else ("encounter_id", row["encounter_id"]))
-            async with self._locks.setdefault(key, asyncio.Lock()):
+            async with self._locks.setdefault(("message_id", row["message_id"]), asyncio.Lock()):
                 try:
                     await self._message(row).remove_reaction(EMOJI, self.bot.user)
                 except discord.HTTPException:  # NotFound, Forbidden: nothing left to retry from

@@ -128,7 +128,8 @@ async def throw(conn, encounter_id, session, expected_revision, rng, now, *, con
             await conn.execute("INSERT INTO candy VALUES (?,?,?) ON CONFLICT(profile_id,family_id) "
                                "DO UPDATE SET quantity=quantity+excluded.quantity",
                                (session["profile_id"], identity["family_id"], candy))
-            await conn.execute("UPDATE profiles SET stardust=stardust+? WHERE profile_id=?",
+            # D74: the lifetime catch count outlives the pruned throw records.
+            await conn.execute("UPDATE profiles SET stardust=stardust+?,catch_total=catch_total+1 WHERE profile_id=?",
                                (stardust, session["profile_id"]))
             lines.extend([{"profile_id": session["profile_id"], "resource": resource, "resource_id": resource_id,
                            "delta": delta, "reason": "catch_reward"} for resource, resource_id, delta in

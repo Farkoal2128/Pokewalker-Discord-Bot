@@ -767,6 +767,7 @@ class GymTests(unittest.IsolatedAsyncioTestCase):
                 sleeping.set()
                 await asyncio.Future()
         with patch.object(bot, '_sweep_once', side_effect=tick), \
+             patch.object(bot, '_cleanup_once', AsyncMock()), \
              patch('pokewalker.bot.client.asyncio.sleep', side_effect=sleep), \
              patch.object(bot.heartbeat, 'start'), \
              self.assertLogs('pokewalker.bot.client', level='ERROR') as logs:
@@ -795,6 +796,7 @@ class GymTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(stopped.is_set())
             await close()
         with patch.object(bot, '_sweep_once', side_effect=tick), \
+             patch.object(bot, '_cleanup_once', AsyncMock()), \
              patch.object(bot.heartbeat, 'start'), \
              patch.object(self.writer, 'close', side_effect=close_after_sweep):
             await bot.on_ready()

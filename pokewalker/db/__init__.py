@@ -4,6 +4,7 @@ import asyncio
 import json
 import inspect
 import logging
+import shutil
 import sqlite3
 import time
 from pathlib import Path
@@ -28,7 +29,10 @@ async def open_db(path, *, allow_unpatched=False):
     conn = await aiosqlite.connect(path, isolation_level=None)
     conn.row_factory = aiosqlite.Row
     try:
-        for pragma in ("busy_timeout=5000", "journal_mode=WAL", "synchronous=FULL",
+        # D74: auto_vacuum only takes effect on an empty file, and only before WAL; an existing
+        # file keeps its mode until `migrate` converts it. The size limit shrinks the WAL.
+        for pragma in ("busy_timeout=5000", "auto_vacuum=INCREMENTAL", "journal_mode=WAL",
+                       "journal_size_limit=67108864", "synchronous=FULL",
                        "secure_delete=ON", "foreign_keys=ON"):
             await conn.execute(f"PRAGMA {pragma}")
         migrations = sorted(MIGRATIONS.glob("[0-9][0-9][0-9][0-9]_*.sql"))
@@ -49,6 +53,49 @@ async def open_db(path, *, allow_unpatched=False):
         await conn.rollback()
         await conn.close()
         raise
+
+
+async def _checkpoint(conn):
+    async with conn.execute("PRAGMA wal_checkpoint(TRUNCATE)") as cursor:
+        await cursor.fetchall()
+
+
+async def migrate(path, *, allow_unpatched=False):
+    """D74 pre-start upgrade step (`python -m pokewalker migrate`), run with the bot stopped.
+
+    Applies pending migrations (a failure raises, so the process exits non-zero), then converts
+    the file to incremental auto-vacuum once. The bot works in either mode, so too little disk
+    or a failed VACUUM only warns; the next deploy retries.
+    """
+    conn = await open_db(path, allow_unpatched=allow_unpatched)
+    try:
+        async with conn.execute("PRAGMA user_version") as cursor:
+            print(f"migrate: schema at version {(await cursor.fetchone())[0]}")
+        async with conn.execute("PRAGMA auto_vacuum") as cursor:
+            if (await cursor.fetchone())[0] == 2:
+                print("migrate: incremental auto-vacuum already on")
+                return 0
+        try:
+            await _checkpoint(conn)
+            path = Path(path)
+            size = sum(file.stat().st_size for file in (path, Path(f"{path}-wal")) if file.exists())
+            free = shutil.disk_usage(path.resolve().parent).free
+            # VACUUM writes a temporary copy (SQLITE_TMPDIR) and the rewritten pages via the WAL.
+            if free < 3 * size:
+                print(f"migrate: warning: incremental auto-vacuum skipped: {free} bytes free, "
+                      f"{3 * size} needed; the next deploy retries")
+                return 0
+            await conn.execute("PRAGMA auto_vacuum=INCREMENTAL")
+            await conn.execute("VACUUM")
+            await _checkpoint(conn)
+        except sqlite3.Error as error:
+            print(f"migrate: warning: VACUUM failed ({type(error).__name__}); "
+                  "the next deploy retries")
+            return 0
+        print("migrate: database converted to incremental auto-vacuum")
+        return 0
+    finally:
+        await conn.close()
 
 
 async def open_reader(path):

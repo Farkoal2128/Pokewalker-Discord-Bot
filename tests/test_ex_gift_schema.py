@@ -64,7 +64,7 @@ class ExGiftSchemaTests(unittest.IsolatedAsyncioTestCase):
         for _ in range(2):
             upgraded = await db.open_db(path)
             try:
-                self.assertEqual(await self.scalar('PRAGMA user_version', conn=upgraded), 33)
+                self.assertEqual(await self.scalar('PRAGMA user_version', conn=upgraded), 34)
                 self.assertEqual(await self.scalar('PRAGMA foreign_keys', conn=upgraded), 1)
                 self.assertEqual([dict(row) for row in await upgraded.execute_fetchall(
                     'SELECT * FROM inbox_items ORDER BY inbox_id')], before['inbox_items'])
@@ -92,6 +92,8 @@ class ExGiftSchemaTests(unittest.IsolatedAsyncioTestCase):
             for table, columns in (('profiles', ('ex_attack_armed', 'ex_defense_armed')),
                                    ('arena_runs', ('ex_attack', 'ex_defense'))):
                 row = dict((await upgraded.execute_fetchall(f'SELECT * FROM {table}'))[0])
+                if table == 'profiles':  # D74 lifetime counters backfill to 0 here
+                    self.assertEqual((row.pop('catch_total'), row.pop('steps_total_c')), (0, 0))
                 for column in columns:
                     self.assertEqual(row.pop(column), 0)
                 self.assertEqual(row, before[table][0])

@@ -68,7 +68,10 @@ This is a new boundary with no existing persisted application databases to migra
   These ranges were checked against SQLite's [WAL-reset notes](https://www.sqlite.org/wal.html#walresetbug)
   and [3.51.3 release](https://www.sqlite.org/releaselog/3_51_3.html) on 2026-11-04.
 - Write connections use WAL, FULL synchronous, secure deletion, foreign keys and
-  a 5000 ms busy timeout. `await open_reader(path)` opens a separate `mode=ro`
+  a 5000 ms busy timeout. D74: `open_db` sets `auto_vacuum=INCREMENTAL` before WAL, so a
+  new database file is created in incremental auto-vacuum mode (an existing file keeps its
+  mode until `python -m pokewalker migrate` converts it), and sets `journal_size_limit` to
+  64 MiB so the WAL file shrinks after checkpoints. `await open_reader(path)` opens a separate `mode=ro`
   connection for screens; it never runs migrations or changes persistent settings.
 - Numbered SQL migrations and their `user_version` advance atomically, once, in order.
   A database newer than this application or a gap in migration numbering is refused.
@@ -101,11 +104,15 @@ This is a new boundary with no existing persisted application databases to migra
 - Encounter, find and companion meters are nonnegative integer hundredths (`*_meter_c`).
   Balances and quantities are nonnegative integers. Unresolved encounters are exactly
   `queued` and `revealed`, with at most three per profile, enforced on insert and update.
-  Frozen rolls and content versions are retained for encounters and Pokemon.
+  Frozen rolls and content versions are retained for Pokemon, and for encounters only
+  while the encounter row exists (D74 cleanup deletes finished encounters).
 - Catch attempt `(encounter_id,ordinal)` and Pokemon `source_encounter_id` are unique.
-  Terminal encounters retain nullable `acknowledged_at` for M1.9 recovery.
+  Terminal encounters retain nullable `acknowledged_at` for M1.9 recovery until D74
+  cleanup deletes them.
 - Receipt keys are unique; ledger `(receipt_key,line_key)` is unique and stores signed
   integer deltas. Ledger lines reference a profile and disappear with its deletion.
+  D74: throw, Run, auto-research and gym battle receipts, and a pruned Arena run's
+  fight/use/heal receipts, also disappear through cleanup, with their ledger lines.
   The account-deletion service must also remove receipts holding that profile's data.
 - Sessions belong to a server/user and may have no profile during onboarding.
 
@@ -152,24 +159,33 @@ cover these service contracts and enrollment rollback when generation fails.
 ## M1.4b reaction reconciliation (additive)
 Migration `0002_reaction_encounter.sql` adds nullable, unique `encounter_id`, a
 foreign key to encounters with cascade deletion. New producers supply it; existing
-rows retain NULL rather than guessing an encounter association. Pending legacy
-rows remain reconcilable by their saved message ID. Migration 0001 is unchanged.
+rows retain NULL rather than guessing an encounter association. A NULL
+`encounter_id` is not legacy-only: D74 cleanup detaches a row (sets it NULL) when it
+deletes the row's encounter. Pending legacy and detached rows remain reconcilable by
+their saved message ID. Migration 0001 is unchanged.
 
-`ReactionService(bot).reconcile_reaction(encounter_id)` serializes each reaction
-through an in-process lock and re-reads after acquiring it. Database reads and
+`ReactionService(bot).reconcile_reaction(encounter_id)` reads the row's stored text
+message ID and delegates to `reconcile_message(message_id)` (D74). Each reaction is
+serialized through an in-process lock keyed by that message ID and re-read after
+acquiring it. Database reads and
 compare-and-set writes use the single writer; Discord I/O happens outside its
 transactions. Calling the reconciler from a writer job is rejected. Adds require
 the guild/channel react policy (thread parent policy applies), desired add and
 actual none. Actual becomes added only if desired and revision still match.
 Desired remove always deletes the bot's own reaction, including when actual is
 none; success or HTTP 404 retires the reaction row. Other Discord errors preserve
-the row and encounter; permission errors warn once per channel per service.
+the row and encounter; permission errors warn once per channel per service. D74
+cleanup never deletes a reaction row: when it deletes the encounter it detaches the row
+instead, which stays pending until the row is retired.
 `startup_sweep()` reconciles pending removes and incomplete adds, including legacy
 rows. Completed removals produce no further Discord calls. This boundary changes
 no encounter state and never stores message content or credentials.
 M1.6 adds `reconcile_message(message_id)` for saved legacy rows without an encounter
-coordinate. It shares the same writer guard, locks and reconciliation logic; callers
-must use `reconcile_reaction` for rows with an encounter ID so add/remove share one lock.
+coordinate. It shares the same writer guard, locks and reconciliation logic. D74: every
+caller holding a stored row's message ID (`/walker` open, `startup_sweep`) calls
+`reconcile_message`; the message handler keeps calling `reconcile_reaction`; D28
+`remove_own` locks by the stored message ID too, so add/remove always share one lock,
+the message lock, whether or not cleanup has detached the row.
 
 ## Verification
 M1.5 adds no migration: the existing `(profile_id,created_at)` step-event index
@@ -235,7 +251,11 @@ no session — sets it once. Recovery shows the linked Pokémon row, or the pend
 encounter when no row exists, and joins the successful `catch_attempts.receipt_key` to
 `resource_ledger` catch_reward lines for Candy/Stardust, scoped to the same profile.
 Pre-M6.8u throw receipts keep the Pokémon UID; later ones hold none. No receipt/schema
-migration is needed. Done stores a pending catch with `caught_at=resolved_at`,
+migration is needed. D74: recovery of an unacknowledged result lasts one day for
+fled/ran and for catches already stored or sent (cleanup then deletes the encounter);
+a catch waiting for storage (no Pokemon row) stays recoverable until handled. `ack` on a
+selected encounter that no longer exists is treated as already acknowledged and
+returns home. Done stores a pending catch with `caught_at=resolved_at`,
 acknowledges and saves session selection/revision in one writer transaction.
 Upgrade includes its capacity expansion in that same transaction.
 Send on a pending catch writes its `sent` row, Candy, ledger line and receipt in
@@ -431,8 +451,9 @@ Only the latest legacy activation per profile may retain charges, and only when
 unexpired at migration time: max(0,10 - count of persisted encounters with that
 lure_id). Latest means descending starts_at, then insertion order for ties. All
 earlier effects and all expired effects receive zero, so a backward wall-clock
-change cannot revive earlier activations alongside the latest. Encounters are retained
-for the profile lifetime, so this uses durable consumption evidence without inventing
+change cannot revive earlier activations alongside the latest. Encounters were retained
+for the profile lifetime when this migration was written (D74 cleanup now deletes
+finished encounters), so this uses durable consumption evidence without inventing
 historical counts. Exhausted/expired effects never revive. Old receipts, inventory
 and frozen encounters are unchanged; legacy receipt replay still returns its original
 historical result. This intentionally breaks time-window behavior and the activation
@@ -523,6 +544,8 @@ replay, even when the marked profile is already absent. Other guilds, unrelated
 results, later profile IDs and the D28/D60 raid participation exception are preserved.
 This intentionally narrows immutable replay snapshots for privacy; replay of the
 retained terminal receipt cannot simulate or reward another battle. No migration.
+D74: that retained battle receipt exists for at most 2 days after the battle, and the
+`gym_battles` row for at most 1 hour; redacting an already pruned row is a no-op.
 EXG-20 adds weak in-memory deletion listeners, keyed by object identity (dict
 subclasses need no hash). After each profile delete, inside the writer job,
 `apply` notifies a snapshot of live listeners with `(guild_id, user_id)`.
@@ -736,6 +759,8 @@ signature changes. Tests: test_capacity.py and test_milestones.py.
 D45 and owner-approved PLAN Q5 add immutable migration 0013. On the first open
 of a pre-0013 database, each profile whose current route requires more than its
 own lifetime `coalesce(sum(step_events.awarded_c),0)` is moved to Refreshing Field.
+(This one-time backfill runs before migration 0034; afterwards the lifetime total is
+`profiles.steps_total_c`, D74.)
 Awards are integer hundredths, scoped by profile and therefore server (D10).
 Refreshing Field and Noisy Forest are free; Rugged Road, Beautiful Beach,
 Suburban Area, Dim Cave, Blue Lake and Volcano Path require 100000, 250000,
@@ -1324,6 +1349,47 @@ EXR-3 allows an EX-Raid level lock of 1-40 (level_x2 2-80); open EX levels
 and World Legendary levels still roll 20-25. Ordinary wild encounters are unchanged.
 Tests: tests/test_ex_raid.py, tests/test_raids.py, tests/test_encounters.py.
 
+## Owner amendment D74: data cleanup (2026-11-17), migration 0034
+Migration 0034 adds `profiles.catch_total` and `profiles.steps_total_c` (INTEGER NOT NULL
+DEFAULT 0, integer >= 0). `catch_total` is backfilled with the profile's successful
+`catch_attempts` joined to its encounters; a successful throw increments it by one in its
+own transaction (a replayed or refused throw does not). `steps_total_c` is backfilled
+with `sum(step_events.awarded_c)`; `stepping.credit_message` adds the message's
+`awarded_c` in the transaction of the award UPDATE. `profiles.lifetime_steps_c` (route
+unlocks) and the mod lookup's "Steps total" read `steps_total_c`; "Catches" reads
+`catch_total`. 0034 also adds the indexes `encounters(resolved_at)`,
+`gym_battles(created_at)`, `step_events(created_at)` and the partial
+`encounters_unclaimed ON encounters(resolved_at) WHERE state='caught' AND
+acknowledged_at IS NULL`; `research.auto_send` compares `resolved_at<=now-900`.
+
+Producer: `services/cleanup.py`. Consumer: the minute sweep, which runs
+`cleanup.sweep(conn, now, resume, batch=1000)` then `cleanup.reclaim(conn)` in one
+writer job after the other sweep steps, in its own try/except. `sweep` returns the
+leftover-receipt cursor (in memory; a restart starts over). Each run deletes:
+- encounters not tied to a live raid (`raid_spawn_id` naming a `world_spawns` row with
+  `ended=0`) that are acknowledged caught/fled/ran with `resolved_at <= now-3600`, or
+  unacknowledged with `resolved_at <= now-86400` and either fled/ran or caught with a
+  Pokemon row made from them; at most `batch` per run. Unacknowledged catches without a
+  Pokemon row and queued/revealed encounters are never deleted. For the batch it first
+  detaches reaction rows (`encounter_id` NULL), deletes the throw receipts (keys read from
+  `catch_attempts.receipt_key`), `run:<id>:*` receipts and `research:auto:<id>`, then the
+  encounters (throws cascade; `pokemon.source_encounter_id` and
+  `raid_participation.encounter_id` become NULL);
+- leftover `throw:<uuid>:*`, `run:<uuid>:*` and `research:auto:<uuid>` receipts whose
+  encounter no longer exists, examining at most 1,000 keys per kind per run in key order
+  from the cursor; keys of any other shape are never touched;
+- `step_events` with `created_at <= now-86400`, `gym_battles` with
+  `created_at <= now-3600`, and `battle:*` receipts with `created_at <= now-172800`,
+  at most `batch` each;
+- ended Arena runs that are not their profile's latest (`started_at`, then `run_id`),
+  at most 100 per run, with their `arena_fight`/`arena_use`/`arena_heal` receipts.
+Ledger lines cascade from their receipts. `reclaim` runs `PRAGMA incremental_vacuum(N)`,
+N = min(1000, freelist_count), stepped to completion; on a database not in incremental
+mode it frees nothing. Message ID deduplication (C2) therefore holds for 24 hours.
+Rollback: older code ignores the new columns and indexes (lifetime totals then read the
+pruned `step_events`). Tests: tests/test_cleanup.py, tests/test_mod.py,
+tests/test_deploy_script.py.
+
 ## Owner amendment D73: looks and the Eternal tier (2026-11-17), migration 0033
 The artifact gains `looks`: 119 records {look_id (= form_id), species_id, pokemon_id,
 base_identity_id, form_id, form_key, name_en, sprites}. Eternal Floette joins `identities`
@@ -1613,6 +1679,9 @@ fight(conn,session,run_id,revision,now,rng,content,multipliers,battle_rules,char
 uses the ARENA-8 writer/session/expiry and stale-run guards before any battle.
 Paused members and live runs in a server now switched off may continue; excluded
 members cannot. Its profile-owned receipt is arena_fight:<run_id>:<floor>:<slot>.
+D74: Arena receipts are not kept forever: when cleanup prunes a run that is not its
+profile's latest, its `arena_fight:<run>:…`, `arena_use:<run>:…` and
+`arena_heal:<run>:…` receipts and their ledger lines go with it.
 It builds Combatants from the stored snapshots, replacing each party member's
 starting HP with current hp in party order. The stored enemy and battle_hp feed
 battle.simulate with the injected gym rules and type chart; party_max does not
@@ -2004,7 +2073,8 @@ Migration 0029 adds nullable REAL `profiles.arena_cooldown_reset_at` and
 resets. Resets clear the stored timestamp to NULL for checkin (`last_checkin_at`), gym
 battle (`last_battle_at`), daily trade (`last_trade_at`), trade ping
 (`last_trade_ping_at`) and feeding (`gym_deployments.last_fed_at` on the player's live
-deployments). Arena run history and the force-raid audit rows are never rewritten:
+deployments). Arena run history (pruned by D74 to each profile's latest run, which is
+all the cooldown reads) and the force-raid audit rows are never rewritten:
 the Arena cooldown is zero when `arena_cooldown_reset_at >= ` the latest run's
 `started_at`, and the force-raid cooldown ignores a last force raid at or before
 `force_raid_reset_at`. Rollback: older code ignores both columns.

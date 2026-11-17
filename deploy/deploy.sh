@@ -81,6 +81,7 @@ as_bot() {
         -p "LoadCredential=discord_token:$config/credentials/discord_token" \
         -p "LoadCredential=heartbeat_url:$config/credentials/heartbeat_url" \
         -p RuntimeDirectory=pokewalker -p RuntimeDirectoryPreserve=yes \
+        -p "Environment=SQLITE_TMPDIR=$root/var/lib/pokewalker" \
         "$directory/.venv/bin/python" "$@"
 }
 as_bot "$release" -m pokewalker check-config >/dev/null 2>&1 || refuse
@@ -184,7 +185,32 @@ if [[ -n $restore ]]; then
     [[ $(sqlite3 -readonly "$restore" 'PRAGMA integrity_check;') == ok ]] || rollback
     sqlite3 "$database" ".restore \"$restore\"" >/dev/null 2>&1 || rollback
 fi
+if [[ -n $previous ]]; then
+    # D74: upgrade migrations and the one-time VACUUM run with the bot stopped, outside the
+    # readiness wait, with the release's own Python and patched SQLite. Its output is the record.
+    as_bot "$release" -m pokewalker migrate || rollback
+fi
 activate "$release" && start || rollback
+
+# D74: keep this release, the previous one and the newest other complete release; every other
+# release-named entry (incomplete builds and orphaned .root copies too) only costs disk.
+spare=
+spare_time=
+for old in "$base"/releases/*; do
+    [[ ${old##*/} =~ ^[0-9a-fA-F]{40}$ && -d $old && ! -L $old && -f $old/.complete ]] || continue
+    [[ $old != "$release" && $old != "$previous" ]] || continue
+    when=$(stat -c %Y -- "$old") || continue
+    if [[ -z $spare ]] || ((when > spare_time)); then
+        spare=$old
+        spare_time=$when
+    fi
+done
+for old in "$base"/releases/*; do
+    [[ ${old##*/} =~ ^[0-9a-fA-F]{40}(\.root)?$ ]] || continue
+    kept=${old%.root}
+    [[ $kept != "$release" && $kept != "$previous" && $kept != "$spare" ]] || continue
+    rm -rf -- "$old" || printf 'deploy: warning: could not remove old release %s\n' "$old" >&2
+done
 
 while read -r scope hash; do
     printf 'deploy: manifest %s SHA256: %s\n' "$scope" "$hash"

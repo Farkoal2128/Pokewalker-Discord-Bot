@@ -90,6 +90,8 @@ stat)
         else printf '0:700\n'; fi ;;
     "$root/run/pokewalker-deploy/lock") printf '0:600\n' ;;
     "$root/opt/pokewalker/releases/"*)
+        # D74 release retention orders other releases by their real mtime.
+        [[ $2 != %Y ]] || exec /usr/bin/stat "$@"
         if [[ -e "$root/fixture/release-owner" ]]; then
             printf '%s\n' "$(< "$root/fixture/release-owner")"
         else printf '0\n'; fi ;;
@@ -113,6 +115,11 @@ build_release.sh)
 systemd-run)
     [[ ! -e "$root/fixture/check-fail" ]] || exit 1
     printf 'bot-env|%s|%s\n' "${DISCORD_TOKEN-unset}" "${OPERATOR_ONLY-unset}" >> "$root/calls"
+    if [[ ${!#} == migrate ]]; then
+        [[ ! -e "$root/fixture/migrate-fail" ]] || exit 1
+        printf 'migrate: database converted to incremental auto-vacuum\n'
+        exit 0
+    fi
     for arg in "$@"; do
         if [[ $arg == */.venv/bin/python ]]; then
             release=${arg%/.venv/bin/python}
@@ -176,6 +183,11 @@ sqlite3)
         printf 'ok\n'
     fi ;;
 sleep|chown) : ;;
+rm)
+    if [[ -e "$root/fixture/rm-fail" && " $* " == *" $(< "$root/fixture/rm-fail") "* ]]; then
+        exit 1
+    fi
+    exec /usr/bin/rm "$@" ;;
 install) [[ $1 != -d ]] || exec /usr/bin/mkdir -p -- "${!#}"  # owners need real root
          exec /usr/bin/install "$@" ;;
 ln) MSYS=winsymlinks:nativestrict exec /usr/bin/ln "$@" ;;
@@ -380,6 +392,109 @@ esac
         self.assertFalse(Path(f"{self.release_path(NEW)}.root").exists())
         # A rollback reinstalls the previous release's units, which may predate root ownership.
         self.assertIn(f"chown|-R|root:root|--|{shell_path(self.release_path(OLD).resolve())}", self.calls)
+
+    def releases(self):
+        return sorted(path.name for path in (self.root / "opt/pokewalker/releases").iterdir())
+
+    def old_releases(self):
+        """D74: five extra releases (the newest incomplete), an upper-case sha and an orphaned .root."""
+        stamp = time.time() - 10 * 86400
+        names = [f"{index:040x}" for index in range(1, 6)]
+        for age, sha in enumerate(names):
+            self.release(sha)
+            os.utime(self.release_path(sha), (stamp - age * 3600, stamp - age * 3600))
+        (self.release_path(names[0]) / ".complete").unlink()  # newest, but an incomplete build
+        os.utime(self.release_path(names[0]), (stamp + 3600, stamp + 3600))
+        upper = "C" * 40
+        self.release(upper)
+        os.utime(self.release_path(upper), (stamp - 86400, stamp - 86400))
+        (self.root / "opt/pokewalker/releases" / ("d" * 40 + ".root")).mkdir()
+        (self.root / "opt/pokewalker/releases" / "notes").mkdir()  # not a release name: never touched
+        os.utime(self.release_path(OLD), (1, 1))  # the oldest of all, kept as the previous release
+        return names
+
+    def test_upgrade_keeps_new_previous_and_newest_other_complete_release(self):
+        names = self.old_releases()
+        self.assertEqual(self.run_deploy(), 0, self.output)
+        self.assertEqual(self.releases(), sorted([NEW, OLD, names[1], "notes"]))
+
+    def test_redeploy_of_the_same_sha_keeps_two(self):
+        self.current.unlink()
+        self.current.symlink_to(self.release_path(NEW), target_is_directory=True)
+        names = self.old_releases()
+        self.assertEqual(self.run_deploy(), 0, self.output)
+        self.assertEqual(self.releases(), sorted([NEW, names[1], "notes"]))
+
+    def test_rollback_and_failure_exits_prune_nothing(self):
+        for status, settings in ((20, {"ready": "0 1"}), (40, {"backup": "1"}),
+                                 (50, {"ready": "0 1", "schema": "2"})):
+            with self.subTest(status=status):
+                for path in (self.root / "opt/pokewalker/releases").iterdir():
+                    if path.name not in (OLD, NEW):
+                        shutil.rmtree(path)
+                (self.fixture / "starts").unlink(missing_ok=True)
+                self.setting("ready", "1 1")
+                self.setting("schema", "1")
+                self.setting("backup", "0")
+                for name, value in settings.items():
+                    self.setting(name, value)
+                self.old_releases()
+                before = self.releases()
+                self.assertEqual(self.run_deploy(), status, self.output)
+                self.assertEqual(self.releases(), before)
+                self.current.unlink()
+                self.current.symlink_to(self.release_path(OLD), target_is_directory=True)
+
+    def test_failed_release_removal_warns_and_deploy_succeeds(self):
+        names = self.old_releases()
+        self.setting("rm-fail", shell_path(self.release_path(names[2])))
+        self.assertEqual(self.run_deploy(), 0, self.output)
+        self.assertIn(names[2], self.releases())
+        self.assertNotIn(names[3], self.releases())
+        self.assertIn("warning", self.output.lower())
+
+    def test_upgrade_migrates_as_bot_after_backup_before_switch(self):
+        self.assertEqual(self.run_deploy(), 0, self.output)
+        call = next(i for i, line in enumerate(self.calls) if line.startswith("systemd-run|") and line.endswith("|migrate"))
+        line = self.calls[call]
+        release = shell_path(self.release_path(NEW))
+        self.assertIn(f"|{release}/.venv/bin/python|-m|pokewalker|migrate", line)
+        for prop in ("User=pokewalker", f"WorkingDirectory={release}",
+                     "Environment=SQLITE_TMPDIR=" + shell_path(self.root / "var/lib/pokewalker"),
+                     "EnvironmentFile=" + shell_path(self.root / "etc/pokewalker/runtime.env")):
+            self.assertIn("|-p|" + prop, line)
+        events = [entry.split("|", 1)[0] for entry in self.calls]
+        stop = self.calls.index("systemctl|stop|pokewalker-bot.service")
+        self.assertLess(stop, call)
+        self.assertLess(events.index("backup.sh"), call)
+        self.assertLess(call, events.index("mv"))
+        self.assertLess(call, self.calls.index("systemctl|start|pokewalker-bot.service"))
+        self.assertIn("migrate: database converted", self.output)
+
+    def test_migrate_runs_after_an_explicit_restore(self):
+        snapshot = self.root / "explicit snapshot.sqlite3"
+        snapshot.write_text("synthetic snapshot", encoding="utf-8")
+        self.assertEqual(self.run_deploy(NEW, "--restore-db", shell_path(snapshot)), 0, self.output)
+        restore = next(i for i, line in enumerate(self.calls) if ".restore" in line)
+        call = next(i for i, line in enumerate(self.calls) if line.endswith("|migrate"))
+        self.assertLess(restore, call)
+
+    def test_migrate_failure_rolls_back(self):
+        self.setting("migrate-fail", "1")
+        self.assertEqual(self.run_deploy(), 20, self.output)
+        self.assertEqual(self.current.resolve().name, OLD)
+        self.assertTrue(self.ready.exists())
+        self.setting("schema", "2")  # migrate applied a migration the previous release lacks
+        self.ready.unlink()
+        self.assertEqual(self.run_deploy(), 50, self.output)
+        self.assertEqual(self.current.resolve().name, OLD)
+        self.assertFalse(self.ready.exists())
+
+    def test_first_install_skips_migrate(self):
+        self.current.unlink()
+        self.db.unlink()
+        self.assertEqual(self.run_deploy(), 0, self.output)
+        self.assertFalse(any(line.endswith("|migrate") for line in self.calls))
 
     def test_link_out_of_the_release_is_refused(self):
         # A link could let pokewalker-deploy change, after the build, what root's units run.

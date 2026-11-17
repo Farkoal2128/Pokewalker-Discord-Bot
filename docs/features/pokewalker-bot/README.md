@@ -640,6 +640,40 @@ Eternal tier, rolled like one Legendary; trades unlock looks too.
   catch rate, flee chance and rewards, is protected from research like one, and counts as a
   special (boss) Arena enemy.
 
+### Data cleanup (D74, owner request 2026-11-17)
+
+The owner asked: "Finished encounters do not need to last more than a day, much less a month.
+Find an appropriate clean up clock for them. Same with throw records. Same with gym battle
+logs. Same with finished arena runs." They approved giving freed space back to the disk,
+cleaning up old releases, the sweep index, a running lifetime steps counter with chat-message
+records deleted after 24 hours, and deleting throw, Run and auto-research receipts with their
+encounter and gym battle receipts after 2 days.
+
+- **D74: Cleanup clocks.** Once a minute, in batches of 1,000 (Arena: 100 runs), the sweep
+  deletes: a finished encounter and its throws an hour after its result once it is closed,
+  or 24 hours after a fled/ran result or an already stored/sent catch that was never closed
+  (a catch waiting for storage stays until handled; a raid encounter waits until its raid has
+  ended); the throw, Run and auto-research receipts of those encounters, and leftover ones
+  whose encounter is already gone; chat step records after 24 hours; the internal
+  `gym_battles` copy after 1 hour and battle receipts (the battle log players see) after 2
+  days; every Arena run except each profile's latest, with its fight, item and heal receipts.
+  Ledger lines go with their receipts. Stored Pokémon keep everything but the link to the
+  encounter; a ❗ reaction row is detached, not deleted, and still removed on the next
+  `/walker`. Other receipts, finds, moderation audit and world spawns are not touched.
+- **D74: Lifetime counters.** `profiles.steps_total_c` (route unlocks, mod "Steps total") and
+  `profiles.catch_total` (mod "Catches") keep lifetime totals after their records are
+  pruned. The research auto-send reads a partial index instead of scanning every encounter.
+- **D74: Space reclaim.** New databases use incremental auto-vacuum; an upgrade deploy runs
+  `python -m pokewalker migrate` with the bot stopped, which applies migrations and converts
+  the file once with VACUUM when enough disk is free (otherwise it warns and the next deploy
+  retries). The sweep then returns up to 1,000 free pages a minute; the WAL is capped at 64 MiB
+  after checkpoints.
+- **D74: Releases.** A deploy keeps the new release, the previous one and the newest other
+  complete one, and deletes other old builds from `/opt/pokewalker/releases`.
+- Visible changes: the privacy text, and an unclosed result older than a day no longer
+  reappears. No game screen text changes. The stated clocks hold once the backlog drains
+  (about 17 hours per million encounters at 1,000 a minute).
+
 ## Platform constraints
 
 - Reading message text needs the privileged Message Content intent. Discord reviews

@@ -32,9 +32,13 @@ class RouteTests(unittest.IsolatedAsyncioTestCase):
         return interaction.edit_original_response.await_args.kwargs, await self.current(session)
 
     async def seed_steps(self, awarded_c=1_800_000, profile_id=None, message_id='route-history'):
-        await self.writer.run(lambda conn: conn.execute(
-            "INSERT INTO step_events VALUES (?,?, '789',18000,18000,0,?,'credited',0)",
-            (message_id, profile_id or self.profile['profile_id'], awarded_c)))
+        async def seed(conn):
+            await conn.execute("INSERT INTO step_events VALUES (?,?, '789',18000,18000,0,?,'credited',0)",
+                               (message_id, profile_id or self.profile['profile_id'], awarded_c))
+            # D74: the lifetime total is the profile counter credit_message keeps in step.
+            await conn.execute("UPDATE profiles SET steps_total_c=steps_total_c+? WHERE profile_id=?",
+                               (awarded_c, profile_id or self.profile['profile_id']))
+        await self.writer.run(seed)
 
     async def snapshot(self):
         tables = await self.rows("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")

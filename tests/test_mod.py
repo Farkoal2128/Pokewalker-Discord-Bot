@@ -152,6 +152,8 @@ class ModTests(unittest.IsolatedAsyncioTestCase):
         encounter = (await self.rows("encounters"))[0]["encounter_id"]
         await self.conn.execute("INSERT INTO catch_attempts(encounter_id,ordinal,ball,p,success,fled,created_at) "
                                 "VALUES (?,0,'poke_ball',1,1,0,9000)", (encounter,))
+        # D74: lifetime totals live in counters kept in step with these rows.
+        await self.conn.execute("UPDATE profiles SET steps_total_c=375,catch_total=1 WHERE profile_id=?", (pid,))
         with patch.object(self.module.time, "time", return_value=10000):
             await self.change("pause")
             await self.change("share-ban")
@@ -355,6 +357,8 @@ class ModTests(unittest.IsolatedAsyncioTestCase):
                                    [("otherguild", "999", "789"), ("othermember", "123", "888")])
         await self.conn.executemany("INSERT INTO step_events VALUES (?,?, '1',10,8,2,9000,'credited',9999)",
                                    [("elsewhere", "otherguild"), ("someoneelse", "othermember")])
+        await self.conn.execute("UPDATE profiles SET steps_total_c=9000,catch_total=9 "
+                                "WHERE profile_id IN ('otherguild','othermember')")
         with patch.object(self.module.time, "time", return_value=10000):
             await self.invoke("status", member=self.member)
         self.assertIn("Steps total: 0", self.text())
@@ -362,11 +366,25 @@ class ModTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Queue size: 1", self.text())
         self.assertEqual(profile["guild_id"], "123")
 
+    async def test_lifetime_totals_survive_pruned_records(self):
+        # D74: cleanup prunes step records after a day and throws with their encounter.
+        profile = await self.enroll()
+        await self.conn.execute("UPDATE profiles SET steps_total_c=50000,catch_total=7 WHERE profile_id=?",
+                                (profile["profile_id"],))
+        await self.conn.execute("INSERT INTO step_events VALUES ('recent',?,'1',1,1,0,100,'credited',9990)",
+                                (profile["profile_id"],))
+        with patch.object(self.module.time, "time", return_value=10000):
+            await self.invoke("status", member=self.member)
+        self.assertIn("Steps last hour: 1.00", self.text())
+        self.assertIn("Steps total: 500.00", self.text())
+        self.assertIn("Catches: 7", self.text())
+
     async def test_large_step_totals_and_audit_times_keep_precision(self):
         profile = await self.enroll()
         now = 1793823456.789
         await self.conn.execute("INSERT INTO step_events VALUES ('precise',?,'1',1,1,0,123456789,'accepted',?)",
                                 (profile["profile_id"], now))
+        await self.conn.execute("UPDATE profiles SET steps_total_c=123456789 WHERE profile_id=?", (profile["profile_id"],))
         with patch.object(self.module.time, "time", return_value=now):
             await self.change("pause")
             await self.invoke("status", member=self.member)
@@ -395,6 +413,7 @@ class ModTests(unittest.IsolatedAsyncioTestCase):
             "accepted_words,discarded_words,awarded_c,reason,created_at) VALUES (?,?,'1',?,?,?,?,?,?)",
             [(mid, owner, discarded + accepted, accepted, discarded, awarded, reason, at)
              for mid, owner, discarded, accepted, awarded, reason, at in events])
+        await self.conn.execute("UPDATE profiles SET steps_total_c=100 WHERE profile_id=?", (pid,))
         before = await self.rows("step_events")
         with patch.object(self.module.time, "time", return_value=now):
             await self.invoke("status", member=self.member)

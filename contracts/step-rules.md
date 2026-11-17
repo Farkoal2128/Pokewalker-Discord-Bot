@@ -60,7 +60,9 @@ Changes to counting, windows, decision fields or formats require consumer review
 channel_id, *, content, rng, cache=None)` requires
 the caller's writer transaction and returns the first newly minted encounter ID
 for any message that mints an encounter, otherwise None. The profile is refreshed inside
-the job and restrictions are checked again. Message IDs deduplicate durably.
+the job and restrictions are checked again. Message IDs deduplicate durably for 24
+hours (D74 cleanup deletes step records after a day; the gateway never redelivers a
+MESSAGE_CREATE that late, and `step_events.created_at` is the message's own time).
 Accepted history uses SQL message times in `(at-window, at]`, across channels;
 future records never contribute. Duplicate digests live only in a bounded
 per-profile in-process LRU with a random ephemeral HMAC key. Only committed,

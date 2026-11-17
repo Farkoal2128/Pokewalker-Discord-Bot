@@ -1469,6 +1469,7 @@ class RaidStartupTests(unittest.IsolatedAsyncioTestCase):
         bot.reactions = SimpleNamespace(startup_sweep=AsyncMock())
         bot.heartbeat.start = Mock()
         bot._sweep_once = AsyncMock()
+        bot._cleanup_once = AsyncMock()
         self.addAsyncCleanup(bot.drain)
         return bot
 
