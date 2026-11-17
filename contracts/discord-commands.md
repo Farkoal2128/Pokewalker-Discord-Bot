@@ -723,7 +723,7 @@ Existing command shapes, persisted data and lifecycle exit meanings are compatib
 Tests: test_admin.py, test_client_lifecycle.py and affected adapter/config regressions.
 Live Discord, systemd restart handling and host acceptance remain unverified.
 
-### EX-Raid manager (additive, EXR-9)
+### EX-Raid manager (additive, EXR-9/EXR-10)
 
 `/admin ex-raid pokemon:<autocomplete> [server_id] [shiny] [level] [iv_attack]
 [iv_defense] [iv_stamina] [duration]` registers only in the admin guild. Only
@@ -743,10 +743,36 @@ Autocomplete is only a hint. Submit accepts only a known identity ID; free text
 and unknown IDs receive "Pick a Pokémon from the list." Invalid level, IV or
 duration receives "Level must be 1-40, each IV 0-15 and the duration 1-24 hours."
 Invalid server ID receives "Server ID must be a Discord ID." Refusals write nothing.
-A valid submit shows a private EX-Raid preview with boss Dex number, name and sprite,
-each lock or "rolled per player", duration, and server ID or "none chosen".
-This step writes no draft or spawn and sends no server announcement. Producers are
-Admin and admin_ex_raid; consumers are configured owners and explicit admin-guild
+A valid submit opens an in-memory, owner-bound draft in `admin.ex_raid_drafts`:
+identity, five locks, hours, server ID or None, `all_servers=False`, revision zero,
+one stable send ID for its lifetime, `state='editing'`, `discard_pending=False`,
+and an absolute monotonic deadline of `bot.clock() + 900`. An unknown server
+receives "The bot has no data for server <id>." and opens no draft.
+
+The private preview shows send ID, boss Dex number, name and sprite, each lock or
+"rolled per player", duration, and target: "server <id>", "all servers", or
+"none chosen: press All servers". Without a server ID no target is selected;
+only an explicit All servers press selects every persisted server. It increments
+the revision and redraws without changing the send ID or deadline. All servers is
+shown only before a target is chosen; Cancel is always shown. Confirm arrives
+in EXR-11.
+
+Once targeted, Counts (provisional) lists targeted servers, servers that will get
+it, and counts for raids off, no raid channel, no permission or bot not in server,
+raid channel changed, and EX-Raid already live. Zero spawning adds "Nothing would
+spawn." Counts use `raids.ex_target` in a writer job, UTC `bot.walker.clock()`,
+and gateway-only `bot.get_guild` plus `raids.checked_channel`; previews write
+nothing, including no expiry settlement, spawn or announcement.
+
+The view subclasses EX-Gift's OwnerView: every press privately defers and checks
+the configured draft owner, admin guild, absolute deadline, shared 30-per-minute
+`admin.gift_callbacks` bucket and exclusion, then rechecks registry identity and
+editing state after awaits. Expiry refuses "This EX-Raid draft expired. Run
+/admin ex-raid again." Cancel, expiry and view timeout discard the draft, stop
+the view and remove it from the registry. Discard during sending marks pending
+discard. Cancel leaves "EX-Raid draft cancelled." with no controls or embed.
+Restart leaves old controls without registered handlers or acknowledgement.
+No persisted draft state is added. Producers are Admin and admin_ex_raid; consumers are configured owners and explicit admin-guild
 command sync. This is additive; global commands and persisted formats are unchanged.
 Tests: test_admin_ex_raid.py and test_client_lifecycle.py. Live Discord is unverified.
 

@@ -45,6 +45,7 @@ class Admin(app_commands.Group):
         self.error_handler = ErrorBuffer()
         self.requests = {}
         admin_gift.attach(self)
+        admin_ex_raid.attach(self)
 
     def attach_errors(self):
         root = logging.getLogger()
