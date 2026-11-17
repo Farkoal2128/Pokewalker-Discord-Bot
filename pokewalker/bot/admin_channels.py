@@ -385,7 +385,7 @@ class WalkerAdmin(app_commands.Group):
                          + (" Runs already started can be finished, and tickets can still be redeemed."
                             if on == "off" else ""))
 
-    @app_commands.command(name="raids", description="Enable or disable World Legendary spawns in this server")
+    @app_commands.command(name="raids", description="Enable or disable raids (World Legendary and EX-Raid) in this server")
     @app_commands.choices(on=[app_commands.Choice(name="on", value="on"), app_commands.Choice(name="off", value="off")])
     async def raids(self, interaction: discord.Interaction, on: str, reason: str,
                     channel: discord.TextChannel | None = None):
