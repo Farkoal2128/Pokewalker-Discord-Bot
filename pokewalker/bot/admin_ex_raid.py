@@ -1,5 +1,7 @@
-"""EX-Raid catalog picker and owner-bound, read-only draft preview (C5)."""
+"""EX-Raid catalog picker and owner-bound send manager (C5)."""
 
+import asyncio
+from datetime import datetime, timezone
 from difflib import get_close_matches
 import unicodedata
 from types import SimpleNamespace
@@ -35,11 +37,13 @@ def discard(draft):
 
 async def target_counts(admin, guild_id):
     bot = admin.bot
-    def checked(guild_id, channel_id):
-        guild = bot.get_guild(int(guild_id))
-        return None if guild is None else raids.checked_channel(guild, guild_id, channel_id)
     return await bot.writer.run(lambda conn: raids.ex_target(
-        conn, guild_id, bot.walker.clock(), checked))
+        conn, guild_id, bot.walker.clock(), lambda g, c: checked_channel(bot, g, c)))
+
+
+def checked_channel(bot, guild_id, channel_id):
+    guild = bot.get_guild(int(guild_id))
+    return None if guild is None else raids.checked_channel(guild, guild_id, channel_id)
 
 
 def _fold(text):
@@ -116,6 +120,9 @@ class RaidView(admin_gift.OwnerView):
             discard(draft)
             await self.refuse(interaction, EXPIRED)
             return False
+        if draft.state == 'sent':
+            await self.receipt(interaction)
+            return False
         if draft.state != 'editing':
             await self.refuse(interaction, 'This EX-Raid is being sent.')
             return False
@@ -157,6 +164,14 @@ class RaidView(admin_gift.OwnerView):
                 await self.action(interaction, action)
             item.callback = callback
             self.add_item(item)
+        revision = draft.revision
+        confirm = discord.ui.Button(label='Confirm', row=0,
+            custom_id=f'ex_raid_confirm:{draft.draft_id}:{revision}',
+            disabled=draft.guild_id is None and not draft.all_servers)
+        async def confirm_callback(interaction):
+            await self.confirm(interaction, revision)
+        confirm.callback = confirm_callback
+        self.add_item(confirm)
         identity = draft.identity
         title = f"EX-Raid: #{identity['species_id']:03d} {identity['name_en']}"
         lines = [f'Send ID: {draft.send_id}', title]
@@ -179,3 +194,79 @@ class RaidView(admin_gift.OwnerView):
             embed.set_image(url=sprite)
         await interaction.edit_original_response(content='\n'.join(lines), embed=embed,
             view=self, allowed_mentions=discord.AllowedMentions.none())
+
+    async def receipt(self, interaction, snapshot=None):
+        result = snapshot if snapshot is not None else self.draft.result
+        identity = self.draft.identity
+        lines = [f"Send ID: {result['ex_raid_id']}",
+                 f"EX-Raid: #{identity['species_id']:03d} {identity['name_en']}"]
+        for name, key in (('Shiny', 'shiny'), ('Level', 'level'), ('Attack IV', 'iv_attack'),
+                          ('Defense IV', 'iv_defense'), ('Stamina IV', 'iv_stamina')):
+            value = result[key]
+            lines.append(f"{name}: {value if value is not None else 'rolled per player'}")
+        hours, guild_id = result['hours'], result['guild_id']
+        end = datetime.fromtimestamp(result['created_at'] + hours * 3600, timezone.utc).isoformat()
+        lines.extend((f'Duration: {hours} hour' + ('s' if hours != 1 else ''),
+            f'Target: {"all servers" if guild_id is None else f"server {guild_id}"}',
+            f'End UTC: {end}', 'Counts (committed)', f"Targeted servers: {result['servers']}",
+            f"Servers that got it: {result['spawned']}"))
+        lines.extend(f"{label}: {result['skipped'].get(reason, 0)}" for reason, label in SKIP_LABELS)
+        await interaction.edit_original_response(content='\n'.join(lines), view=None, embed=None,
+            allowed_mentions=discord.AllowedMentions.none())
+
+    async def confirm(self, interaction, revision):
+        if not await self.editable(interaction):
+            return
+        draft, bot = self.draft, self.draft.admin.bot
+        if revision != draft.revision or (draft.guild_id is None and not draft.all_servers):
+            await self.refuse(interaction, 'This preview is out of date. Nothing was sent.')
+            return
+        snapshot = [None]
+        def live():
+            return (draft.admin.ex_raid_drafts.get(draft.draft_id) is draft
+                    and draft.state == 'sending' and not draft.discard_pending
+                    and bot.clock() < draft.deadline)
+        async def job(conn):
+            if not live():
+                return {'status': 'expired'}
+            result = await raids.ex_commit(conn, send_id=draft.send_id, owner_id=draft.owner_id,
+                admin_guild_id=bot.settings.admin_guild_id, identity_id=draft.identity['identity_id'],
+                locks=draft.locks, hours=draft.hours, guild_id=draft.guild_id,
+                now=bot.walker.clock(), content=bot.content,
+                checked=lambda g, c: checked_channel(bot, g, c))
+            if not live():
+                raise admin_gift._Expired
+            return result
+        def record(result):
+            snapshot[0] = result
+            if result['status'] == 'sent':
+                draft.state, draft.result = 'sent', result
+                if not result['replayed']:
+                    bot.announce_ex_raid(result['ex_raid_id'])
+        async def settle():
+            try:
+                result = await bot.writer.run(job, after_commit=record)
+                if result['status'] == 'expired':
+                    draft.discard_pending = True
+            except admin_gift._Expired:
+                draft.discard_pending = True
+            except (Exception, asyncio.CancelledError):
+                pass
+            finally:
+                if draft.state == 'sending':
+                    draft.state = 'editing'
+                if draft.discard_pending or bot.clock() >= draft.deadline:
+                    discard(draft)
+        draft.state = 'sending'
+        draft.task = asyncio.create_task(settle())
+        await asyncio.shield(draft.task)
+        result = snapshot[0]
+        if result is not None and result['status'] == 'sent':
+            await self.receipt(interaction, result)
+        elif result is not None and result['status'] == 'nothing':
+            text = 'Nothing was sent: no server could get this EX-Raid.'
+            text += '\n' + '\n'.join(f"{label}: {result['skipped'].get(reason, 0)}"
+                                     for reason, label in SKIP_LABELS)
+            await self.refuse(interaction, text)
+        else:
+            await self.refuse(interaction, 'Nothing was sent.')
