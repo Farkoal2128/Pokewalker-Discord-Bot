@@ -63,7 +63,7 @@ One milestone, every row briefed. Order: schema and services (steps 2-6), announ
 - **D9 Picker.** `suggest(content, text)`: exact Dex number, name prefix, substring, then `difflib`; case- and accent-insensitive; at most 25; label `#006 Charizard`, value `identity_id`. The autocomplete callback checks admin guild and owner in memory and returns `[]` otherwise.
 - **D10 Wording.** EX strings per R8, chosen by `world_spawns.kind`. Help and the privacy text land last.
 
-**Readings and corrections of the synthesis.** None changes an XR item or the intent of an R item.
+**Synthesis readings.** XR and R intent unchanged.
 - R6 settlement: the outcome is kept (a refusal writes nothing; an overdue EX-Raid never blocks; a live World Legendary is untouched), the mechanism differs. Guards read liveness by `expires_at`, and `expire` runs only when a spawn will be inserted. `Writer.run` rolls back only on an exception (`db/__init__.py:110-131`), so settle-then-return-a-refusal would have committed the settlement.
 - §3 cites `bot/walker.py:184-186` for the pending-catch list (it is `:183-185`) and `0015_raids.sql:20-31` for queue isolation (the triggers are `:27-38`).
 - §5 "both command-manifest pins": no test pins a literal hash (Pins above); the exact pin is the subcommand set.
@@ -123,7 +123,7 @@ Build rows are `seam`: at most 2 production files and 300 production lines; test
 | 7 | [EXR-6](tickets/EXR-6.md) announcements: EX title, failure isolation, bot-owned fan-out | build | seam | M | ✅ done · 3ec402e · GO review r1 |
 | 8 | [EXR-7](tickets/EXR-7.md) catch and Back | build | seam | S | ✅ done · ace1378 · GO review r1 after fixture fix |
 | 9 | [EXR-8](tickets/EXR-8.md) `/raid` chooser, wording, description | build | seam | M | ✅ done · 6d79405 · GO review r1 after fixture fix |
-| 10 | [EXR-9](tickets/EXR-9.md) `/admin ex-raid`: options, autocomplete, validation | build | seam | M | pending |
+| 10 | [EXR-9](tickets/EXR-9.md) `/admin ex-raid`: options, autocomplete, validation | build | seam | M | ✅ done · 1d505ca · GO review r1 after fixture fix |
 | 11 | [EXR-10](tickets/EXR-10.md) preview draft: target, All servers, counts, Cancel | build | seam | M | pending |
 | 12 | [EXR-11](tickets/EXR-11.md) Confirm: states, commit, fan-out, receipt | build | seam | M | pending |
 | 13 | [EXR-12](tickets/EXR-12.md) `/admin ex-raid-history` | build | seam | S | pending |
