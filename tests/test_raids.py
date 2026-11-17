@@ -1645,10 +1645,10 @@ class RaidCommandTests(unittest.IsolatedAsyncioTestCase):
     async def test_raid_none_active_explains(self):
         for guild in (123, 999):
             screen = await self.invoke(guild=guild)
-            self.assertEqual(self.rendered(screen)['content'], 'No World Legendary is active here.')
+            self.assertEqual(self.rendered(screen)['content'], 'No raid is active here.')
         await self.active()
         screen = await self.invoke(guild=999)
-        self.assertEqual(self.rendered(screen)['content'], 'No World Legendary is active here.')
+        self.assertEqual(self.rendered(screen)['content'], 'No raid is active here.')
         self.assertEqual(await self.rows(), [])
         self.assertEqual(await self.rows('SELECT * FROM raid_participation'), [])
 
@@ -1828,7 +1828,7 @@ class RaidCommandTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.session())['expires_at'], 5400)
         self.assertEqual((await self.raid_row())['created_at'], 4500)
         self.now = 4600
-        self.assertEqual(self.rendered(await self.invoke())['content'], 'No World Legendary is active here.')
+        self.assertEqual(self.rendered(await self.invoke())['content'], 'No raid is active here.')
 
     async def test_command_guild_only_and_ephemeral(self):
         from pokewalker.bot.client import WalkerBot

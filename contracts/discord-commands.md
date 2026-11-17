@@ -1,19 +1,32 @@
 # Contract: Discord command and lifecycle boundary (C5)
 
-## C5: M8.3b private World Legendary join and reopen (additive)
-Under D60 and Q12, guild-only `/raid` defers ephemerally before its writer job.
+## C5: M8.3b private raid join, chooser and reopen (additive)
+Under D60 and Q12, guild-only `/raid`, described as "Join or reopen an active raid",
+defers ephemerally before its writer job.
 It joins using Walker.clock(), Walker.rng and the configured content artifact.
-No live spawn in this guild says "No World Legendary is active here." Unenrolled,
+No live spawn in this guild says "No raid is active here." Unenrolled,
 excluded and opted-out members receive the existing private enrollment/access refusal.
 `/raid` with a pending catch opens its menu without joining. After opt-out and,
 for an existing profile, exclusion checks, it creates a normal Walker session and
 opens the pending menu before looking for a spawn; no participation, raid encounter
 or Lure use occurs. A pending World Legendary survives spawn expiry and is exempt
 from auto-send, holding the catch lock until confirmed.
+After those checks, one live spawn opens directly. Two live spawns open a normal
+Walker session with selection `{'raid_choices': {'world': <spawn_id>, 'ex': <spawn_id>}}`
+and text "Two raids are active here. Choose one." Buttons are
+"World Legendary: <name> · ends <UTC>" (`raid_pick_world`) and
+"EX-Raid: <name> · ends <UTC>" (`raid_pick_ex`), each cut at 80 characters.
+A pick reads only its kind's saved spawn ID; missing choices refuse with Walker's
+REOPEN message. A pick never accepts a spawn ID from the client. Both actions check
+for a pending catch first, including one caught after the chooser opened elsewhere.
+Command and picks share entry: join the selected spawn by ID; `none` says
+"That raid has ended.", including when another spawn of that kind replaced it.
+A player may join both kinds once each; duplicate presses do not reroll or rejoin.
 A saved encounter must belong to the current guild/user/profile and live spawn;
 missing and foreign encounters are indistinguishable and reveal no foreign existence.
 For a joined participation with NULL, missing or foreign encounter, say "You already
-joined this World Legendary; it can be joined once." No reroll or replacement occurs.
+joined this World Legendary; it can be joined once." for kind=world, or "You already
+joined this EX-Raid; it can be joined once." for kind=ex. No reroll or replacement occurs.
 
 Live queued/revealed encounters use render_catch with "EX-Raid · ends <UTC>" for
 kind=ex, otherwise "World Legendary · ends <UTC>"; every render_catch of a raid
