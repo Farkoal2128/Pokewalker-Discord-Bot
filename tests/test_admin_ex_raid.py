@@ -30,6 +30,9 @@ class SuggestTests(unittest.TestCase):
         self.assertEqual(rows[:2], [('#026 Raichu', '26:26'),
                                   ('#026 Alolan Raichu', '10100:10202')])
 
+    def test_suggest_accepts_the_label_dex_format(self):
+        self.assertEqual(self.suggest('#026')[:2], self.suggest('26')[:2])
+
     def test_suggest_ranks_prefix_then_substring_then_close_spelling(self):
         content = {'identities': [
             {'species_id': 3, 'name_en': 'Charzard', 'identity_id': 'close'},
@@ -655,6 +658,16 @@ class RaidConfirmTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.snapshot(), before)
         await self.click('Confirm', control=confirm)
         self.assertEqual(await self.rows('SELECT ex_raid_id FROM ex_raids'), [(identity[1],)])
+
+    async def test_confirm_failure_logs_send_id_and_error_type_only(self):
+        draft, _ = await self.preview(server_id='123')
+        await self.bot.db.execute("CREATE TEMP TRIGGER fail_ex BEFORE INSERT ON world_spawns "
+            "BEGIN SELECT RAISE(ABORT,'fixture insert failure'); END")
+        with self.assertLogs('pokewalker.bot.admin_ex_raid', 'ERROR') as logged:
+            await self.click('Confirm')
+        self.assertEqual(logged.records[0].args, (draft.send_id, 'IntegrityError'))
+        self.assertIsNone(logged.records[0].exc_info)
+        self.assertNotIn('fixture', logged.output[0])
 
     async def test_owner_excluded_after_preview_or_while_confirm_waits(self):
         draft, confirm = await self.preview(server_id='123')
