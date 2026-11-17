@@ -121,7 +121,7 @@ Build rows are `seam`: at most 2 production files and 300 production lines; test
 | 5 | [EXR-4](tickets/EXR-4.md) service: EX send, guards, history reads; benchmark evidence | build | seam | L | ✅ done · 875b154 · GO review r1 |
 | 6 | [EXR-5](tickets/EXR-5.md) EX catch coverage | build | seam | M | ✅ done · 7fb5b16 · GO review r1 after fixture fix |
 | 7 | [EXR-6](tickets/EXR-6.md) announcements: EX title, failure isolation, bot-owned fan-out | build | seam | M | ✅ done · 3ec402e · GO review r1 |
-| 8 | [EXR-7](tickets/EXR-7.md) catch screens say EX-Raid; Back with both raids | build | seam | S | pending |
+| 8 | [EXR-7](tickets/EXR-7.md) catch and Back | build | seam | S | ❌ blocked: Back fixture errors r1 |
 | 9 | [EXR-8](tickets/EXR-8.md) `/raid` chooser, wording, description | build | seam | M | pending |
 | 10 | [EXR-9](tickets/EXR-9.md) `/admin ex-raid`: options, autocomplete, validation | build | seam | M | pending |
 | 11 | [EXR-10](tickets/EXR-10.md) preview draft: target, All servers, counts, Cancel | build | seam | M | pending |

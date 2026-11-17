@@ -20,9 +20,10 @@ def _embed(state, title):
     gender = {"female": "♀", "male": "♂", "genderless": "Genderless"}[pokemon["gender"]]
     shiny = "✨ Shiny · " if pokemon["shiny"] else ""
     form = identity["kind"]
+    tier = "EX-Raid" if state.get("raid_kind") == "ex" else encounter["tier"].title()
     description = (f"{shiny}{identity['name_en']} · {form} · {gender}\n"
                    f"CP {state['cp']} · {' / '.join(str(item).title() for item in identity['types'])} · "
-                   f"{encounter['tier'].title()}")
+                   f"{tier}")
     embed = discord.Embed(title=title, description=description)
     if state["sprite"] is not None:
         embed.set_image(url=state["sprite"])

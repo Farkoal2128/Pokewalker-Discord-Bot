@@ -33,4 +33,6 @@ Coverage of existing behavior (expected to pass on first run; a failure is a fin
 
 **Stop if.** A Back coverage test fails (report it; a fix to `open_encounter` is a new row); an ordinary encounter's screen changes; `services/**` needs an edit; over 300 production lines.
 
+**Retry ruling (owner, 2026-11-16).** Fixture-only first-run errors may be repaired; use storage limit 250 with 250 owned. A production Back failure still stops immediately; no production fix is authorized for coverage-only tests.
+
 **Do not touch.** `services/**`, `bot/raid.py`, `bot/bag.py`, other `bot/` screens.
