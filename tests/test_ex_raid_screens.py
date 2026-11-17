@@ -28,7 +28,10 @@ class ExRaidScreenTests(unittest.IsolatedAsyncioTestCase):
         async def seed(conn):
             await conn.execute('DELETE FROM encounters')
             await conn.execute('DELETE FROM world_spawns')
-            await conn.execute('UPDATE profiles SET storage_limit=300')
+            # Reseeded spawns must not replay receipts pointing to deleted encounters.
+            await conn.execute("DELETE FROM action_receipts WHERE action='raid_join'")
+            await conn.execute("DELETE FROM pokemon WHERE pokemon_uid LIKE 'fixture-owned-%'")
+            await conn.execute('UPDATE profiles SET storage_limit=250')
             if ordinary:
                 columns = ','.join(self.encounter)
                 await conn.execute(f'INSERT INTO encounters({columns}) VALUES '
@@ -64,8 +67,14 @@ class ExRaidScreenTests(unittest.IsolatedAsyncioTestCase):
         if kind == 'master':
             _, session = await self.screen(session, 'pick_ball', ['master_ball'])
         if kind == 'storage':
-            # The enrolled starter fills a one-slot fixture capacity.
-            await self.writer.run(lambda c: c.execute('UPDATE profiles SET storage_limit=1'))
+            async def fill(conn):
+                await conn.executemany(
+                    'INSERT INTO pokemon(pokemon_uid,profile_id,pokemon_id,level_x2,iv_attack,'
+                    'iv_defense,iv_stamina,gender,shiny,origin,content_version,caught_at) '
+                    'SELECT ?,profile_id,pokemon_id,level_x2,iv_attack,iv_defense,iv_stamina,'
+                    'gender,shiny,origin,content_version,caught_at FROM pokemon LIMIT 1',
+                    [(f'fixture-owned-{i}',) for i in range(249)])
+            await self.writer.run(fill)
         rendered, session = await self.screen(session, 'run' if kind == 'shiny' else 'throw')
         expected = {'master': 'Confirm Master Ball', 'shiny': 'Confirm Run', 'storage': 'Wild encounter'}[kind]
         self.assertEqual(rendered['embed'].title, expected)
