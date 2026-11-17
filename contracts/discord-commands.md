@@ -723,6 +723,33 @@ Existing command shapes, persisted data and lifecycle exit meanings are compatib
 Tests: test_admin.py, test_client_lifecycle.py and affected adapter/config regressions.
 Live Discord, systemd restart handling and host acceptance remain unverified.
 
+### EX-Raid manager (additive, EXR-9)
+
+`/admin ex-raid pokemon:<autocomplete> [server_id] [shiny] [level] [iv_attack]
+[iv_defense] [iv_stamina] [duration]` registers only in the admin guild. Only
+`pokemon` is required. Level is 1–40, each IV 0–15, and duration 1–24 whole hours
+(default 1). Submit uses the existing owner authorization, five-per-minute bucket
+and exclusion check. Server IDs use `config.snowflake`.
+
+The picker searches all 1,094 catalog identities, case- and accent-insensitively,
+ranked by exact Dex number, name prefix, substring, then close spelling. It returns
+at most 25 unique choices labelled `#006 Charizard`, valued by string identity ID;
+empty input returns the first 25 in catalog order. Autocomplete checks admin guild
+and configured owner IDs in memory; other callers receive no choices. It never
+defers, reads exclusion/database state, submits a writer job or spends a bucket
+token. Excluded owners may see public species names but cannot submit.
+
+Autocomplete is only a hint. Submit accepts only a known identity ID; free text
+and unknown IDs receive "Pick a Pokémon from the list." Invalid level, IV or
+duration receives "Level must be 1-40, each IV 0-15 and the duration 1-24 hours."
+Invalid server ID receives "Server ID must be a Discord ID." Refusals write nothing.
+A valid submit shows a private EX-Raid preview with boss Dex number, name and sprite,
+each lock or "rolled per player", duration, and server ID or "none chosen".
+This step writes no draft or spawn and sends no server announcement. Producers are
+Admin and admin_ex_raid; consumers are configured owners and explicit admin-guild
+command sync. This is additive; global commands and persisted formats are unchanged.
+Tests: test_admin_ex_raid.py and test_client_lifecycle.py. Live Discord is unverified.
+
 ### EX-Gift manager (additive, EXG-5/EXG-6)
 
 `/admin gift scope:<all|server> [server_id] [user_id]` registers only in the
