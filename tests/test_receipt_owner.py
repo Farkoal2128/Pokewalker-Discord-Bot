@@ -90,6 +90,7 @@ class ReceiptOwnerTests(unittest.IsolatedAsyncioTestCase):
         await self.conn.execute("DROP TABLE look_unlocks")
         await self.conn.execute("ALTER TABLE pokemon DROP COLUMN look_id")
         await self.conn.execute("ALTER TABLE encounters DROP COLUMN look_id")
+        await self.conn.execute("ALTER TABLE encounters DROP COLUMN form_id")
         await self.conn.execute("ALTER TABLE guilds DROP COLUMN gym_legendary_defenders")
         await self.conn.execute("ALTER TABLE profiles DROP COLUMN shiny_charm_off")
         await self.conn.execute("ALTER TABLE profiles DROP COLUMN arena_cooldown_reset_at")

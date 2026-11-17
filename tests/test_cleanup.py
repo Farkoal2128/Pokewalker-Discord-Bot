@@ -576,7 +576,7 @@ class MigrationTests(unittest.IsolatedAsyncioTestCase):
             rows = {row["profile_id"]: (row["catch_total"], row["steps_total_c"])
                     for row in await conn.execute_fetchall("SELECT * FROM profiles")}
             self.assertEqual(rows, {"p": (2, 575), "q": (0, 0)})
-            self.assertEqual((await conn.execute_fetchall("PRAGMA user_version"))[0][0], 34)
+            self.assertEqual((await conn.execute_fetchall("PRAGMA user_version"))[0][0], 35)
             names = {row[0] for row in await conn.execute_fetchall("SELECT name FROM sqlite_master WHERE type='index'")}
             self.assertTrue({"encounters_resolved", "encounters_unclaimed", "gym_battles_created",
                              "step_events_created"} <= names)
@@ -587,7 +587,7 @@ class MigrationTests(unittest.IsolatedAsyncioTestCase):
         path = await self.schema33()
         code, out = await self.migrate(path)
         self.assertEqual(code, 0)
-        self.assertEqual(self.pragma(path, "user_version"), 34)
+        self.assertEqual(self.pragma(path, "user_version"), 35)
         self.assertEqual(self.pragma(path, "auto_vacuum"), 2)
         self.assertIn("incremental", out)
         code, out = await self.migrate(path)
@@ -601,7 +601,7 @@ class MigrationTests(unittest.IsolatedAsyncioTestCase):
             code, out = await self.migrate(path)
         self.assertEqual(code, 0)
         self.assertIn("warning", out.lower())
-        self.assertEqual(self.pragma(path, "user_version"), 34)
+        self.assertEqual(self.pragma(path, "user_version"), 35)
         self.assertEqual(self.pragma(path, "auto_vacuum"), 0)
 
     async def test_migrate_warns_and_exits_zero_when_vacuum_fails(self):
@@ -619,7 +619,7 @@ class MigrationTests(unittest.IsolatedAsyncioTestCase):
             code, out = await self.migrate(path)
         self.assertEqual(code, 0)
         self.assertIn("warning", out.lower())
-        self.assertEqual(self.pragma(path, "user_version"), 34)
+        self.assertEqual(self.pragma(path, "user_version"), 35)
         self.assertEqual(self.pragma(path, "auto_vacuum"), 0)
 
     def cli(self, path):

@@ -57,7 +57,7 @@ def _fold(text):
 
 
 def suggest(content, text):
-    identities = content['identities']
+    identities = raids.bosses(content)  # D75: forms and looks too
     query = _fold(text)
     names = [_fold(i['name_en']) for i in identities]
     ranked = [i for i in identities if str(i['species_id']) == query.lstrip('#').lstrip('0')]
@@ -79,8 +79,7 @@ def suggest(content, text):
 
 async def open(admin, interaction, pokemon, server_id=None, shiny=None, level=None,
                iv_attack=None, iv_defense=None, iv_stamina=None, duration=None):
-    identity = next((i for i in admin.bot.content['identities']
-                     if i['identity_id'] == pokemon), None)
+    identity = raids.boss(admin.bot.content, pokemon)
     if identity is None:
         await admin.reply(interaction, 'Pick a Pokémon from the list.')
         return
@@ -295,7 +294,7 @@ def committed_lines(row, end):
 
 
 def history_text(rows, content, *, compact=False):
-    identities = {i['identity_id']: i for i in content['identities']}
+    identities = {i['identity_id']: i for i in raids.bosses(content)}
     entries = []
     for row in rows:
         identity = identities[row['identity_id']]

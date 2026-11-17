@@ -444,7 +444,7 @@ def handlers(walker):
             raise _Refused({**RAID_REFUSALS,
                             'missing': 'No World Legendary Ticket is available to use.'}.get(result['status'], REOPEN))
         spawn = result['spawn']
-        identity = next(i for i in walker.bot.content['identities'] if i['identity_id'] == spawn['identity_id'])
+        identity = raids.boss(walker.bot.content, spawn['identity_id'])
         until = datetime.fromtimestamp(spawn['expires_at'], timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
         session['selection'] = '{}'
         rendered = render(await state(conn, session, notice=f"Spawned {identity['name_en']} until {until}"))

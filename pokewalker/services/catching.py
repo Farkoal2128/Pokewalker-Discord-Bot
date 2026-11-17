@@ -10,6 +10,7 @@ from pokewalker.domain.cp import catch_probability, flees_after_failure
 from pokewalker.services.profiles import restrictions
 from pokewalker.services.milestones import check_and_award
 from pokewalker.services.items import boost
+from pokewalker.services import storage
 from pokewalker.services.storage import owned_count
 
 
@@ -88,9 +89,7 @@ async def throw(conn, encounter_id, session, expected_revision, rng, now, *, con
             row = await cursor.fetchone()
         if row is None or row["quantity"] < 1:
             return _freeze({**current, "status": "no_ball" if item == ball else "no_berry"})
-    candidates = [variant for identity in content["identities"]
-                  for variant in [identity, *identity.get("gender_varieties", {}).values()]]
-    identity = next(item for item in candidates if item["pokemon_id"] == encounter["pokemon_id"])
+    identity, _ = storage.identify(content, encounter)  # D75: raid bosses may be form changes
     ordinal = encounter["attempt_ordinal"]
     key = f"throw:{encounter_id}:{ordinal}"
 

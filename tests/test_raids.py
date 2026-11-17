@@ -447,6 +447,7 @@ class RaidSchemaTests(unittest.IsolatedAsyncioTestCase):
                 after = dict((await upgraded.execute_fetchall("SELECT * FROM encounters"))[0])
                 self.assertEqual(after.pop("raid_spawn_id", "missing"), None)
                 self.assertIsNone(after.pop("look_id", "missing"))  # D73
+                self.assertIsNone(after.pop("form_id", "missing"))  # D75
                 self.assertEqual(after, before)
                 self.assertEqual(await profiles.queue_size(upgraded, "legacy"), 1)
                 self.assertEqual(await upgraded.execute_fetchall("PRAGMA foreign_key_check"), [])

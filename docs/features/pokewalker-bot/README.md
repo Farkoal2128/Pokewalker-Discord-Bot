@@ -674,6 +674,18 @@ encounter and gym battle receipts after 2 days.
   reappears. No game screen text changes. The stated clocks hold once the backlog drains
   (about 17 hours per million encounters at 1,000 a minute).
 
+### Alternate forms as EX-Raid bosses (D75, owner request 2026-11-17)
+
+The owner reported: "the ex-raid command doesn't have the alt-forms of pokemon included".
+Owner choices: form changes only (no fusion forms, which would be caught fused with no partner
+to return) and cosmetic looks too.
+
+- **D75: Raid bosses.** The EX-Raid boss picker offers every catchable identity, every D71 form
+  change except the fusion species' forms (Necrozma, Kyurem, Calyrex), and every D73 look.
+  A form-change boss is caught in that form; a look boss is caught wearing the look, which
+  unlocks it for the player like any catch. Encounters now record the form they were rolled
+  in, so forms that share a Pokémon number (Arceus and Silvally types) are caught correctly.
+
 ## Platform constraints
 
 - Reading message text needs the privileged Message Content intent. Discord reviews

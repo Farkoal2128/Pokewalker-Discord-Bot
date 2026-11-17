@@ -11,11 +11,29 @@ import discord
 from content.balance import load_table
 from pokewalker.db import with_receipt
 from pokewalker.domain import encounters
-from pokewalker.services import profiles
+from pokewalker.services import forms, profiles
 from pokewalker.services.items import active_lure, shiny_charm
 
 
 LOG = logging.getLogger(__name__)
+
+
+def bosses(content):
+    """D75: raid boss candidates: identities, non-fusion form changes, and looks as look:<id>."""
+    fused = forms.FUSIONS.keys()
+    result = list(content['identities'])
+    result += [item for item in content.get('form_changes', []) if item['species_id'] not in fused]
+    identities = {item['identity_id']: item for item in content['identities']}
+    for look in content.get('looks', []):
+        base = identities[look['base_identity_id']]
+        result.append({**base, 'identity_id': f"look:{look['look_id']}", 'name_en': look['name_en'],
+                       'sprites': dict(look['sprites']), 'look_id': look['look_id']})
+    return result
+
+
+def boss(content, identity_id):
+    """The boss a raid identity ID names, or None (fusion forms and unknown IDs)."""
+    return next((item for item in bosses(content) if item['identity_id'] == identity_id), None)
 
 
 def _writer(conn):
@@ -53,7 +71,7 @@ async def join(conn, guild_id, user_id, spawn_id, now, rng, content):
     pid = profile['profile_id']
 
     async def compute(conn):
-        identity = next(i for i in content['identities'] if i['identity_id'] == spawn['identity_id'])
+        identity = boss(content, spawn['identity_id'])
         lure_id = await active_lure(conn, pid) if spawn['shiny'] is None else None
         rules = load_table('catch')['rules']
         gender, variety = encounters.roll_gender(identity, rng)
@@ -70,10 +88,12 @@ async def join(conn, guild_id, user_id, spawn_id, now, rng, content):
         eid = str(uuid4())
         await conn.execute(
             'INSERT INTO encounters(encounter_id,profile_id,pokemon_id,level_x2,iv_attack,iv_defense,'
-            'iv_stamina,gender,shiny,tier,route_id,lure_id,state,content_version,created_at,raid_spawn_id) '
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'revealed',?,?,?)",
+            'iv_stamina,gender,shiny,tier,route_id,lure_id,state,content_version,created_at,raid_spawn_id,'
+            'form_id,look_id) '
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'revealed',?,?,?,?,?)",
             (eid, pid, variety['pokemon_id'], level_x2, *ivs, gender or 'genderless', shiny,
-             encounters.LEGENDARY, profile['route_id'], lure_id, version, now, spawn['spawn_id']))
+             encounters.LEGENDARY, profile['route_id'], lure_id, version, now, spawn['spawn_id'],
+             variety['form_id'], identity.get('look_id')))
         if lure_id is not None:
             await conn.execute('UPDATE active_effects SET remaining_encounters=remaining_encounters-1 WHERE effect_id=?',
                                (lure_id,))
@@ -266,7 +286,7 @@ async def ex_commit(conn, *, send_id, owner_id, admin_guild_id, identity_id, loc
     if saved is not None:
         return ({'status': 'sent', 'replayed': True, **saved} if saved['owner_id'] == str(owner_id)
                 else {'status': 'invalid'})
-    identity = next((i for i in content['identities'] if i['identity_id'] == identity_id), None)
+    identity = boss(content, identity_id)
     bounds = dict(shiny=(0, 1), level=(1, 40), iv_attack=(0, 15), iv_defense=(0, 15), iv_stamina=(0, 15))
     if (identity is None or type(hours) is not int or not 1 <= hours <= 24
             or not isinstance(locks, dict) or locks.keys() - bounds.keys()):
@@ -331,7 +351,7 @@ async def announce(bot, spawn):
     saved = await bot.writer.run(claim)
     if saved is None:
         return
-    identity = next(i for i in bot.content['identities'] if i['identity_id'] == saved['identity_id'])
+    identity = boss(bot.content, saved['identity_id'])
     until = datetime.fromtimestamp(saved['expires_at'], timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
     title = 'EX-Raid' if saved['kind'] == 'ex' else 'World Legendary'
     embed = discord.Embed(title=f"{title}: {identity['name_en']}",

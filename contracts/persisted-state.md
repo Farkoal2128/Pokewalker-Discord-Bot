@@ -1035,7 +1035,13 @@ These checks precede participation/replay. Existing participation returns joined
 and its encounter_id, including NULL after profile deletion/re-enrollment, with
 no new rolls or writes. New participation uses the owner-bearing
 `raid:<spawn_id>:<user_id>` receipt (action raid_join), returning new and encounter_id.
-It rolls the spawn's exact identity in a fixed sequence: roll_gender, roll_shiny,
+D75 (2026-11-17), migration 0035: `encounters` gains nullable `form_id` (CHECK NULL or a
+positive integer). `raids.boss(content, identity_id)` resolves a spawn's identity ID among
+identities, non-fusion form changes and `look:<look_id>` looks (a look resolves to its base
+identity with the look's name and sprites). Raid joins write the boss's `form_id` and, for a
+look, its `look_id` into the encounter; storing or auto-researching a catch copies `form_id`
+(and `look_id`) into the Pokémon, and catching identifies the encounter with
+`storage.identify` so a form-change boss uses its own form. It rolls the spawn's exact identity in a fixed sequence: roll_gender, roll_shiny,
 then one roll_level_ivs using raid_level_range [20, 25]. EXR-3 left-joins ex_raids
 by ex_raid_id; each non-NULL shiny, level, iv_attack, iv_defense or iv_stamina lock
 then replaces only its field (level_x2 = 2 * level). Shiny 0 and IV 0 are locks;

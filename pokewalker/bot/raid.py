@@ -105,7 +105,7 @@ def command(bot):
                                            {'raid_choices': {s['kind']: s['spawn_id'] for s in spawns}})
             view = discord.ui.View(timeout=None)
             for spawn in spawns:
-                identity = next(i for i in bot.content['identities'] if i['identity_id'] == spawn['identity_id'])
+                identity = raids.boss(bot.content, spawn['identity_id'])
                 name = 'EX-Raid' if spawn['kind'] == 'ex' else 'World Legendary'
                 until = datetime.fromtimestamp(spawn['expires_at'], timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
                 label = f"{name}: {identity['name_en']} · ends {until}"

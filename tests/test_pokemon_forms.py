@@ -81,10 +81,11 @@ class PokemonFormTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(pokemon, sqlite3.Row)
         self.assertIsInstance(encounter, sqlite3.Row)
         self.assertIn('form_id', pokemon.keys())
-        self.assertNotIn('form_id', encounter.keys())
+        self.assertIsNone(encounter['form_id'])  # D75: encounters record a form; old rows have none
         content = json.loads(Path('content/artifact/content.json').read_text(encoding='utf-8'))
         expected = content['identities'][0]
-        for row in (pokemon, encounter, dict(pokemon), dict(encounter)):
+        without = {key: value for key, value in dict(encounter).items() if key != 'form_id'}
+        for row in (pokemon, encounter, dict(pokemon), dict(encounter), without):
             self.assertEqual(storage.identify(content, row), (expected, expected['sprites']['shiny']))
         await self.conn.execute('UPDATE pokemon SET form_id=?', (expected['form_id'],))
         row = (await self.conn.execute_fetchall('SELECT * FROM pokemon'))[0]

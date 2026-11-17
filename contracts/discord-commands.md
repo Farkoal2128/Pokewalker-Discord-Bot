@@ -754,6 +754,11 @@ and configured owner IDs in memory; other callers receive no choices. It never
 defers, reads exclusion/database state, submits a writer job or spends a bucket
 token. Excluded owners may see public species names but cannot submit.
 
+D75 (2026-11-17): the candidates are `raids.bosses(content)`: every identity, every
+form change whose species is not a fusion species (`forms.FUSIONS`), and every look as
+`look:<look_id>` labelled with the look's name and its species number. Submit and every
+later lookup resolve a boss ID with `raids.boss(content, identity_id)`.
+
 Autocomplete is only a hint. Submit accepts only a known identity ID; free text
 and unknown IDs receive "Pick a Pokémon from the list." Invalid level, IV or
 duration receives "Level must be 1-40, each IV 0-15 and the duration 1-24 hours."

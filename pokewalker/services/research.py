@@ -105,9 +105,9 @@ async def send_pending(conn, profile_id, encounter, key, content):
     async def compute(conn):
         await conn.execute("INSERT INTO pokemon(pokemon_uid,profile_id,pokemon_id,level_x2,iv_attack,iv_defense,"
                            "iv_stamina,gender,shiny,origin,source_encounter_id,content_version,caught_at,state,revision,"
-                           "look_id) "
+                           "look_id,form_id) "
                            "SELECT ?,profile_id,pokemon_id,level_x2,iv_attack,iv_defense,iv_stamina,gender,shiny,"
-                           "'catch',encounter_id,content_version,resolved_at,'sent',1,look_id FROM encounters "
+                           "'catch',encounter_id,content_version,resolved_at,'sent',1,look_id,form_id FROM encounters "
                            "WHERE encounter_id=?", (str(uuid4()), encounter["encounter_id"]))
         await forms.unlock(conn, profile_id, dict(encounter).get("look_id"), encounter["resolved_at"])
         family = identity["family_id"]

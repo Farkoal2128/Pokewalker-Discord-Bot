@@ -461,7 +461,7 @@ class WalkerAdmin(app_commands.Group):
             return
         spawn = result["spawn"]
         await raid_service.announce(self.bot, spawn)
-        identity = next(i for i in self.bot.content["identities"] if i["identity_id"] == spawn["identity_id"])
+        identity = raid_service.boss(self.bot.content, spawn["identity_id"])
         until = datetime.fromtimestamp(spawn["expires_at"], timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
         await self.reply(interaction, f"Spawned {identity['name_en']} in <#{spawn['channel_id']}> until {until}.")
 

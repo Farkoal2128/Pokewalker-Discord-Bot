@@ -275,9 +275,9 @@ class Walker:
 
     async def store(self, conn, session, encounter_id):
         await conn.execute("INSERT INTO pokemon(pokemon_uid,profile_id,pokemon_id,level_x2,iv_attack,iv_defense,"
-                           "iv_stamina,gender,shiny,origin,source_encounter_id,content_version,caught_at,look_id) "
+                           "iv_stamina,gender,shiny,origin,source_encounter_id,content_version,caught_at,look_id,form_id) "
                            "SELECT ?,profile_id,pokemon_id,level_x2,iv_attack,iv_defense,iv_stamina,gender,shiny,"
-                           "'catch',encounter_id,content_version,resolved_at,look_id FROM encounters WHERE encounter_id=? "
+                           "'catch',encounter_id,content_version,resolved_at,look_id,form_id FROM encounters WHERE encounter_id=? "
                            "AND profile_id=? AND state='caught' AND acknowledged_at IS NULL AND NOT EXISTS "
                            "(SELECT 1 FROM pokemon WHERE source_encounter_id=encounters.encounter_id)",
                            (str(uuid4()), encounter_id, session["profile_id"]))
