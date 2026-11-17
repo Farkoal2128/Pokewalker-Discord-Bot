@@ -119,6 +119,11 @@ class Admin(app_commands.Group):
         return [app_commands.Choice(name=label, value=value)
                 for label, value in admin_ex_raid.suggest(self.bot.content, current)]
 
+    @app_commands.command(name='ex-raid-history', description='Find committed EX-Raid sends')
+    async def ex_raid_history(self, interaction: discord.Interaction, send_id: str | None = None):
+        if await self.authorize(interaction):
+            await admin_ex_raid.history(self, interaction, send_id)
+
     @app_commands.command(name='gift-history', description='Find committed EX-Gift sends')
     async def gift_history(self, interaction: discord.Interaction, send_id: str | None = None):
         if await self.authorize(interaction):

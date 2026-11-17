@@ -3,6 +3,7 @@
 import asyncio
 from datetime import datetime, timezone
 from difflib import get_close_matches
+import re
 import unicodedata
 from types import SimpleNamespace
 from uuid import uuid4
@@ -270,3 +271,65 @@ class RaidView(admin_gift.OwnerView):
             await self.refuse(interaction, text)
         else:
             await self.refuse(interaction, 'Nothing was sent.')
+
+
+async def history(admin, interaction, send_id):
+    if send_id is None:
+        await RaidHistoryView(admin, interaction.user.id).page(interaction, 0)
+        return
+    row = None
+    if re.fullmatch(r'[0-9a-f]{32}', send_id):
+        row = await admin.bot.writer.run(lambda conn: raids.ex_lookup(conn, send_id))
+    if row is None:
+        await admin.reply(interaction, f'No EX-Raid send with ID {send_id} was committed.')
+        return
+    await show_history(interaction, [row], admin.bot.content)
+
+
+def history_text(rows, content, *, compact=False):
+    identities = {i['identity_id']: i for i in content['identities']}
+    entries = []
+    for row in rows:
+        identity = identities[row['identity_id']]
+        stamp = datetime.fromtimestamp(row['created_at'], timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
+        end = datetime.fromtimestamp(row['created_at'] + row['hours'] * 3600,
+                                     timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
+        lines = [f"Send ID: {row['ex_raid_id']}", stamp,
+                 f"#{identity['species_id']:03d} {identity['name_en']}"]
+        if not compact:
+            locks = [f'{name}: {row[key]}' for name, key in
+                     (('Shiny', 'shiny'), ('Level', 'level'), ('Attack IV', 'iv_attack'),
+                      ('Defense IV', 'iv_defense'), ('Stamina IV', 'iv_stamina'))
+                     if row[key] is not None]
+            lines.append(', '.join(locks) or 'all rolled per player')
+        hours, guild_id = row['hours'], row['guild_id']
+        lines.extend((f'Duration: {hours} hour' + ('s' if hours != 1 else ''),
+            f'Target: {"all servers" if guild_id is None else f"server {guild_id}"}',
+            f'End UTC: {end}', 'Counts (committed)', f"Targeted servers: {row['servers']}",
+            f"Servers that got it: {row['spawned']}"))
+        lines.extend(f"{label}: {row['skipped'].get(reason, 0)}" for reason, label in SKIP_LABELS)
+        entries.append('\n'.join(lines))
+    return '\n\n'.join(entries) or 'No EX-Raids were sent.'
+
+
+async def show_history(interaction, rows, content, *, view=None):
+    text = history_text(rows, content)
+    if len(text) > 4096:
+        text = history_text(rows, content, compact=True)
+    await interaction.edit_original_response(content=None,
+        embed=discord.Embed(title='EX-Raid history', description=text), view=view,
+        allowed_mentions=discord.AllowedMentions.none())
+
+
+class RaidHistoryView(admin_gift.HistoryView):
+    async def page(self, interaction, offset):
+        self.expired = 'This history expired. Run /admin ex-raid-history again.'
+        rows, total = await self.admin.bot.writer.run(lambda conn: raids.ex_history(conn, offset))
+        if self.is_finished() or self.admin.bot.clock() >= self.deadline:
+            await self.on_timeout()
+            await self.refuse(interaction, self.expired)
+            return
+        self.offset = offset
+        self.children[0].disabled = offset == 0
+        self.children[1].disabled = offset + 10 >= total
+        await show_history(interaction, rows, self.admin.bot.content, view=self)

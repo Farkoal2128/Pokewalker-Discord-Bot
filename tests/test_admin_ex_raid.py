@@ -857,3 +857,275 @@ class RaidConfirmTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual('\n'.join([line async for line in conn.iterdump()]), before)
         finally:
             await conn.close()
+
+
+class RaidHistoryTests(unittest.IsolatedAsyncioTestCase):
+    asyncSetUp = RaidDraftTests.asyncSetUp
+    interaction = RaidDraftTests.interaction
+    cache_guild = RaidDraftTests.cache_guild
+    command = RaidDraftTests.command
+    submit = RaidDraftTests.submit
+    draft = RaidDraftTests.draft
+    control = RaidDraftTests.control
+    click = RaidDraftTests.click
+    snapshot = RaidDraftTests.snapshot
+    preview = RaidConfirmTests.preview
+
+    async def seed_history(self, count=1, *, guild_id=None, locked=False):
+        rows = []
+        async def job(conn):
+            for n in range(count):
+                send_id = f'{n + 1:032x}'
+                await conn.execute("""INSERT INTO ex_raids
+                    (ex_raid_id,owner_id,identity_id,shiny,level,iv_attack,iv_defense,iv_stamina,
+                     hours,guild_id,servers,spawned,skipped,created_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (send_id, str(456 + n % 2), '6:6', 0 if locked else None,
+                     40 if locked else None, 0 if locked else None, 15 if locked else None,
+                     7 if locked else None, 24, guild_id, 17, 2,
+                     json.dumps(dict(raids_off=1, no_channel=2, no_permission=3,
+                                     channel_changed=4, active=5)), 1000 + n))
+                rows.append(send_id)
+        await self.bot.writer.run(job)
+        return rows
+
+    async def history_command(self, send_id=None, *, interaction=None, group=None):
+        interaction = interaction or self.interaction()
+        group = group or self.group
+        command = group.get_command('ex-raid-history')
+        self.assertIsNotNone(command, '/admin ex-raid-history is absent')
+        await command.callback(group, interaction, send_id)
+        interaction.response.defer.assert_awaited_once_with(ephemeral=True)
+        args = interaction.edit_original_response.await_args.kwargs
+        self.assertEqual(args['allowed_mentions'].to_dict()['parse'], [])
+        return interaction
+
+    def history_text(self, interaction):
+        args = interaction.edit_original_response.await_args.kwargs
+        return args['embed'].description if args.get('embed') else args['content']
+
+    async def history_click(self, view, label, *, interaction=None):
+        interaction = interaction or self.interaction()
+        item = next(item for item in view.children if item.label == label)
+        interaction.data = {'custom_id': item.custom_id}
+        if await view.interaction_check(interaction):
+            await item.callback(interaction)
+        interaction.response.defer.assert_awaited_once_with(ephemeral=True)
+        args = (interaction.followup.send.await_args or
+                interaction.edit_original_response.await_args).kwargs
+        self.assertEqual(args['allowed_mentions'].to_dict()['parse'], [])
+        if interaction.followup.send.await_args:
+            self.assertTrue(args['ephemeral'])
+        return interaction
+
+    async def test_history_parameter_optional_admin_guild_only(self):
+        command = self.group.get_command('ex-raid-history')
+        self.assertIsNotNone(command, '/admin ex-raid-history is absent')
+        self.assertEqual(len(command.parameters), 1)
+        parameter = command.parameters[0]
+        self.assertEqual(parameter.name, 'send_id')
+        self.assertFalse(parameter.required)
+        self.assertEqual(parameter.type, discord.AppCommandOptionType.string)
+        self.assertIsNone(self.bot.tree.get_command('admin'))
+        self.assertIsNone(self.bot.tree.get_command('admin', guild=discord.Object(id=999)))
+        for owner, guild in ((999, 123), (456, 999), (456, None)):
+            reply = await self.history_command(interaction=self.interaction(owner=owner, guild=guild))
+            self.assertIn('Only configured owners', self.history_text(reply))
+        reply = await self.history_command()
+        self.assertEqual(self.history_text(reply), 'No EX-Raids were sent.')
+        await self.bot.db.execute("INSERT INTO restrictions(guild_id,user_id,excluded) VALUES ('123','456',1)")
+        reply = await self.history_command()
+        self.assertIn('Excluded', self.history_text(reply))
+
+    async def test_history_newest_first_ten_per_page_with_boss_target_and_counts(self):
+        from pokewalker.bot import admin_gift
+        ids = await self.seed_history(12)
+        before, writes = await self.snapshot(), self.bot.db.total_changes
+        self.bot.announce_ex_raid = Mock(side_effect=AssertionError('History announced'))
+        reply = await self.history_command()
+        args = reply.edit_original_response.await_args.kwargs
+        self.assertEqual(args['embed'].title, 'EX-Raid history')
+        view = args['view']
+        self.assertIsInstance(view, admin_gift.HistoryView)
+        self.assertEqual(view.timeout, 900)
+        text = self.history_text(reply)
+        self.assertEqual(text.count('Send ID:'), 10)
+        positions = [text.index(send_id) for send_id in reversed(ids[2:])]
+        self.assertEqual(positions, sorted(positions))
+        for value in ('1970-01-01', 'UTC', '#006 Charizard', 'all servers',
+                      'Duration: 24 hours', 'End UTC:', 'Counts (committed)',
+                      'Targeted servers: 17', 'Servers that got it: 2', 'Raids off: 1',
+                      'No raid channel: 2', 'No permission or bot not in server: 3',
+                      'Raid channel changed: 4', 'EX-Raid already live: 5'):
+            self.assertIn(value, text)
+        self.assertTrue(view.children[0].disabled)
+        reply = await self.history_click(view, 'Next')
+        text = self.history_text(reply)
+        self.assertEqual(text.count('Send ID:'), 2)
+        self.assertLess(text.index(ids[1]), text.index(ids[0]))
+        self.assertIn('all rolled per player', text)
+        self.assertTrue(view.children[1].disabled)
+        reply = await self.history_click(view, 'Prev')
+        self.assertEqual(self.history_text(reply).count('Send ID:'), 10)
+        self.assertEqual(await self.snapshot(), before)
+        self.assertEqual(self.bot.db.total_changes, writes)
+        self.bot.announce_ex_raid.assert_not_called()
+
+    async def test_lookup_by_send_id_found_missing_and_malformed(self):
+        from pokewalker.services import raids
+        send_id, = await self.seed_history(guild_id='123', locked=True)
+        before, writes = await self.snapshot(), self.bot.db.total_changes
+        with patch.object(raids, 'ex_lookup', wraps=raids.ex_lookup) as lookup:
+            reply = await self.history_command(send_id)
+            text = self.history_text(reply)
+            for value in (send_id, 'Target: server 123', 'Shiny: 0', 'Level: 40',
+                          'Attack IV: 0', 'Defense IV: 15', 'Stamina IV: 7',
+                          '1970-01-01 00:16:40 UTC', 'End UTC: 1970-01-02 00:16:40 UTC'):
+                self.assertIn(value, text)
+            self.assertEqual(text.count('Send ID:'), 1)
+            self.assertIsNone(reply.edit_original_response.await_args.kwargs.get('view'))
+            missing = 'f' * 32
+            reply = await self.history_command(missing)
+            self.assertEqual(self.history_text(reply), f'No EX-Raid send with ID {missing} was committed.')
+            self.assertEqual(lookup.await_count, 2)
+            for malformed in ('not-an-id', 'A' * 32, 'a' * 31, 'a' * 33, ''):
+                reply = await self.history_command(malformed, interaction=self.interaction(owner=457))
+                self.assertEqual(self.history_text(reply),
+                                 f'No EX-Raid send with ID {malformed} was committed.')
+            self.assertEqual(lookup.await_count, 2)
+        self.assertEqual(await self.snapshot(), before)
+        self.assertEqual(self.bot.db.total_changes, writes)
+
+    async def test_lost_ack_recovered_by_send_id_after_the_draft_is_gone(self):
+        from pokewalker.bot.admin_ex_raid import discard
+        from pokewalker.services import raids
+        draft, confirm = await self.preview(server_id='123')
+        send_id = draft.send_id
+        lost = self.interaction()
+        lost.edit_original_response.side_effect = RuntimeError('lost acknowledgement')
+        with self.assertRaisesRegex(RuntimeError, 'lost acknowledgement'):
+            await self.click('Confirm', draft=draft, control=confirm, interaction=lost)
+        self.bot.announce_ex_raid.assert_called_once_with(send_id)
+        discard(draft)
+        self.assertEqual(self.group.ex_raid_drafts, {})
+        before, writes = await self.snapshot(), self.bot.db.total_changes
+        with patch.object(raids, 'ex_commit', side_effect=AssertionError('History spawned')):
+            reply = await self.history_command(send_id)
+        for value in (send_id, 'Servers that got it: 1', '#006 Charizard'):
+            self.assertIn(value, self.history_text(reply))
+        self.assertEqual(await self.snapshot(), before)
+        self.assertEqual(self.bot.db.total_changes, writes)
+        self.bot.announce_ex_raid.assert_called_once_with(send_id)
+
+    async def test_send_recovered_by_id_after_restart(self):
+        from pokewalker.bot.client import WalkerBot
+        from pokewalker.db import Writer, open_db
+        draft, confirm = await self.preview(server_id='123')
+        send_id = draft.send_id
+        await self.click('Confirm', draft=draft, control=confirm)
+        before = await self.snapshot()
+        await self.bot.drain()
+        restarted = WalkerBot(self.settings, clock=lambda: self.clock)
+        self.addAsyncCleanup(restarted.drain)
+        restarted.content = self.bot.content
+        restarted.db = await open_db(self.settings.db_path, allow_unpatched=True)
+        restarted.writer = Writer(restarted.db)
+        restarted.announce_ex_raid = Mock(side_effect=AssertionError('History announced'))
+        fresh = restarted.tree.get_command('admin', guild=discord.Object(id=123))
+        self.assertEqual(fresh.ex_raid_drafts, {})
+        reply = await self.history_command(send_id, group=fresh)
+        self.assertIn(send_id, self.history_text(reply))
+        self.assertIn('Servers that got it: 1', self.history_text(reply))
+        after = '\n'.join([line async for line in restarted.db.iterdump()])
+        self.assertEqual(after, before)
+        restarted.announce_ex_raid.assert_not_called()
+
+    async def test_history_shows_no_player_or_profile_id(self):
+        ids = await self.seed_history()
+        for send_id in (None, ids[0]):
+            reply = await self.history_command(send_id)
+            text = self.history_text(reply)
+            for private in ('456', '457', 'profile_id', 'player_id', 'owner_id', 'User ID:'):
+                self.assertNotIn(private, text)
+
+    async def test_history_command_uses_authorize_bucket_paging_uses_callback_bucket(self):
+        from pokewalker.bot import admin_gift
+        await self.seed_history(11)
+        await admin_gift.open(self.group, self.interaction(), 'all', None, None)
+        gift = next(iter(self.group.gift_drafts.values()))
+        reply = await self.history_command()
+        view = reply.edit_original_response.await_args.kwargs['view']
+        for _ in range(4):
+            await self.history_command()
+        refused = await self.history_command()
+        self.assertIn('Slow down', self.history_text(refused))
+        self.assertEqual(len(self.group.requests[456]), 5)
+        for _ in range(29):
+            press = self.interaction()
+            press.data = {'custom_id': 'gift_edit'}
+            self.assertTrue(await gift.view.interaction_check(press))
+        await self.history_click(view, 'Next')
+        refused = await self.history_click(view, 'Prev')
+        self.assertIn('Slow down', refused.followup.send.await_args.kwargs['content'])
+        self.assertEqual(len(self.group.gift_callbacks[456]), 30)
+        press = self.interaction()
+        press.data = {'custom_id': 'gift_edit'}
+        self.assertFalse(await gift.view.interaction_check(press))
+        self.clock += 60
+        reply = await self.history_click(view, 'Prev')
+        self.assertEqual(self.history_text(reply).count('Send ID:'), 10)
+
+    async def test_paging_refuses_other_owner_and_excluded_owner(self):
+        await self.seed_history(11)
+        reply = await self.history_command()
+        view = reply.edit_original_response.await_args.kwargs['view']
+        initial = view.to_components()
+        before = await self.snapshot()
+        for owner, guild in ((457, 123), (999, 123), (456, 999), (456, None)):
+            refused = await self.history_click(view, 'Next',
+                interaction=self.interaction(owner=owner, guild=guild))
+            refused.edit_original_response.assert_not_awaited()
+            self.assertEqual(view.to_components(), initial)
+        self.assertEqual(await self.snapshot(), before)
+        await self.bot.db.execute("INSERT INTO restrictions(guild_id,user_id,excluded) VALUES ('123','456',1)")
+        refused = await self.history_click(view, 'Next')
+        self.assertIn('Excluded', refused.followup.send.await_args.kwargs['content'])
+        self.assertEqual(view.to_components(), initial)
+        await self.bot.db.execute('DELETE FROM restrictions')
+        self.clock += 900
+        refused = await self.history_click(view, 'Next')
+        self.assertEqual(refused.followup.send.await_args.kwargs['content'],
+                         'This history expired. Run /admin ex-raid-history again.')
+        self.assertEqual(view.to_components(), initial)
+        self.assertTrue(view.is_finished())
+
+    async def test_long_page_fits_4096(self):
+        await self.seed_history(10, guild_id=str(2**64 - 1), locked=True)
+        reply = await self.history_command()
+        text = self.history_text(reply)
+        self.assertLessEqual(len(text), 4096)
+        self.assertEqual(text.count('Send ID:'), 10)
+        self.assertNotIn('Shiny:', text)
+        self.assertNotIn('Attack IV:', text)
+        self.assertIn('Targeted servers: 17', text)
+        self.assertIn('Servers that got it: 2', text)
+
+
+    async def test_history_expiry_while_page_read_waits_refuses_without_changing_controls(self):
+        from pokewalker.services import raids
+        await self.seed_history(11)
+        reply = await self.history_command()
+        view = reply.edit_original_response.await_args.kwargs['view']
+        initial = view.to_components()
+        original = raids.ex_history
+        async def expire_while_reading(conn, offset):
+            rows = await original(conn, offset)
+            self.clock = view.deadline
+            return rows
+        with patch.object(raids, 'ex_history', side_effect=expire_while_reading):
+            refused = await self.history_click(view, 'Next')
+        refused.edit_original_response.assert_not_awaited()
+        self.assertEqual(refused.followup.send.await_args.kwargs['content'],
+                         'This history expired. Run /admin ex-raid-history again.')
+        self.assertEqual(view.to_components(), initial)
+        self.assertTrue(view.is_finished())
