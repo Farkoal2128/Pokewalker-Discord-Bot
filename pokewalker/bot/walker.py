@@ -16,7 +16,7 @@ from content.balance import load_table
 from pokewalker.bot import screens, storage
 from pokewalker.bot import research, powerup, pokedex
 from pokewalker.bot import evolve, gyms, iv_items, arena, ex_gift
-from pokewalker.bot import milestones, bag, route, share, trade
+from pokewalker.bot import milestones, bag, route, share, trade, raid
 from pokewalker.services import arena as arena_service
 from pokewalker.services import ex_gift as ex_gift_service
 from pokewalker.services.milestones import pending_count
@@ -88,6 +88,7 @@ class Walker:
         self.handlers.update(gyms.handlers(self))
         self.handlers.update(arena.handlers(self))
         self.handlers.update(ex_gift.handlers(self))
+        self.handlers.update(raid.handlers(self))
         self.handlers.update(trade.handlers(self))
         self.before_home = self.recover_terminal
         self._locks = WeakValueDictionary()
@@ -181,7 +182,7 @@ class Walker:
                 session["revision"] += 1
                 pending = None
                 if action in ("open_encounter", "select_ball", "select_berry", "pick_ball", "pick_berry",
-                              "throw", "master_confirm", "run", "run_confirm"):
+                              "throw", "master_confirm", "run", "run_confirm", "raid_pick_world", "raid_pick_ex"):
                     pending = await self.pending_catch(conn, session["profile_id"])
                 selected = json.loads(session["selection"])
                 # Replay only an already-saved menu; an older throw screen must save the menu's storage quote.
@@ -190,6 +191,8 @@ class Walker:
                     session["_read_only"] = True
                 rendered = (await self.pending_menu(conn, session, pending) if pending is not None
                             else await handler(conn, session, interaction))
+                if action in ("raid_pick_world", "raid_pick_ex"):
+                    rendered = {"content": None, "embed": None, "view": None, **rendered}
                 if not session.get("_read_only"):
                     await conn.execute("UPDATE sessions SET revision=?,profile_id=?,selection=?,expires_at=MAX(expires_at,?) "
                                        "WHERE session_id=?", (session["revision"], session["profile_id"],

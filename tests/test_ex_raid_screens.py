@@ -209,3 +209,235 @@ class ExRaidScreenTests(unittest.IsolatedAsyncioTestCase):
                                 self.assertNotIn(flag, selection)
                             self.assertEqual(await self.rows('SELECT * FROM encounters WHERE encounter_id=?',
                                                              (self.ids[other],)), before)
+
+class ExRaidEntryTests(unittest.IsolatedAsyncioTestCase):
+    asyncSetUp = test_raids.RaidCommandTests.asyncSetUp
+    interaction = test_raids.RaidCommandTests.interaction
+    rows = test_raids.RaidCommandTests.rows
+    enroll = test_raids.RaidCommandTests.enroll
+    click = test_raids.RaidCommandTests.click
+    current = test_raids.RaidCommandTests.current
+    command = test_raids.RaidCommandTests.command
+    invoke = test_raids.RaidCommandTests.invoke
+    session = test_raids.RaidCommandTests.session
+    rendered = test_raids.RaidCommandTests.rendered
+    pending_ordinary_catch = test_raids.RaidCommandTests.pending_ordinary_catch
+
+    async def seed_spawns(self, kinds=('world', 'ex')):
+        identity = next(i for i in self.bot.content['identities'] if i['species_id'] == 144)
+        async def seed(conn):
+            await conn.execute('DELETE FROM encounters WHERE raid_spawn_id IS NOT NULL')
+            await conn.execute('DELETE FROM raid_participation')
+            await conn.execute("DELETE FROM action_receipts WHERE action='raid_join'")
+            await conn.execute('DELETE FROM world_spawns')
+            for kind in kinds:
+                await conn.execute(
+                    'INSERT INTO world_spawns(spawn_id,guild_id,channel_id,pokemon_id,identity_id,'
+                    'spawned_at,expires_at,post_state,content_version,kind) '
+                    "VALUES (?,'123','789',?,?,1000,4600,'sent','fixture',?)",
+                    (kind, identity['pokemon_id'], identity['identity_id'], kind))
+        await self.writer.run(seed)
+
+    async def chooser(self):
+        shown = self.rendered(await self.invoke())
+        self.assertEqual(shown.get('content'), 'Two raids are active here. Choose one.')
+        session = await self.session()
+        self.assertEqual(json.loads(session['selection']),
+                         {'raid_choices': {'world': 'world', 'ex': 'ex'}})
+        return shown, session
+
+    async def test_no_live_raid_says_no_raid_is_active(self):
+        for guild in (123, 999):
+            with self.subTest(guild=guild):
+                self.assertEqual(self.rendered(await self.invoke(guild=guild))['content'],
+                                 'No raid is active here.')
+        self.assertEqual(await self.rows(), [])
+
+    async def test_one_live_raid_of_either_kind_opens_directly(self):
+        for kind in ('world', 'ex'):
+            with self.subTest(kind=kind):
+                await self.seed_spawns((kind,))
+                rendered = self.rendered(await self.invoke())
+                self.assertEqual(rendered['embed'].title, 'Wild encounter')
+                encounter = (await self.rows('SELECT * FROM encounters WHERE raid_spawn_id=?', (kind,)))[0]
+                session = await self.session()
+                self.assertEqual(json.loads(session['selection']),
+                                 {'encounter_id': encounter['encounter_id'], 'ball': 'poke_ball',
+                                  'berry': None, 'encounter_revision': encounter['revision']})
+                self.assertEqual((session['revision'], session['expires_at']), (0, 1900))
+
+    async def test_two_live_raids_show_chooser_labels_within_80(self):
+        await self.seed_spawns()
+        shown, session = await self.chooser()
+        self.assertEqual((session['revision'], session['expires_at']), (0, 1900))
+        buttons = shown['view'].children
+        self.assertEqual([b.label for b in buttons],
+                         ['World Legendary: Articuno · ends 1970-01-01 01:16:40 UTC',
+                          'EX-Raid: Articuno · ends 1970-01-01 01:16:40 UTC'])
+        for button, action in zip(buttons, ('raid_pick_world', 'raid_pick_ex')):
+            self.assertEqual(button.custom_id, f"pw:v1:{session['session_id']}:0:{action}")
+            self.assertRegex(button.custom_id, self.module.CUSTOM_ID)
+            self.assertLessEqual(len(button.label), 80)
+        self.assertEqual(await self.rows('SELECT * FROM raid_participation'), [])
+        identity = next(i for i in self.bot.content['identities'] if i['species_id'] == 144)
+        with patch.dict(identity, name_en='A' * 100):
+            long_shown, _ = await self.chooser()
+        self.assertEqual([len(b.label) for b in long_shown['view'].children], [80, 80])
+
+    async def test_pick_joins_that_spawn_and_player_can_join_both(self):
+        await self.seed_spawns()
+        for kind in ('world', 'ex'):
+            with self.subTest(kind=kind):
+                _, session = await self.chooser()
+                with patch.object(raids, 'join', wraps=raids.join) as joining:
+                    picked = await self.click(session, f'raid_pick_{kind}', ['foreign-spawn'])
+                self.assertEqual(joining.await_args.args[3], kind)
+                self.assertIn('content', self.rendered(picked))
+                self.assertIsNone(self.rendered(picked)['content'])
+                self.assertEqual(self.rendered(picked)['embed'].title, 'Wild encounter')
+                selection = json.loads((await self.current(session))['selection'])
+                encounter = (await self.rows('SELECT * FROM encounters WHERE encounter_id=?',
+                                             (selection['encounter_id'],)))[0]
+                self.assertEqual(encounter['raid_spawn_id'], kind)
+                self.assertEqual(selection, {'encounter_id': encounter['encounter_id'],
+                                            'ball': 'poke_ball', 'berry': None,
+                                            'encounter_revision': encounter['revision']})
+        self.assertEqual(len(await self.rows('SELECT * FROM raid_participation')), 2)
+        self.assertEqual(len(await self.rows("SELECT * FROM action_receipts WHERE action='raid_join'")), 2)
+
+    async def test_pick_after_its_spawn_ended_says_that_raid_has_ended(self):
+        for kind in ('world', 'ex'):
+            for cleanup in (False, True):
+                with self.subTest(kind=kind, cleanup=cleanup):
+                    await self.seed_spawns()
+                    _, session = await self.chooser()
+                    await self.writer.run(lambda c: c.execute(
+                        'UPDATE world_spawns SET expires_at=1000 WHERE spawn_id=?', (kind,)))
+                    if cleanup:
+                        await self.writer.run(lambda c: raids.expire(c, self.now))
+                    rendered = self.rendered(await self.click(session, f'raid_pick_{kind}'))
+                    self.assertEqual(rendered['content'], 'That raid has ended.')
+                    self.assertIsNone(rendered['view'])
+                    self.assertIsNone(rendered['embed'])
+                    self.assertEqual(await self.rows('SELECT * FROM raid_participation'), [])
+
+    async def test_pick_after_a_replacement_spawn_never_joins_it(self):
+        for kind in ('world', 'ex'):
+            with self.subTest(kind=kind):
+                await self.seed_spawns()
+                _, session = await self.chooser()
+                async def replace(conn):
+                    await conn.execute('UPDATE world_spawns SET ended=1 WHERE spawn_id=?', (kind,))
+                    await conn.execute(
+                        'INSERT INTO world_spawns(spawn_id,guild_id,channel_id,pokemon_id,identity_id,'
+                        'spawned_at,expires_at,post_state,content_version,kind) '
+                        "SELECT 'replacement',guild_id,channel_id,pokemon_id,identity_id,1000,4600,"
+                        "'sent',content_version,kind FROM world_spawns WHERE spawn_id=?", (kind,))
+                await self.writer.run(replace)
+                with patch.object(raids, 'join', wraps=raids.join) as joining:
+                    rendered = self.rendered(await self.click(session, f'raid_pick_{kind}'))
+                self.assertEqual(joining.await_args.args[3], kind)
+                self.assertEqual(rendered['content'], 'That raid has ended.')
+                self.assertEqual(await self.rows('SELECT * FROM raid_participation'), [])
+
+    async def test_pick_without_saved_choices_is_refused(self):
+        await self.seed_spawns()
+        for action in ('raid_pick_world', 'raid_pick_ex'):
+            for selection in ({}, {'raid_choices': {}}, {'spawn_id': 'ex'}):
+                with self.subTest(action=action, selection=selection):
+                    _, session = await self.chooser()
+                    await self.writer.run(lambda c: c.execute(
+                        'UPDATE sessions SET selection=? WHERE session_id=?',
+                        (json.dumps(selection), session['session_id'])))
+                    with patch.object(raids, 'join', side_effect=AssertionError('unsaved join')):
+                        refused = await self.click(session, action, ['ex'])
+                    self.assertEqual(refused.followup.send.await_args.args[0], self.module.REOPEN)
+
+    async def test_double_click_joins_once(self):
+        import asyncio
+        await self.seed_spawns()
+        for kind in ('world', 'ex'):
+            _, session = await self.chooser()
+            await asyncio.gather(self.click(session, f'raid_pick_{kind}'),
+                                 self.click(session, f'raid_pick_{kind}'))
+            before = await self.rows('SELECT * FROM encounters WHERE raid_spawn_id=?', (kind,))
+            _, reopened = await self.chooser()
+            with patch.object(self.walker.rng, 'random', side_effect=AssertionError('reroll')):
+                await self.click(reopened, f'raid_pick_{kind}')
+            self.assertEqual(await self.rows('SELECT * FROM encounters WHERE raid_spawn_id=?', (kind,)), before)
+            self.assertEqual(len(before), 1)
+        self.assertEqual(len(await self.rows('SELECT * FROM raid_participation')), 2)
+        self.assertEqual(len(await self.rows("SELECT * FROM action_receipts WHERE action='raid_join'")), 2)
+
+    async def test_pending_catch_made_elsewhere_shows_its_menu_first(self):
+        await self.seed_spawns()
+        for kind in ('world', 'ex'):
+            with self.subTest(kind=kind):
+                _, session = await self.chooser()
+                encounter_id = await self.pending_ordinary_catch()
+                with patch.object(raids, 'join', side_effect=AssertionError('pending join')):
+                    shown = self.rendered(await self.click(session, f'raid_pick_{kind}'))
+                self.assertIn('content', shown)
+                self.assertIsNone(shown['content'])
+                self.assertEqual([b.label for b in shown['view'].children], ['Done', 'Send for research'])
+                self.assertEqual(json.loads((await self.current(session))['selection'])['encounter_id'], encounter_id)
+                self.assertEqual(await self.rows('SELECT * FROM raid_participation'), [])
+                await self.click(await self.current(session), 'ack')
+                # Restore one ordinary encounter for the next separate-session catch.
+                if kind == 'world':
+                    await self.writer.run(lambda c: c.execute(
+                        'INSERT INTO encounters(encounter_id,profile_id,pokemon_id,level_x2,iv_attack,'
+                        'iv_defense,iv_stamina,gender,shiny,tier,route_id,content_version,created_at) '
+                        "SELECT 'second-ordinary',profile_id,pokemon_id,level_x2,iv_attack,iv_defense,"
+                        'iv_stamina,gender,0,tier,route_id,content_version,1001 FROM encounters '
+                        'WHERE encounter_id=?', (encounter_id,)))
+
+    async def test_already_joined_text_names_the_kind(self):
+        for kind, name in (('world', 'World Legendary'), ('ex', 'EX-Raid')):
+            for unreadable in ('null', 'missing', 'foreign'):
+                with self.subTest(kind=kind, unreadable=unreadable):
+                    await self.seed_spawns((kind,))
+                    await self.invoke()
+                    async def hide(conn):
+                        if unreadable == 'null':
+                            await conn.execute('UPDATE raid_participation SET encounter_id=NULL')
+                        elif unreadable == 'missing':
+                            await conn.execute('DELETE FROM encounters WHERE raid_spawn_id IS NOT NULL')
+                        else:
+                            await conn.execute(
+                                'INSERT OR IGNORE INTO profiles(profile_id,guild_id,user_id,created_at) '
+                                "VALUES ('foreign','123','other',0)")
+                            await conn.execute("UPDATE encounters SET profile_id='foreign' "
+                                               'WHERE raid_spawn_id IS NOT NULL')
+                    await self.writer.run(hide)
+                    with patch.object(self.walker.rng, 'random', side_effect=AssertionError('reroll')):
+                        self.assertEqual(self.rendered(await self.invoke())['content'],
+                                         f'You already joined this {name}; it can be joined once.')
+
+    async def test_unenrolled_excluded_and_opted_out_see_no_chooser(self):
+        from pokewalker.services import deletion
+        from pokewalker.services.marker_log import State
+        await self.seed_spawns()
+        self.assertEqual(self.rendered(await self.invoke(user=999))['content'],
+                         'Open /walker to enroll before joining.')
+        await self.writer.run(lambda c: c.execute(
+            "INSERT INTO restrictions(guild_id,user_id,excluded) VALUES ('123','456',1)"))
+        self.assertEqual(self.rendered(await self.invoke())['content'], self.module.EXCLUDED)
+        await self.writer.run(lambda c: c.execute('DELETE FROM restrictions'))
+        await self.writer.run(lambda c: deletion.apply(c,
+            {('123', '456'): State(delete_ids={self.profile['profile_id']}, opted_out=True)}))
+        self.assertEqual(self.rendered(await self.invoke())['content'], 'Run /walker-account opt-in first')
+        self.assertEqual(await self.rows(), [])
+        self.assertEqual(await self.rows('SELECT * FROM raid_participation'), [])
+
+    async def test_description_changes_the_global_manifest_only(self):
+        from pokewalker.bot.client import WalkerBot
+        from pokewalker.config import Settings, Secret
+        bot = WalkerBot(Settings(Secret('synthetic'), owner_ids=frozenset({123}), admin_guild_id=123))
+        self.addAsyncCleanup(bot.drain)
+        command = bot.tree.get_command('raid')
+        self.assertEqual(command.description, 'Join or reopen an active raid')
+        global_hash, admin_hash = bot.command_manifest_hash(), bot.command_manifest_hash(123)
+        command.description = 'Join or reopen the active World Legendary'
+        self.assertNotEqual(bot.command_manifest_hash(), global_hash)
+        self.assertEqual(bot.command_manifest_hash(123), admin_hash)
