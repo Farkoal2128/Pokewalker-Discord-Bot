@@ -129,7 +129,7 @@ Build rows are `seam`: at most 2 production files and 300 production lines; test
 | 13 | [EXR-12](tickets/EXR-12.md) `/admin ex-raid-history` | build | seam | S | ✅ done · d7ba24c · GO review r1; fixture fix |
 | 14 | [EXR-13](tickets/EXR-13.md) help and raids | build | seam | S | ✅ done · 41bbee5 · GO review r1; fixture fix |
 | 15 | [EXR-14](tickets/EXR-14.md) retention disclosure: privacy text, C3 M8.4, coverage | build | seam | S | ✅ done · 1b78be0 · GO review r1 |
-| 16 | G-F final verification and delivery decisions | 🚦 | — | — | ✅ 32f7b65 test_cmd PASS; main: owner |
+| 16 | G-F final verification and delivery decisions | 🚦 | — | — | ✅ 32f7b65 test_cmd PASS; main 11-17 |
 | 17 | G-B writer benchmark against the live guild count | 🚦 | — | — | pending |
 | 18 | G-V deployed privacy file | 🚦 | — | — | pending |
 | 19 | G-L live Discord acceptance | 🚦 | — | — | pending |
