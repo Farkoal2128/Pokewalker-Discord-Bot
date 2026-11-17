@@ -9,7 +9,7 @@
 
 Owners spawn an EX-Raid from the admin server into one server or every server: any of the 1,094 identities as boss, optional locks for shiny, level and each IV, and a duration of 1-24 hours (default 1). It runs beside the World Legendary raid: neither blocks the other, and `/raid` asks which one to open when both are live. Every player-visible string of an EX spawn says "EX-Raid".
 
-One milestone, every row briefed. Order: schema and services (steps 2-6), announcements and player screens (7-9), the admin command (10-13), help and the retention text (14-15).
+One milestone: schema and services (2-6), announcements and player screens (7-9), admin command (10-13), help and retention text (14-15).
 
 **Non-goals:** ending an EX-Raid early (R6, §8); any option beyond R3's; a cooldown or a `mod_audit` row for EX sends (R6); extra rewards, catch-rule or `auto_send` changes (R7; C4 unchanged); retrying `attempted` announcements (R9); a persisted draft; any push, deploy, command sync or live Discord action (§3.4).
 
@@ -128,7 +128,7 @@ Build rows are `seam`: at most 2 production files and 300 production lines; test
 | 12 | [EXR-11](tickets/EXR-11.md) Confirm: states, commit, fan-out, receipt | build | seam | M | ✅ done · 6f7a87a · GO review r1 after fixture fix |
 | 13 | [EXR-12](tickets/EXR-12.md) `/admin ex-raid-history` | build | seam | S | ✅ done · d7ba24c · GO review r1; fixture fix |
 | 14 | [EXR-13](tickets/EXR-13.md) help and raids | build | seam | S | ✅ done · 41bbee5 · GO review r1; fixture fix |
-| 15 | [EXR-14](tickets/EXR-14.md) retention disclosure: privacy text, C3 M8.4, coverage | build | seam | S | pending |
+| 15 | [EXR-14](tickets/EXR-14.md) retention disclosure: privacy text, C3 M8.4, coverage | build | seam | S | ✅ done · 1b78be0 · GO review r1 |
 | 16 | G-F final verification and delivery decisions | 🚦 | — | — | pending |
 | 17 | G-B writer benchmark against the live guild count | 🚦 | — | — | pending |
 | 18 | G-V deployed privacy file | 🚦 | — | — | pending |
