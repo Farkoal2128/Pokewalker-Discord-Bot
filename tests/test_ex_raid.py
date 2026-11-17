@@ -682,12 +682,13 @@ class ExRaidCatchTests(unittest.IsolatedAsyncioTestCase):
         import json
         from pokewalker.services import catching
         encounter, session = await self.prepare()
-        await self.conn.execute('UPDATE profiles SET storage_limit=1 WHERE profile_id=?', (self.pid,))
-        await self.conn.execute(
+        await self.conn.execute('UPDATE profiles SET storage_limit=250 WHERE profile_id=?', (self.pid,))
+        await self.conn.executemany(
             'INSERT INTO pokemon(pokemon_uid,profile_id,pokemon_id,level_x2,iv_attack,iv_defense,'
             'iv_stamina,gender,shiny,origin,content_version,caught_at) '
-            "SELECT 'full',profile_id,pokemon_id,level_x2,iv_attack,iv_defense,iv_stamina,gender,shiny,"
-            "'starter',content_version,0 FROM encounters WHERE encounter_id=?", (encounter['encounter_id'],))
+            "SELECT ?,profile_id,pokemon_id,level_x2,iv_attack,iv_defense,iv_stamina,gender,shiny,"
+            "'starter',content_version,0 FROM encounters WHERE encounter_id=?",
+            [(f'full-{i}', encounter['encounter_id']) for i in range(250)])
         await self.conn.execute("INSERT INTO inventory VALUES (?,'master_ball',1)", (self.pid,))
         selection = json.loads(session['selection'])
         selection.update(ball='master_ball', berry=None)
@@ -707,7 +708,7 @@ class ExRaidCatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.status, 'caught')
         self.assertIsNone(result.pokemon)
         self.assertEqual(await self.scalar("SELECT quantity FROM inventory WHERE item_id='master_ball'"), 0)
-        self.assertEqual(await self.scalar("SELECT count(*) FROM pokemon WHERE state='owned'"), 1)
+        self.assertEqual(await self.scalar("SELECT count(*) FROM pokemon WHERE state='owned'"), 250)
         self.assertEqual(await self.rows('SELECT * FROM pokemon WHERE source_encounter_id=?',
                                         (encounter['encounter_id'],)), [])
         self.assertEqual(await self.rows('SELECT p,success,fled FROM catch_attempts'),
