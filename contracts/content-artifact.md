@@ -29,7 +29,10 @@ D45, D48–D54 and D59, and PLAN P7/P11.
   are null. Without source CSVs or explicit HEAD auditing, exact URLs are
   unaudited candidates; the manifest says `none`.
   Consumers must tolerate unavailable images. Female keys are null for species
-  without gender differences. Gender-variety selection precedes sprite selection.
+  without gender differences, and for the D76 images confirmed missing at the pinned
+  SHA (`MISSING_SPRITES`, applied in every audit mode). A consumer showing a female
+  whose female key is null uses the non-female key of the same shiny state.
+  Gender-variety selection precedes sprite selection.
 - `families` maps chain IDs to sorted species IDs; `species` records topology,
   generation, habitat and source flags, independently of encounter multiplicity.
 - `routes` maps route IDs to `weights` (identity ID → max type weight) and

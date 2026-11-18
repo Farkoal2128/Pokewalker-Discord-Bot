@@ -11,7 +11,9 @@ def identify(content, pokemon):
     identity = next(item for item in candidates if item["pokemon_id"] == pokemon["pokemon_id"]
                     and (form_id is None or item["form_id"] == form_id))
     female = pokemon["gender"] == "female" and identity["has_gender_differences"]
-    key = ("shiny_female" if female else "shiny") if pokemon["shiny"] else ("female" if female else "normal")
+    key = "shiny" if pokemon["shiny"] else "normal"
+    if female and identity["sprites"]["shiny_female" if pokemon["shiny"] else "female"]:  # D76: else same shiny state
+        key = "shiny_female" if pokemon["shiny"] else "female"
     look_id = dict(pokemon).get("look_id")
     look = look_id and next((item for item in content.get("looks", []) if item["look_id"] == look_id), None)
     if look and look["base_identity_id"] == identity["identity_id"]:  # D73: a look changes only name and sprite.

@@ -139,7 +139,11 @@ class EncounterTests(unittest.IsolatedAsyncioTestCase):
         interaction, session = await self.reveal(session)
         self.assertEqual(interaction.edit_original_response.await_args.kwargs["embed"].image.url,
                          identity["sprites"]["shiny_female"])
-        identity["sprites"]["shiny_female"] = None
+        identity["sprites"]["shiny_female"] = None  # D76: same shiny state, never the normal sprite
+        interaction, session = await self.reveal(session)
+        self.assertEqual(interaction.edit_original_response.await_args.kwargs["embed"].image.url,
+                         identity["sprites"]["shiny"])
+        identity["sprites"]["shiny"] = None
         interaction, _ = await self.reveal(session)
         self.assertIsNone(interaction.edit_original_response.await_args.kwargs["embed"].image.url)
 

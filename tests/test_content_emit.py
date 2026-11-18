@@ -160,6 +160,19 @@ class ContentEmitTests(unittest.TestCase):
                              f'https://raw.githubusercontent.com/PokeAPI/sprites/{manifest["sprites_commit"]}'
                              f'/sprites/pokemon/{path}{female["pokemon_id"]}.png')
 
+    def test_confirmed_missing_female_sprites_are_null_offline(self):
+        # D76: a HEAD check of the pinned SHA found these 404; offline builds must not emit them.
+        artifact, manifest = self.build()
+        self.assertEqual(manifest["sprite_audit"], "none")
+        male = self.identity(artifact, 916)
+        self.assertIsNone(male["sprites"]["shiny_female"])
+        self.assertTrue(male["sprites"]["female"].endswith("/female/916.png"))
+        self.assertTrue(male["sprites"]["shiny"].endswith("/shiny/916.png"))
+        self.assertEqual(self.module().MISSING_SPRITES, frozenset({
+            "female/10091", "shiny/female/10091", "female/10092", "shiny/female/10092",
+            "female/10100", "shiny/female/10100", "female/10253", "shiny/female/10253",
+            "female/902", "shiny/female/902", "shiny/female/916"}))
+
     def test_route_coverage_every_identity(self):
         artifact, _ = self.build()
         for identity in artifact["identities"]:

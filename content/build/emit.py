@@ -20,6 +20,11 @@ IMPORTER_VERSION = "2"
 SPRITE_PATHS = {"normal": "", "shiny": "shiny/", "female": "female/", "shiny_female": "shiny/female/"}
 SPRITE_COLUMNS = {"normal": "front_default", "shiny": "front_shiny",
                   "female": "front_female", "shiny_female": "front_shiny_female"}
+# D76: a HEAD check of every URL at SPRITES_COMMIT (2026-11-17) found only these missing.
+MISSING_SPRITES = frozenset({
+    "female/10091", "shiny/female/10091", "female/10092", "shiny/female/10092",
+    "female/10100", "shiny/female/10100", "female/10253", "shiny/female/10253",
+    "female/902", "shiny/female/902", "shiny/female/916"})
 
 
 def digest(path):
@@ -70,7 +75,7 @@ def sprite_records(directory, audit_sprites, opener):
         result = {}
         for key, prefix in SPRITE_PATHS.items():
             url = f"https://raw.githubusercontent.com/PokeAPI/sprites/{SPRITES_COMMIT}/sprites/pokemon/{prefix}{sprite_key}.png"
-            if "female" in key and not value["has_gender_differences"]:
+            if ("female" in key and not value["has_gender_differences"]) or prefix + sprite_key in MISSING_SPRITES:
                 result[key] = None
             elif audit_sprites:
                 if url not in checked:

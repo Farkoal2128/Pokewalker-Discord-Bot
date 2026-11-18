@@ -339,7 +339,11 @@ class WalkerTests(unittest.IsolatedAsyncioTestCase):
             interaction, _ = await self.open()
             self.assertEqual(interaction.edit_original_response.await_args.kwargs["embed"].thumbnail.url,
                              identity["sprites"][key])
-        identity["sprites"]["shiny_female"] = None
+        identity["sprites"]["shiny_female"] = None  # D76: same shiny state, never the normal sprite
+        interaction, _ = await self.open()
+        self.assertEqual(interaction.edit_original_response.await_args.kwargs["embed"].thumbnail.url,
+                         identity["sprites"]["shiny"])
+        identity["sprites"]["shiny"] = None
         interaction, _ = await self.open()
         self.assertIsNone(interaction.edit_original_response.await_args.kwargs["embed"].thumbnail.url)
 

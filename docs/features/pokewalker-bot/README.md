@@ -686,6 +686,18 @@ to return) and cosmetic looks too.
   unlocks it for the player like any catch. Encounters now record the form they were rolled
   in, so forms that share a Pokémon number (Arceus and Silvally types) are caught correctly.
 
+### Missing female sprites (D76, owner request 2026-11-17)
+
+The owner approved fixing 11 female sprite links that a full HEAD check of the pinned sprites
+commit found missing (404): female and shiny female for Alolan Rattata, Alolan Raticate, Alolan
+Raichu, Paldean Wooper and the male Basculegion record, and shiny female for the male
+Oinkologne record.
+
+- **D76: Female sprite fallback.** The content build records these confirmed-missing images
+  as null. A female Pokémon whose female image is null shows the non-female sprite of the
+  same shiny state. This amends D48/D53 for gender only: a missing shiny or form image still
+  shows no picture and is never replaced.
+
 ## Platform constraints
 
 - Reading message text needs the privileged Message Content intent. Discord reviews

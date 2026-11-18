@@ -181,7 +181,8 @@ class ShareTests(unittest.IsolatedAsyncioTestCase):
     async def test_embed_text_complete_without_image_when_sprite_null(self):
         _, session = await self.caught()
         identity = next(item for item in self.bot.content['identities'] if item['species_id'] == 25)
-        identity['sprites']['shiny_female'] = None
+        # D76: no female image falls back to the shiny one; no shiny image means no picture.
+        identity['sprites']['shiny_female'] = identity['sprites']['shiny'] = None
         await self.click(session, 'share')
         embed = self.channel.send.await_args.kwargs['embed']
         self.assertIsNone(embed.image.url)
@@ -213,6 +214,7 @@ class ShareTests(unittest.IsolatedAsyncioTestCase):
                 await self.click(session, 'share')
                 session = await self.current(session)
                 key = ('shiny_female' if identity['has_gender_differences'] else 'shiny') if shiny else 'normal'
+                key = key if identity['sprites'][key] else 'shiny'  # D76: missing female image
                 self.assertEqual(self.channel.send.await_args.kwargs['embed'].image.url, identity['sprites'][key])
 
     async def test_sharing_off_ban_after_open_and_minute_cap_refused_in_transaction(self):

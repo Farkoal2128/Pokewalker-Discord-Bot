@@ -482,6 +482,20 @@ class StorageTests(unittest.IsolatedAsyncioTestCase):
         rendered, _ = await self.details(session)
         self.assertIsNone(rendered["embed"].image.url)
 
+    async def test_detail_female_without_female_image_uses_same_shiny_state(self):
+        # D76: a null female image falls back by gender only, never by shiny state.
+        identity = next(item for item in self.bot.content["identities"] if item["species_id"] == 25)
+        identity["sprites"]["female"] = identity["sprites"]["shiny_female"] = None
+        session = await self.prepared(pokemon_id=identity["pokemon_id"], gender="female", shiny=1)
+        rendered, session = await self.details(session)
+        self.assertEqual(rendered["embed"].image.url, identity["sprites"]["shiny"])
+        await self.writer.run(lambda conn: conn.execute("UPDATE pokemon SET shiny=0"))
+        rendered, session = await self.details(session)
+        self.assertEqual(rendered["embed"].image.url, identity["sprites"]["normal"])
+        identity["sprites"]["normal"] = None
+        rendered, _ = await self.details(session)
+        self.assertIsNone(rendered["embed"].image.url)
+
     async def test_detail_female_shiny_uses_shiny_female_key(self):
         identity = next(item for item in self.bot.content["identities"] if item["species_id"] == 25)
         session = await self.prepared(pokemon_id=identity["pokemon_id"], gender="female", shiny=1)

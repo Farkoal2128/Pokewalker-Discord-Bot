@@ -133,5 +133,6 @@ class PokemonFormTests(unittest.IsolatedAsyncioTestCase):
                             resolved = next(item for item in records
                                             if item['pokemon_id'] == record['pokemon_id']
                                             and item['form_id'] == record['form_id']) if shape.get('form_id') is not None else expected
-                            self.assertEqual(storage.identify(content, shape),
-                                             (resolved, resolved['sprites'][key]))
+                            sprites = resolved['sprites']  # D76: a missing female image keeps the shiny state
+                            sprite = sprites[key] or sprites['shiny' if shiny else 'normal']
+                            self.assertEqual(storage.identify(content, shape), (resolved, sprite))
