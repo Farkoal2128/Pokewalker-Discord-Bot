@@ -505,7 +505,8 @@ class StorageTests(unittest.IsolatedAsyncioTestCase):
         female = male["gender_varieties"]["female"]
         await self.writer.run(lambda conn: conn.execute("UPDATE pokemon SET pokemon_id=?", (female["pokemon_id"],)))
         rendered, _ = await self.details(session)
-        self.assertEqual(rendered["embed"].image.url, female["sprites"]["shiny_female"])
+        self.assertIsNone(female["sprites"]["shiny_female"])  # D76: no female image at the pin
+        self.assertEqual(rendered["embed"].image.url, female["sprites"]["shiny"])
 
     async def test_favorite_toggle_bumps_revision(self):
         session = await self.prepared()

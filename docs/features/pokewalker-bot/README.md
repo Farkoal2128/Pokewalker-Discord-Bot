@@ -691,7 +691,8 @@ to return) and cosmetic looks too.
 The owner approved fixing 11 female sprite links that a full HEAD check of the pinned sprites
 commit found missing (404): female and shiny female for Alolan Rattata, Alolan Raticate, Alolan
 Raichu, Paldean Wooper and the male Basculegion record, and shiny female for the male
-Oinkologne record.
+Oinkologne record. A second check that included the D53 gender-variety records found 6 more:
+female and shiny female for the female Indeedee, Basculegion and Oinkologne records (17 total).
 
 - **D76: Female sprite fallback.** The content build records these confirmed-missing images
   as null. A female Pokémon whose female image is null shows the non-female sprite of the

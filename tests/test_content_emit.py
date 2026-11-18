@@ -171,7 +171,9 @@ class ContentEmitTests(unittest.TestCase):
         self.assertEqual(self.module().MISSING_SPRITES, frozenset({
             "female/10091", "shiny/female/10091", "female/10092", "shiny/female/10092",
             "female/10100", "shiny/female/10100", "female/10253", "shiny/female/10253",
-            "female/902", "shiny/female/902", "shiny/female/916"}))
+            "female/902", "shiny/female/902", "shiny/female/916",
+            "female/10186", "shiny/female/10186", "female/10248", "shiny/female/10248",
+            "female/10254", "shiny/female/10254"}))
 
     def test_route_coverage_every_identity(self):
         artifact, _ = self.build()

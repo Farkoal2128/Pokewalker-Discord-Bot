@@ -157,7 +157,8 @@ class EncounterTests(unittest.IsolatedAsyncioTestCase):
                       [self.encounter[key] for key in ("iv_attack", "iv_defense", "iv_stamina")],
                       self.encounter["level_x2"], multipliers=self.walker.multipliers)
         self.assertIn(f"CP {expected}", embed.description)
-        self.assertEqual(embed.image.url, female["sprites"]["shiny_female"])
+        self.assertIsNone(female["sprites"]["shiny_female"])  # D76: no female image at the pin
+        self.assertEqual(embed.image.url, female["sprites"]["shiny"])
 
     async def test_select_ball_berry_no_spend(self):
         session = await self.ready()
