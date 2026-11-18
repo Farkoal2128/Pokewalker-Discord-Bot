@@ -1587,7 +1587,7 @@ class RaidCommandTests(unittest.IsolatedAsyncioTestCase):
             (self.profile['profile_id'],)))
         before = await RaidWalkerTests.snapshot(self)
         rendered = self.rendered(await self.invoke())
-        self.assertEqual([b.label for b in rendered['view'].children], ['Done', 'Send for research'])
+        self.assertEqual([b.label for b in rendered['view'].children], ['Done', 'Send for research', 'Share'])
         session = await self.session()
         self.assertEqual(json.loads(session['selection']),
                          {'encounter_id': encounter_id, 'storage_limit': 250})
@@ -1637,7 +1637,7 @@ class RaidCommandTests(unittest.IsolatedAsyncioTestCase):
                                          (encounter['encounter_id'],)), [])
         self.assertEqual(await self.rows("SELECT * FROM action_receipts WHERE action='research'"), [])
         rendered = self.rendered(await self.invoke())
-        self.assertEqual([b.label for b in rendered['view'].children], ['Done', 'Send for research'])
+        self.assertEqual([b.label for b in rendered['view'].children], ['Done', 'Send for research', 'Share'])
         self.assertEqual(json.loads((await self.session())['selection'])['encounter_id'],
                          encounter['encounter_id'])
         await self.click(await self.session(), 'ack')
@@ -1718,7 +1718,7 @@ class RaidCommandTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rendered['embed'].title, 'Encounter result')
         self.assertIn('Result: ' + before['state'], rendered['embed'].description)
         self.assertEqual([b.label for b in rendered['view'].children],
-                         ['Done', 'Send for research'] if caught else ['Done'])
+                         ['Done', 'Send for research', 'Share'] if caught else ['Done'])
         await self.click(await self.session(), 'ack')
         after = await self.raid_row()
         self.assertEqual(after['acknowledged_at'], self.now)

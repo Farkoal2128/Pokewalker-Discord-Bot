@@ -74,7 +74,7 @@ class ShareTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_share_rendered_only_when_caught_owned_unbanned_sharing_on(self):
         interaction, session = await self.caught()
-        self.assertEqual(self.shares(self.rendered(interaction)), [])
+        self.assertEqual(len(self.shares(self.rendered(interaction))), 1)  # D77: the catch result has Share
         encounter_id = json.loads(session['selection'])['encounter_id']
         interaction, session = await self.detail(session)
         self.assertFalse(self.shares(self.rendered(interaction))[0].disabled)
@@ -93,7 +93,7 @@ class ShareTests(unittest.IsolatedAsyncioTestCase):
                 "INSERT INTO restrictions(guild_id,user_id,share_banned) VALUES ('123','456',?) "
                 "ON CONFLICT(guild_id,user_id) DO UPDATE SET share_banned=excluded.share_banned", (banned,)))
             state = await self.writer.run(lambda conn: self.walker.encounter_state(conn, session, encounter_id))
-            self.assertEqual(self.shares(screens.render_terminal(state)), [])
+            self.assertEqual(len(self.shares(screens.render_terminal(state))), 1 - banned)
             interaction, session = await self.detail(session)
             self.assertEqual(len(self.shares(self.rendered(interaction))), 1 - banned)
 
@@ -125,6 +125,52 @@ class ShareTests(unittest.IsolatedAsyncioTestCase):
         interaction, _ = await self.detail(await self.current(first))
         self.assertEqual(len(self.shares(self.rendered(interaction))), 1)
         self.assertFalse(self.shares(self.rendered(interaction))[0].disabled)
+
+    async def pending(self):
+        session = await self.prepared(shiny=1, gender='female')
+        self.walker.rng = Mock(random=Mock(return_value=0))
+        interaction = await self.click(session, 'throw')
+        return interaction, await self.current(session)
+
+    async def test_pending_result_share_stores_like_done_then_posts_caught_embed(self):
+        # D77: Share on the result menu stores the catch, posts it, and leaves the result open.
+        interaction, session = await self.pending()
+        self.assertEqual([button.label for button in self.rendered(interaction)['view'].children],
+                         ['Done', 'Send for research', 'Share'])
+        self.assertEqual(await self.rows('SELECT * FROM pokemon WHERE origin=\'catch\''), [])
+        interaction = await self.click(session, 'share')
+        pokemon = await self.rows("SELECT * FROM pokemon WHERE origin='catch'")
+        self.assertEqual([(row['state'], row['source_encounter_id']) for row in pokemon],
+                         [('owned', self.encounter['encounter_id'])])
+        self.channel.send.assert_awaited_once()
+        self.assertIn('caught Pikachu', self.channel.send.await_args.kwargs['embed'].title)
+        rendered = self.rendered(interaction)
+        self.assertIn('Shared', rendered['content'])
+        self.assertEqual([button.label for button in rendered['view'].children], ['Done', 'Send for research'])
+        encounter = (await self.rows('SELECT * FROM encounters'))[0]
+        self.assertIsNone(encounter['acknowledged_at'])
+        session = await self.current(session)
+        interaction = await self.click(session, 'ack')
+        self.assertEqual(self.rendered(interaction)['embed'].title, 'Walker')
+        self.assertEqual(len(await self.rows("SELECT * FROM pokemon WHERE origin='catch'")), 1)
+
+    async def test_pending_result_share_refused_stores_nothing(self):
+        _, session = await self.pending()
+        await self.writer.run(lambda conn: conn.execute('UPDATE profiles SET last_share_at=1000'))
+        await self.refuse(session, 'minute')
+        self.channel.send.assert_not_awaited()
+
+    async def test_full_storage_result_has_no_share_and_share_is_refused(self):
+        _, session = await self.pending()
+        owned = await self.rows("SELECT pokemon_uid FROM pokemon WHERE state='owned'")
+        await self.writer.run(lambda conn: conn.executemany(
+            "INSERT INTO pokemon(pokemon_uid,profile_id,pokemon_id,level_x2,iv_attack,iv_defense,iv_stamina,"
+            "gender,shiny,origin,content_version,caught_at) SELECT ?,profile_id,pokemon_id,level_x2,iv_attack,"
+            "iv_defense,iv_stamina,gender,shiny,origin,content_version,caught_at FROM pokemon WHERE pokemon_uid=?",
+            [(f'fill-{index}', owned[0]['pokemon_uid']) for index in range(len(owned), 250)]))
+        interaction = await self.click(session, 'open_encounter')
+        self.assertEqual(self.shares(self.rendered(interaction)), [])
+        await self.refuse(session, 'storage is full')
 
     async def test_share_posts_one_public_embed_in_channel_no_mentions(self):
         _, session = await self.caught()

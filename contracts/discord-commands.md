@@ -73,8 +73,13 @@ Cancellation/crash after commit can leave delivery unconfirmed and never refunds
 the reservation or automatically retries a send.
 
 Owned storage details show an enabled Share only when guild sharing is on and the
-member is not share-banned; no result screen shows Share (Q22 (2)). Fled/ran/sent
-Pokemon never show it. The handler rechecks current
+member is not share-banned. D77 (owner 2026-11-18, replaces Q22 (2)'s no-Share rule):
+an unacknowledged caught result with room in storage (the pending menu, or a stored
+result not yet Done) also shows Share under the same two conditions. Pressing it on a
+pending catch stores the Pokemon exactly as Done does, in the same transaction as the
+share reservation, then posts the "caught" embed; a refusal stores nothing. The result
+re-renders without Share and stays unacknowledged until Done. The full-storage menu,
+acknowledged results replayed from older screens, and fled/ran/sent Pokemon never show it. The handler rechecks current
 session-profile ownership, restrictions, guild sharing, Pokemon ownership and the
 minute cap in the writer transaction. Missing EMBED_LINKS plus SEND_MESSAGES (normal
 channel), or EMBED_LINKS plus SEND_MESSAGES_IN_THREADS (thread), explains privately
@@ -433,11 +438,12 @@ without another catch, reward or roll. `tests/test_walker_ack.py` covers this bo
 No ID grammar, renderer export or schema change is required; live acceptance is G-3.
 
 M6.8s replaces M6.8k's overflow choice with a pending-catch menu. With room it shows
-exactly Done (`ack`) and Send for research (`catch_send`); Done stores the encounter,
+exactly Done (`ack`) and Send for research (`catch_send`), plus Share under D77; Done stores the encounter,
 acknowledges and saves the session in one transaction. At full storage it says
 "Storage is full (owned/limit). Choose one:" and shows exactly Send for research and
 Upgrade storage space (+50, 5,000 Stardust) (`catch_upgrade`). The menu saves the
-encounter ID and quoted storage limit, without disabled catch controls or Share.
+encounter ID and quoted storage limit, without disabled catch controls. With room,
+it adds Share when D77 allows it; the full-storage menu never has Share.
 Upgrade is disabled with "Not enough Stardust." or "Storage is at the maximum
 capacity." It rechecks pending status and the quoted limit, then expands, stores,
 acknowledges and saves the session in one transaction using the existing expansion

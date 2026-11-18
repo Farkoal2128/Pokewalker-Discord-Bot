@@ -379,7 +379,7 @@ class ExRaidEntryTests(unittest.IsolatedAsyncioTestCase):
                     shown = self.rendered(await self.click(session, f'raid_pick_{kind}'))
                 self.assertIn('content', shown)
                 self.assertIsNone(shown['content'])
-                self.assertEqual([b.label for b in shown['view'].children], ['Done', 'Send for research'])
+                self.assertEqual([b.label for b in shown['view'].children], ['Done', 'Send for research', 'Share'])
                 self.assertEqual(json.loads((await self.current(session))['selection'])['encounter_id'], encounter_id)
                 self.assertEqual(await self.rows('SELECT * FROM raid_participation'), [])
                 await self.click(await self.current(session), 'ack')

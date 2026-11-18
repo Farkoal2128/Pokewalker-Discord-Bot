@@ -53,7 +53,7 @@ class AcknowledgementTests(unittest.IsolatedAsyncioTestCase):
         rendered = self.rendered(interaction)
         self.assertEqual(rendered["embed"].title, "Encounter result")
         self.assertIn("caught", rendered["embed"].description)
-        self.assertEqual([button.label for button in rendered["view"].children], ["Done", "Send for research"])
+        self.assertEqual([button.label for button in rendered["view"].children], ["Done", "Send for research", "Share"])
         self.assertEqual(json.loads(session["selection"])["encounter_id"], self.encounter["encounter_id"])
 
     async def test_catch_result_rebuilt_from_pokemon_and_ledger(self):
@@ -179,7 +179,7 @@ class AcknowledgementTests(unittest.IsolatedAsyncioTestCase):
         _, session = await self.caught()
         interaction = await self.click(session, "home")
         self.assertEqual(self.rendered(interaction)["embed"].title, "Encounter result")
-        self.assertEqual([button.label for button in self.rendered(interaction)["view"].children], ["Done", "Send for research"])
+        self.assertEqual([button.label for button in self.rendered(interaction)["view"].children], ["Done", "Send for research", "Share"])
 
     async def test_ack_rejects_unresolved_and_excluded(self):
         session = await self.prepared()

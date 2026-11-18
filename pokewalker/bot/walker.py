@@ -481,6 +481,10 @@ class Walker:
         return {"raid_line": raid_line, "raid_kind": raid_kind,
                 "candy": rewards.get("candy", 0), "stardust": rewards.get("stardust", 0),
                 "pending": encounter["state"] == "caught" and pokemon is None,
+                # D77: an open caught result (pending, or stored but not yet Done) may be shared.
+                "share_allowed": (encounter["state"] == "caught" and encounter["acknowledged_at"] is None
+                                  and (pokemon is None or pokemon["state"] == "owned")
+                                  and await share.enabled(conn, session)),
                 "session": session, "encounter": encounter, "identity": identity,
                 "pokemon": dict(pokemon) if pokemon is not None else None,
                 "sprite": sprite, "bag": bag, "balls": self.balls, "berries": self.berries,

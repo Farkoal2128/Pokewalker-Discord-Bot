@@ -8,12 +8,17 @@ import discord
 
 from pokewalker.bot import screens
 from pokewalker.db import with_receipt
-from pokewalker.services import profiles, storage
+from pokewalker.services import capacity, profiles, storage
 
 
 async def allowed(conn, session, pokemon):
     if pokemon is None or pokemon['state'] != 'owned' or pokemon['profile_id'] != session['profile_id']:
         return False
+    return await enabled(conn, session)
+
+
+async def enabled(conn, session):
+    """The server allows sharing and the member is not share-banned."""
     restrictions = await profiles.restrictions(conn, session['guild_id'], session['user_id'])
     async with conn.execute('SELECT sharing FROM guilds WHERE guild_id=?', (session['guild_id'],)) as cursor:
         guild = await cursor.fetchone()
@@ -49,8 +54,23 @@ def handlers(walker):
             guild = await cursor.fetchone()
         if guild is None or not guild['sharing']:
             raise _Refused('Sharing is turned off in this server.')
+        channel = interaction.channel
+        thread = channel is not None and getattr(channel, 'parent_id', None) is not None
+        permission = 'send_messages_in_threads' if thread else 'send_messages'
+        permissions = channel.permissions_for(interaction.guild.me) if channel is not None else None
+        if permissions is None or not permissions.embed_links or not getattr(permissions, permission):
+            raise _Refused(f'Missing channel permission: EMBED_LINKS and {permission.upper()} are required.')
+        now = walker.clock()
+        if profile['last_share_at'] is not None and now - profile['last_share_at'] < 60:
+            raise _Refused('You can share at most once per minute.')
         selection = json.loads(session['selection'])
         encounter_id = selection.get('encounter_id')
+        if encounter_id is not None and (await walker.encounter_state(conn, session, encounter_id))['pending']:
+            # D77: Share on the result menu stores the catch exactly as Done does.
+            quote = await capacity.quote(conn, session['profile_id'], 'storage')
+            if await storage.owned_count(conn, session['profile_id']) >= quote['current']:
+                raise _Refused('Storage is full. Send it for research or upgrade storage first.')
+            await walker.store(conn, session, encounter_id)
         if encounter_id is not None:
             async with conn.execute("SELECT pokemon.* FROM pokemon JOIN encounters USING (profile_id) "
                                     "WHERE pokemon.source_encounter_id=encounters.encounter_id "
@@ -62,18 +82,11 @@ def handlers(walker):
             pokemon = await storage.detail(conn, session['profile_id'], selection.get('pokemon_uid'))
         if pokemon is None:
             raise _Refused('Only a currently owned Pokémon can be shared.')
-        channel = interaction.channel
-        thread = channel is not None and getattr(channel, 'parent_id', None) is not None
-        permission = 'send_messages_in_threads' if thread else 'send_messages'
-        permissions = channel.permissions_for(interaction.guild.me) if channel is not None else None
-        if permissions is None or not permissions.embed_links or not getattr(permissions, permission):
-            raise _Refused(f'Missing channel permission: EMBED_LINKS and {permission.upper()} are required.')
-        now = walker.clock()
-        if profile['last_share_at'] is not None and now - profile['last_share_at'] < 60:
-            raise _Refused('You can share at most once per minute.')
         embed = embed_for(walker, pokemon, interaction, encounter_id is not None)
         if encounter_id is not None:
-            rendered = screens.render_terminal(await walker.encounter_state(conn, session, encounter_id))
+            state = await walker.encounter_state(conn, session, encounter_id)
+            state['recovery'], state['share_allowed'] = True, False  # shared once; Done closes it
+            rendered = screens.render_terminal(state)
         else:
             rendered = await walker.handlers['storage_detail'](conn, session, interaction)
         reserved = False

@@ -515,7 +515,8 @@ Q5 = locked current routes (Q5); G-6 Q6–Q11 match Q6–Q11 here.
   (screens_catch.py:74, :80): no disabled catch controls. A throw that leaves a pending catch
   answers with this menu directly (walker.py:481-482 → `pending_menu`, M6.8s), so the first
   screen after a catch is the menu. **Share — decided (owner decision 2026-11-06, owner chat,
-  relayed by the coordinator):** Share is only after Done, from Storage details ("Share this
+  relayed by the coordinator; superseded 2026-11-18 by D77 in
+  docs/features/pokewalker-bot/README.md, which restores Share on the result menu):** Share is only after Done, from Storage details ("Share this
   Pokémon", D19 at docs/features/pokewalker-bot/README.md:42; the Storage button,
   bot/storage.py:66); the pending menu has no Share (`share.allowed` needs an owned row,
   share.py:16), and **no result screen shows Share**: M6.8z deletes Share from

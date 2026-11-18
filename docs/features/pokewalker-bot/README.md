@@ -699,6 +699,19 @@ female and shiny female for the female Indeedee, Basculegion and Oinkologne reco
   same shiny state. This amends D48/D53 for gender only: a missing shiny or form image still
   shows no picture and is never replaced.
 
+### Share from the catch result (D77, owner request 2026-11-18)
+
+The owner reported: "there isn't a share button anymore after catching a pokemon to show that
+you've caught a pokemon", and chose to bring it back.
+
+- **D77: Share after a catch.** This restores D19's "Share this catch" and replaces the
+  2026-11-06 Q22 rule that put Share only in Storage. When a catch result is open and storage
+  has room, it shows **Share** next to Done and Send for research, if the server allows
+  sharing and the player is not share-banned. Share stores the Pokémon exactly like Done, then
+  posts the public "caught" embed; all D27 limits still apply, and a refused share stores
+  nothing. The result stays open without Share, so Done (or Send for research) still closes
+  it. A full-storage result shows no Share: the player sends or upgrades first.
+
 ## Platform constraints
 
 - Reading message text needs the privileged Message Content intent. Discord reviews

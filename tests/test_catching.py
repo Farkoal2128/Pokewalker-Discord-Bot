@@ -441,6 +441,6 @@ class CatchingTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("+5 Candy", rendered["embed"].description)
         self.assertIn("+300 Stardust", rendered["embed"].description)
         buttons = {button.label: button for button in rendered["view"].children}
-        self.assertNotIn("Share", buttons)
+        self.assertIn("Share", buttons)  # D77
         self.assertTrue(buttons["Done"].custom_id.endswith(":ack"))
         self.assertEqual(len(await self.rows("SELECT * FROM catch_attempts")), 2)

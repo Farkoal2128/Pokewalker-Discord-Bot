@@ -572,10 +572,10 @@ class StorageCapacityTests(unittest.IsolatedAsyncioTestCase):
         await AcknowledgementTests.terminal_copy(self, 'older-fled', 'fled', 900)
         interaction, fresh = await self.open()
         self.assertEqual(list(self.buttons(interaction.edit_original_response.await_args.kwargs)),
-                         ['Done', 'Send for research'])
+                         ['Done', 'Send for research', 'Share'])
         self.assertEqual(json.loads(fresh['selection'])['encounter_id'], 'A')
         rendered, session = await self.screen(session, 'home')
-        self.assertEqual(list(self.buttons(rendered)), ['Done', 'Send for research'])
+        self.assertEqual(list(self.buttons(rendered)), ['Done', 'Send for research', 'Share'])
         self.assertEqual(json.loads(session['selection'])['encounter_id'], 'A')
         for expected in ('older-ran', 'older-fled'):
             rendered, session = await self.screen(session, 'ack')
@@ -602,7 +602,7 @@ class StorageCapacityTests(unittest.IsolatedAsyncioTestCase):
                 session = await self.current(session)
                 before = await self.research_state()
                 rendered, session = await self.screen(session, action)
-                self.assertEqual(list(self.buttons(rendered)), ['Done', 'Send for research'])
+                self.assertEqual(list(self.buttons(rendered)), ['Done', 'Send for research', 'Share'])
                 self.assertEqual(json.loads(session['selection'])['encounter_id'], 'A')
                 after = await self.research_state()
                 self.assertEqual(after, before)
@@ -628,7 +628,7 @@ class StorageCapacityTests(unittest.IsolatedAsyncioTestCase):
                 finally:
                     await self.conn.set_trace_callback(None)
                 self.assertEqual(current, session)
-                self.assertEqual(list(self.buttons(rendered)), ['Done', 'Send for research'])
+                self.assertEqual(list(self.buttons(rendered)), ['Done', 'Send for research', 'Share'])
                 self.assertFalse(any(sql.upper().startswith('UPDATE SESSIONS') for sql in statements))
                 self.assertEqual(await self.research_state(), before)
 
@@ -666,9 +666,9 @@ class StorageCapacityTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((await self.rows("SELECT acknowledged_at FROM encounters WHERE encounter_id='A'"))[0],
                                  {'acknowledged_at': self.now})
 
-    async def test_pending_menu_with_room_shows_done_and_send_only(self):
+    async def test_pending_menu_with_room_shows_done_send_and_share(self):
         rendered, session = await self.pending_result()
-        self.assertEqual(list(self.buttons(rendered)), ['Done', 'Send for research'])
+        self.assertEqual(list(self.buttons(rendered)), ['Done', 'Send for research', 'Share'])
         self.assertTrue(all(not b.disabled for b in rendered['view'].children))
         self.assertEqual(json.loads(session['selection']), {'encounter_id': 'A', 'storage_limit': 250})
         self.assertIn('Pikachu', rendered['embed'].description)
@@ -678,7 +678,7 @@ class StorageCapacityTests(unittest.IsolatedAsyncioTestCase):
         self.walker = self.module.Walker(self.bot, clock=lambda: self.now)
         interaction, recovered = await self.open()
         self.assertEqual(list(self.buttons(interaction.edit_original_response.await_args.kwargs)),
-                         ['Done', 'Send for research'])
+                         ['Done', 'Send for research', 'Share'])
         self.assertEqual(json.loads(recovered['selection']), json.loads(session['selection']))
 
     async def test_pending_done_stores_once_and_goes_home(self):
@@ -838,7 +838,7 @@ class StorageCapacityTests(unittest.IsolatedAsyncioTestCase):
                         patch.object(catching, 'throw', side_effect=pending_throw), \
                         patch.object(self.walker.rng, 'random', return_value=0):
                     rendered, session = await self.screen(session, 'throw')
-                expected = ['catch_send', 'catch_upgrade'] if full else ['ack', 'catch_send']
+                expected = ['catch_send', 'catch_upgrade'] if full else ['ack', 'catch_send', 'share']
                 self.assertEqual([b.custom_id.rsplit(':', 1)[1] for b in rendered['view'].children], expected)
                 if replay:
                     self.assertEqual(await self.current(session), saved)
@@ -957,7 +957,7 @@ class StorageCapacityTests(unittest.IsolatedAsyncioTestCase):
         before = await self.research_state()
         _, session = await self.screen(session, 'catch_send')
         rendered, session = await self.screen(session, 'research_cancel')
-        self.assertEqual(list(self.buttons(rendered)), ['Done', 'Send for research'])
+        self.assertEqual(list(self.buttons(rendered)), ['Done', 'Send for research', 'Share'])
         self.assertEqual(json.loads(session['selection'])['encounter_id'], 'A')
         self.assertEqual(await self.research_state(), before)
 
@@ -988,7 +988,7 @@ class StorageCapacityTests(unittest.IsolatedAsyncioTestCase):
                 self.bot.walker = self.walker
                 interaction, session = await self.open()
                 rendered = interaction.edit_original_response.await_args.kwargs
-                expected = ['catch_send', 'catch_upgrade'] if full else ['ack', 'catch_send']
+                expected = ['catch_send', 'catch_upgrade'] if full else ['ack', 'catch_send', 'share']
                 self.assertEqual([b.custom_id.rsplit(':', 1)[1] for b in rendered['view'].children], expected)
                 rendered, session = await self.screen(session, action)
                 if action == 'catch_send':
@@ -1032,7 +1032,7 @@ class StorageCapacityTests(unittest.IsolatedAsyncioTestCase):
         _, session = await self.reveal(session)
         with patch.object(self.walker.rng, 'random', return_value=0):
             rendered, session = await self.screen(session, 'throw')
-        self.assertEqual(list(self.buttons(rendered)), ['Done', 'Send for research'])
+        self.assertEqual(list(self.buttons(rendered)), ['Done', 'Send for research', 'Share'])
         self.assertEqual(await self.rows("SELECT * FROM pokemon WHERE origin='catch'"), [])
         _, session = await self.screen(session, 'ack')
         stored = await self.rows("SELECT * FROM pokemon WHERE origin='catch'")
@@ -1041,7 +1041,7 @@ class StorageCapacityTests(unittest.IsolatedAsyncioTestCase):
         _, session = await self.reveal(session)
         with patch.object(self.walker.rng, 'random', return_value=0):
             rendered, session = await self.screen(session, 'throw')
-        self.assertEqual(list(self.buttons(rendered)), ['Done', 'Send for research'])
+        self.assertEqual(list(self.buttons(rendered)), ['Done', 'Send for research', 'Share'])
         self.assertEqual(await self.rows("SELECT * FROM pokemon WHERE origin='catch'"), stored)
         _, session = await self.screen(session, 'catch_send')
         _, session = await self.screen(session, 'storage_send_confirm')
@@ -1055,7 +1055,7 @@ class StorageCapacityTests(unittest.IsolatedAsyncioTestCase):
         for recovery in (False, True):
             if recovery:
                 rendered, session = await self.screen(session, 'home')
-                self.assertEqual(list(self.buttons(rendered)), ['Done', 'Send for research'])
+                self.assertEqual(list(self.buttons(rendered)), ['Done', 'Send for research', 'Share'])
             button = self.buttons(rendered).get('Send for research')
             self.assertIsNotNone(button)
             self.assertFalse(button.disabled)
@@ -1103,7 +1103,7 @@ class StorageCapacityTests(unittest.IsolatedAsyncioTestCase):
         self.bot.walker = self.walker
         interaction, session = await self.open()
         rendered = interaction.edit_original_response.await_args.kwargs
-        self.assertEqual(list(self.buttons(rendered)), ['Done', 'Send for research'])
+        self.assertEqual(list(self.buttons(rendered)), ['Done', 'Send for research', 'Share'])
         await self.screen(session, self.buttons(rendered)['Send for research'].custom_id.rsplit(':', 1)[1])
         _, session = await self.screen(await self.current(session), 'storage_send_confirm')
         rendered, _ = await self.screen(session, 'ack')
@@ -1116,7 +1116,7 @@ class StorageCapacityTests(unittest.IsolatedAsyncioTestCase):
         _, session = await self.screen(session, 'catch_send')
         rendered, session = await self.screen(session, 'research_cancel')
         self.assertEqual(rendered['embed'].title, 'Encounter result')
-        self.assertEqual(list(self.buttons(rendered)), ['Done', 'Send for research'])
+        self.assertEqual(list(self.buttons(rendered)), ['Done', 'Send for research', 'Share'])
         self.assertEqual(json.loads(session['selection']), {'encounter_id': 'A'})
         self.assertEqual(await self.research_state(), before)
 

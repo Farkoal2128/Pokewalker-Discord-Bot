@@ -81,6 +81,8 @@ def render_terminal(state):
     if state["encounter"]["state"] == "caught" and (
             state.get("pending") or (state.get("pokemon") or {}).get("state") == "owned"):
         view.add_item(discord.ui.Button(label="Send for research", custom_id=custom_id(state, "catch_send"), row=1))
+    if state.get("share_allowed"):  # D77
+        view.add_item(discord.ui.Button(label="Share", custom_id=custom_id(state, "share"), row=1))
     return {"embed": embed, "view": view}
 
 
